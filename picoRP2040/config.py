@@ -30,6 +30,9 @@ LED_ON_DURATION_MS = 200
 # 绿灯单次熄灭时长，单位为毫秒；1500 表示熄灭 1.5 秒。
 LED_OFF_DURATION_MS = 1500
 
+# 成功接收一包数据时蓝灯的点亮时长，单位为毫秒。
+LED_DATA_PULSE_DURATION_MS = 100
+
 # LCD 显示区域相对于显存原点的坐标偏移。
 X_OFFSET = 0
 Y_OFFSET = 0

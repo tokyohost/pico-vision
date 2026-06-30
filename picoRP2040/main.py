@@ -34,6 +34,7 @@ def main():
             snapshot = None
         if snapshot is not None:
             latest_snapshot = snapshot
+            led.blink_blue()
 
         now = time.ticks_ms()
         if time.ticks_diff(now, next_render) >= 0:
