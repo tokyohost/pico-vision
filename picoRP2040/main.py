@@ -1,30 +1,47 @@
-from machine import Pin
-import neopixel
+"""启动 Pico 系统监控屏并编排接收与渲染循环。"""
+
+import sys
 import time
 
-# 板载 WS2812 接在 GPIO22
-LED_PIN = 22
-NUM_LEDS = 1
+from config import RENDER_INTERVAL_MS
+from dashboard import DashboardRenderer
+from ledController import LedController
+from lcd import LcdDevice
+from protocol import JsonProtocol, create_poller
 
-np = neopixel.NeoPixel(Pin(LED_PIN), NUM_LEDS)
 
-def set_color(r, g, b):
-    np[0] = (r, g, b)
-    np.write()
+def main():
+    """初始化屏幕并按固定 0.5 秒周期渲染最新 JSON 快照。"""
+    lcd = LcdDevice()
+    lcd.initialize()
+    renderer = DashboardRenderer(lcd)
+    led = LedController()
+    led.start()
+    protocol = JsonProtocol()
+    poller = create_poller(sys.stdin)
+    latest_snapshot = None
+    next_render = time.ticks_ms()
+    protocol.write(b"BOOT:PICO_LCD_READY\n")
 
-while True:
-    # 红
-    set_color(50, 0, 0)
-    time.sleep(0.5)
+    while True:
+        now = time.ticks_ms()
+        remaining = max(0, time.ticks_diff(next_render, now))
+        if poller is None:
+            snapshot = protocol.receive()
+        elif poller.poll(min(remaining, 50)):
+            snapshot = protocol.receive()
+        else:
+            snapshot = None
+        if snapshot is not None:
+            latest_snapshot = snapshot
 
-    # 绿
-    set_color(0, 50, 0)
-    time.sleep(0.5)
+        now = time.ticks_ms()
+        if time.ticks_diff(now, next_render) >= 0:
+            renderer.render(latest_snapshot)
+            next_render = time.ticks_add(next_render, RENDER_INTERVAL_MS)
+            if time.ticks_diff(now, next_render) >= 0:
+                next_render = time.ticks_add(now, RENDER_INTERVAL_MS)
 
-    # 蓝
-    set_color(0, 0, 50)
-    time.sleep(0.5)
 
-    # 关灯
-    set_color(0, 0, 0)
-    time.sleep(0.5)
+if __name__ == "__main__":
+    main()

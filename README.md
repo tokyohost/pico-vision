@@ -8,6 +8,7 @@ Pico 端文件位于 `pico/`，需要将该目录中的全部文件复制到 Pic
 
 - `pico/main.py`：启动入口，只负责编排 JSON 接收和 0.5 秒渲染循环。
 - `pico/config.py`：屏幕、引脚、协议和颜色配置。
+- `pico/ledController.py`：以非阻塞方式控制 RP2040 板载绿灯闪烁。
 - `pico/lcd.py`：ST7789 初始化与整帧输出驱动。
 - `pico/canvas.py`：RGB565 帧缓冲基础绘图。
 - `pico/font_5x7.py`：紧凑型 ASCII 点阵字体。

@@ -19,8 +19,12 @@ class Canvas:
         return bytes(((color >> 8) & 0xFF, color & 0xFF))
 
     def clear(self, color=BLACK):
-        """使用指定颜色清空整个画布。"""
-        self.buffer[:] = self._pixel_bytes(color) * (self.width * self.height)
+        """使用指定颜色逐行清空画布，避免创建完整帧大小的临时对象。"""
+        row = self._pixel_bytes(color) * self.width
+        row_length = len(row)
+        for line_y in range(self.height):
+            start = line_y * row_length
+            self.buffer[start:start + row_length] = row
 
     def pixel(self, x, y, color):
         """在画布范围内绘制一个像素。"""
