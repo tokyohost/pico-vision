@@ -1,0 +1,4 @@
+#!/bin/sh
+# 启动通用 Linux 软件包安装的 Pico Monitor。
+set -eu
+exec /opt/pico-monitor/venv/bin/python /opt/pico-monitor/pico_monitor.py "$@"

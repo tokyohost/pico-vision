@@ -7,7 +7,7 @@ Standards-Version: 4.6.2
 Rules-Requires-Root: no
 
 Package: pico-monitor
-Architecture: all
+Architecture: any
 Depends: ${misc:Depends}, python3, python3-psutil, python3-serial, iputils-ping
 Description: Pico LCD 系统硬件监控程序
  通过操作系统底层接口采集 CPU、内存、磁盘、网络和温度指标，

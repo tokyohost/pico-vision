@@ -1,0 +1,19 @@
+[Unit]
+Description=Pico LCD 系统硬件监控服务
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/pico-monitor.conf
+ExecStart=/usr/local/bin/pico-monitor
+Restart=always
+RestartSec=3
+User=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

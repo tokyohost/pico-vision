@@ -47,6 +47,15 @@ build-exe.bat
 
 ## 构建 Linux DEB
 
+Linux 发布明确构建以下四种架构：
+
+- `amd64`：主流 Intel/AMD 64 位电脑，优先支持 Debian、Ubuntu。
+- `arm64`：64 位 ARM 设备，包括 Ubuntu Server ARM64 和 Debian ARM64。
+- `armhf`：32 位 ARM 硬浮点设备，包括部分 Raspberry Pi OS。
+- `i386`：32 位 Intel/AMD 电脑。
+
+DEB 原生支持 Debian、Ubuntu 及使用兼容 APT 依赖仓库的衍生发行版。Fedora、RHEL、openSUSE、Arch Linux 等非 Debian 系统请使用 Release 中的通用 `linux.tar.gz`，解压后运行 `sudo ./install-linux.sh`。
+
 在 Debian 或 Ubuntu 中执行：
 
 ```bash
@@ -54,7 +63,7 @@ sudo apt update
 sudo apt install build-essential debhelper devscripts
 chmod 0755 debian/rules bin/pico-monitor
 dpkg-buildpackage --no-sign -b
-sudo apt install ../pico-monitor_1.0.0_all.deb
+sudo apt install ../pico-monitor_1.0.0_$(dpkg --print-architecture).deb
 ```
 
 安装后可使用以下命令：
@@ -77,7 +86,11 @@ sudo systemctl restart pico-monitor
 
 - `pico-monitor-windows-x86.exe`
 - `pico-monitor-windows-x64.exe`
-- `pico-monitor_<版本>_all.deb`
+- `pico-monitor_<版本>_amd64.deb`：Intel/AMD 64 位电脑
+- `pico-monitor_<版本>_arm64.deb`：ARM 64 位设备
+- `pico-monitor_<版本>_armhf.deb`：ARM 32 位硬浮点设备
+- `pico-monitor_<版本>_i386.deb`：Intel/AMD 32 位电脑
+- `pico-monitor-<版本>-linux.tar.gz`：Fedora、RHEL、openSUSE、Arch 等 systemd 发行版通用安装包
 
 发布示例：
 
