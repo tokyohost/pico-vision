@@ -43,11 +43,13 @@ class MonitorService:
     def stop(self, signum=None, frame=None):
         """请求主循环停止，并安全关闭当前串口连接。"""
         del signum, frame
+        LOGGER.info("收到停止请求，正在关闭监控程序")
         self.stopping.set()
         self.client.close()
 
     def run(self):
         """持续连接设备、采集指标并发送最新系统快照。"""
+        LOGGER.info("监控服务启动：端口=%s，发送间隔=%.1f 秒，重连间隔=%.1f 秒", self.arguments.port or "自动发现", self.arguments.interval, self.arguments.reconnect_interval)
         while not self.stopping.is_set():
             try:
                 if not self.client.is_connected:
@@ -64,6 +66,7 @@ class MonitorService:
                 LOGGER.warning("监控通信异常：%s；%.1f 秒后重试", error, self.arguments.reconnect_interval)
                 self.client.close()
                 self.stopping.wait(self.arguments.reconnect_interval)
+        LOGGER.info("监控服务已停止")
         return 0
 
 

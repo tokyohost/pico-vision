@@ -40,9 +40,12 @@ class PicoClientTest(unittest.TestCase):
         """确认数据包使用 JSON 前缀并以换行结束。"""
         client = PicoJsonClient()
         client.serial = FakeSerial()
-        client.send({"version": 1})
+        with self.assertLogs("pico-monitor.serial", level="INFO") as logs:
+            client.send({"version": 1})
         self.assertTrue(client.serial.written.startswith(b"JSON:"))
         self.assertTrue(client.serial.written.endswith(b"\n"))
+        self.assertTrue(any("Monitor -> Pico" in message for message in logs.output))
+        self.assertTrue(any("Pico -> Monitor" in message for message in logs.output))
 
 
 class SystemCollectorTest(unittest.TestCase):

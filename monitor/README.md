@@ -8,6 +8,7 @@
 
 - 自动发现并握手识别 Pico LCD，也可固定串口。
 - 设备拔插、休眠唤醒或通信失败后自动重连。
+- 完整记录握手、JSON 原文、数据块数量、Pico 响应、异常和超时。
 - Windows 单文件 EXE、托盘运行、日志查看和当前用户自启动。
 - Debian/Ubuntu DEB、systemd 守护、异常自动重启和开机启动。
 - 全部源码采用无 BOM UTF-8，类和方法包含规范中文注释。
@@ -39,6 +40,8 @@ build-exe.bat
 ```
 
 输出文件为 `dist\pico-monitor.exe`。双击后驻留系统托盘，运行日志位于 `%LOCALAPPDATA%\PicoMonitor\pico-monitor.log`。
+
+日志使用 `[Monitor -> Pico]` 和 `[Pico -> Monitor]` 标识通信方向。Linux 服务可通过 `journalctl -u pico-monitor -f` 实时查看相同内容。
 
 ## 构建 Linux DEB
 
