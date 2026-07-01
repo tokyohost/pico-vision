@@ -109,7 +109,7 @@ jobs:
       - name: 下载全部 Linux 软件包
         uses: actions/download-artifact@v5
         with:
-          pattern: linux-deb-*
+          pattern: linux-*
           path: release-assets
           merge-multiple: true
 
@@ -121,4 +121,13 @@ jobs:
           if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes --title "${GITHUB_REF_NAME}"
           fi
-          gh release upload "${GITHUB_REF_NAME}" release-assets/*.deb release-assets/*.tar.gz --clobber
+          if ! compgen -G "release-assets/*.deb" >/dev/null; then
+            echo "未找到任何 DEB 发布产物。" >&2
+            exit 1
+          fi
+          gh release upload "${GITHUB_REF_NAME}" release-assets/*.deb --clobber
+          if compgen -G "release-assets/*.tar.gz" >/dev/null; then
+            gh release upload "${GITHUB_REF_NAME}" release-assets/*.tar.gz --clobber
+          else
+            echo "未生成可选的通用 Linux tar.gz，跳过上传。"
+          fi
