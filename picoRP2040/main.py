@@ -28,8 +28,8 @@ class Application:
         self._renderer = DashboardRenderer(self._lcd)
         self._cache = SnapshotCache()
         self._receiver = DataReceiver(self._protocol, self._cache, self._led)
-        self._rendered_version = -1
-        self._next_render = time.ticks_ms()
+        self._rendering_version = -1
+        self._next_render = time.ticks_add(time.ticks_ms(), RENDER_INTERVAL_MS)
 
     def run(self):
         """持续推进各组件，每轮均在有限时间内返回。"""
@@ -43,11 +43,23 @@ class Application:
                 continue
             now = time.ticks_ms()
             snapshot, version = self._cache.latest()
-            if time.ticks_diff(now, self._next_render) >= 0 and version != self._rendered_version:
+            if (
+                time.ticks_diff(now, self._next_render) >= 0
+                and not self._renderer.is_rendering()
+            ):
                 self._renderer.request_render(snapshot)
-                self._rendered_version = version
-                self._next_render = time.ticks_add(now, RENDER_INTERVAL_MS)
-            self._renderer.update()
+                self._rendering_version = version
+                self._next_render = time.ticks_add(
+                    self._next_render, RENDER_INTERVAL_MS
+                )
+                if time.ticks_diff(now, self._next_render) >= 0:
+                    self._next_render = time.ticks_add(now, RENDER_INTERVAL_MS)
+            if self._renderer.update():
+                response = "ACK:LCD_FRAME:{}:{}MS\n".format(
+                    self._rendering_version,
+                    self._renderer.last_render_ms(),
+                )
+                self._protocol.write(response.encode())
             time.sleep_ms(1)
 
 

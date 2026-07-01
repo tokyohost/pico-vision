@@ -39,6 +39,8 @@ class PicoJsonClient:
             if device is not None:
                 self.serial = device
                 print("已连接 Pico LCD：{}".format(port))
+                for message in messages:
+                    self._print_pico_log(message)
                 return
         detail = "\nPico 输出：\n" + "\n".join(diagnostics) if diagnostics else ""
         raise RuntimeError(
@@ -77,6 +79,7 @@ class PicoJsonClient:
         """分块发送紧凑 JSON 数据包，并等待 Pico 返回接收确认。"""
         if self.serial is None:
             raise RuntimeError("Pico 串口尚未连接。")
+        self._drain_logs()
         payload = json.dumps(
             snapshot,
             ensure_ascii=True,
@@ -104,8 +107,14 @@ class PicoJsonClient:
         diagnostics = []
         while time.monotonic() < deadline:
             response = self.serial.readline().strip()
+            if response:
+                self._print_pico_log(
+                    response.decode("utf-8", errors="replace")
+                )
             if response == JSON_ACK:
                 return
+            if response.startswith(b"ACK:LCD_FRAME:"):
+                continue
             if response.startswith(b"FATAL:"):
                 raise RuntimeError(
                     "Pico 运行异常：{}".format(
@@ -120,6 +129,20 @@ class PicoJsonClient:
                 diagnostics.append(response.decode("utf-8", errors="replace"))
         detail = "；Pico 输出：" + " | ".join(diagnostics) if diagnostics else ""
         raise serial.SerialTimeoutException("等待 Pico JSON 接收确认超时" + detail)
+
+    def _drain_logs(self):
+        """发送数据前打印串口中尚未读取的全部 Pico 日志。"""
+        while self.serial is not None and self.serial.in_waiting > 0:
+            response = self.serial.readline().strip()
+            if response:
+                self._print_pico_log(
+                    response.decode("utf-8", errors="replace")
+                )
+
+    def _print_pico_log(self, message):
+        """使用统一前缀将 Pico 串口输出显示在电脑终端。"""
+        port = self.serial.port if self.serial is not None else "PICO"
+        print("[PICO {}] {}".format(port, message))
 
     def close(self):
         """安全关闭当前串口连接。"""

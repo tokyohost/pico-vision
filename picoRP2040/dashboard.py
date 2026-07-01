@@ -1,5 +1,7 @@
 """负责将系统 JSON 快照渲染为 Pico 仪表盘。"""
 
+import time
+
 from canvas import Canvas
 from config import (
     BLACK,
@@ -26,14 +28,21 @@ class DashboardRenderer:
         self.canvas = Canvas(WIDTH, LCD_STRIP_HEIGHT)
         self._snapshot = None
         self._next_y = HEIGHT
+        self._render_started = None
+        self._last_render_ms = 0
 
     def request_render(self, snapshot):
         """登记最新快照并从屏幕顶部开始新一轮条带刷新。"""
         self._snapshot = snapshot or {}
         self._next_y = 0
+        self._render_started = time.ticks_ms()
+
+    def is_rendering(self):
+        """判断当前帧是否仍有条带尚未写入 LCD。"""
+        return self._next_y < HEIGHT
 
     def update(self):
-        """绘制并提交一个屏幕条带，完成后立即返回主循环。"""
+        """绘制一个屏幕条带，并在整帧完成时返回真。"""
         if self._next_y >= HEIGHT:
             return False
         strip_height = min(LCD_STRIP_HEIGHT, HEIGHT - self._next_y)
@@ -45,7 +54,17 @@ class DashboardRenderer:
             memoryview(self.canvas.buffer)[:byte_count],
         )
         self._next_y += strip_height
-        return True
+        completed = self._next_y >= HEIGHT
+        if completed and self._render_started is not None:
+            self._last_render_ms = time.ticks_diff(
+                time.ticks_ms(), self._render_started
+            )
+            self._render_started = None
+        return completed
+
+    def last_render_ms(self):
+        """返回最近一帧从开始到完成所消耗的毫秒数。"""
+        return self._last_render_ms
 
     @staticmethod
     def _number(value, default=0):
