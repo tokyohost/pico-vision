@@ -35,6 +35,7 @@ class LcdDevice:
             sck=Pin(PIN_SCK),
             mosi=Pin(PIN_MOSI),
         )
+        self._rotation = 0
 
     def write_command(self, command):
         """向 LCD 写入一个控制命令。"""
@@ -86,6 +87,20 @@ class LcdDevice:
         self.command(0x29)
         time.sleep_ms(100)
         self.bl.value(1)
+
+    def set_rotation(self, rotation):
+        """动态设置屏幕为正常方向或旋转一百八十度。"""
+        normalized = 180 if rotation == 180 else 0
+        if normalized == self._rotation:
+            return False
+        # ST7789 MADCTL 的 MX 与 MY 同时启用即为一百八十度旋转。
+        self.command(0x36, b"\xC0" if normalized == 180 else b"\x00")
+        self._rotation = normalized
+        return True
+
+    def rotation(self):
+        """返回当前生效的屏幕旋转角度。"""
+        return self._rotation
 
     def show(self, frame):
         """将一帧大端 RGB565 数据完整写入 LCD。"""

@@ -28,6 +28,7 @@ python pico_monitor.py
 --ping-target 1.1.1.1       指定延迟探测目标
 --interval 1.0              指定采集发送间隔
 --reconnect-interval 3.0    指定断线重连间隔
+--screen-rotation 180       将 Pico 屏幕旋转一百八十度
 --once                      成功发送一次后退出
 ```
 

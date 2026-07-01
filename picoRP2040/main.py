@@ -47,6 +47,18 @@ class Application:
                 time.ticks_diff(now, self._next_render) >= 0
                 and not self._renderer.is_rendering()
             ):
+                display = snapshot.get("display", {}) if snapshot else {}
+                requested_rotation = display.get("rotation", 0)
+                try:
+                    requested_rotation = int(requested_rotation)
+                except (TypeError, ValueError):
+                    requested_rotation = 0
+                if self._lcd.set_rotation(requested_rotation):
+                    self._protocol.write(
+                        "CONFIG:SCREEN_ROTATION:{}\n".format(
+                            self._lcd.rotation()
+                        ).encode()
+                    )
                 self._renderer.request_render(snapshot)
                 self._rendering_version = version
                 self._next_render = time.ticks_add(

@@ -4,6 +4,7 @@ import unittest
 from unittest import mock
 
 from pico_client import PicoJsonClient
+from pico_monitor import create_argument_parser
 from system_monitor import SystemInformationCollector
 
 
@@ -46,6 +47,11 @@ class PicoClientTest(unittest.TestCase):
         self.assertTrue(client.serial.written.endswith(b"\n"))
         self.assertTrue(any("Monitor -> Pico" in message for message in logs.output))
         self.assertTrue(any("Pico -> Monitor" in message for message in logs.output))
+
+    def test_screen_rotation_argument(self):
+        """确认屏幕旋转参数只接受固件支持的方向。"""
+        arguments = create_argument_parser().parse_args(["--screen-rotation", "180"])
+        self.assertEqual(arguments.screen_rotation, 180)
 
 
 class SystemCollectorTest(unittest.TestCase):

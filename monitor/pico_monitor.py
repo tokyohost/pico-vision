@@ -25,6 +25,7 @@ def create_argument_parser():
     parser.add_argument("--ping-target", default=os.getenv("PICO_MONITOR_PING_TARGET", "www.baidu.com"), help="网络延迟检测目标")
     parser.add_argument("--interval", type=float, default=float(os.getenv("PICO_MONITOR_INTERVAL", "1.0")), help="采集和发送间隔，单位为秒")
     parser.add_argument("--reconnect-interval", type=float, default=float(os.getenv("PICO_MONITOR_RECONNECT_INTERVAL", "3.0")), help="设备断线后的重连间隔，单位为秒")
+    parser.add_argument("--screen-rotation", type=int, choices=(0, 180), default=int(os.getenv("PICO_MONITOR_SCREEN_ROTATION", "0")), help="Pico 屏幕旋转角度，可选 0 或 180")
     parser.add_argument("--once", action="store_true", help="仅成功发送一次数据")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     return parser
@@ -49,7 +50,7 @@ class MonitorService:
 
     def run(self):
         """持续连接设备、采集指标并发送最新系统快照。"""
-        LOGGER.info("监控服务启动：端口=%s，发送间隔=%.1f 秒，重连间隔=%.1f 秒", self.arguments.port or "自动发现", self.arguments.interval, self.arguments.reconnect_interval)
+        LOGGER.info("监控服务启动：端口=%s，发送间隔=%.1f 秒，重连间隔=%.1f 秒，屏幕旋转=%d°", self.arguments.port or "自动发现", self.arguments.interval, self.arguments.reconnect_interval, self.arguments.screen_rotation)
         while not self.stopping.is_set():
             try:
                 if not self.client.is_connected:
@@ -57,7 +58,9 @@ class MonitorService:
                     self.client.connect()
                     LOGGER.info("Pico LCD 已连接：%s", self.client.port_name)
                 started = time.monotonic()
-                self.client.send(self.collector.collect())
+                snapshot = self.collector.collect()
+                snapshot["display"] = {"rotation": self.arguments.screen_rotation}
+                self.client.send(snapshot)
                 if self.arguments.once:
                     return 0
                 remaining = self.arguments.interval - (time.monotonic() - started)
