@@ -1,0 +1,82 @@
+name: 构建 Linux DEB
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pico-monitor-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 构建 Linux 通用 DEB
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: monitor
+
+    steps:
+      - name: 检出项目代码
+        uses: actions/checkout@v6
+
+      - name: 安装 Debian 打包工具
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential debhelper
+
+      - name: 设置发布版本
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          version="${version//-/~}"
+          sed -i "1s/([^)]*)/(${version})/" debian/changelog
+
+      - name: 构建并检查 DEB 软件包
+        env:
+          DEB_BUILD_OPTIONS: nocheck
+        run: |
+          chmod 0755 debian/rules bin/pico-monitor
+          dpkg-buildpackage --build=binary --no-sign
+          mkdir -p release-assets
+          cp ../pico-monitor_*_all.deb release-assets/
+          dpkg-deb --info release-assets/*.deb
+          dpkg-deb --contents release-assets/*.deb
+
+      - name: 上传 DEB 构建产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-deb-all
+          path: monitor/release-assets/*.deb
+          if-no-files-found: error
+
+  release:
+    name: 发布 Linux DEB
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - name: 下载 DEB 软件包
+        uses: actions/download-artifact@v5
+        with:
+          name: linux-deb-all
+          path: release-assets
+
+      - name: 创建或更新 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes --title "${GITHUB_REF_NAME}"
+          fi
+          gh release upload "${GITHUB_REF_NAME}" release-assets/*.deb --clobber

@@ -70,3 +70,18 @@ sudo systemctl restart pico-monitor
 ## Pico 固件要求
 
 先将 `pico-project/picoRP2040` 下的 MicroPython 程序部署到 Pico。主机端会发送 `PING:PICO_LCD?` 完成设备识别，再发送 `JSON:` 加单行 JSON；固件应返回 `ACK:JSON`。
+
+## GitHub Actions 自动发布
+
+`pico-project/.github/workflows` 提供 Windows EXE 与 Linux DEB 两套工作流。手动运行工作流时只生成 Actions Artifact；推送 `v` 开头的标签时会自动创建或更新 GitHub Release，并上传以下产物：
+
+- `pico-monitor-windows-x86.exe`
+- `pico-monitor-windows-x64.exe`
+- `pico-monitor_<版本>_all.deb`
+
+发布示例：
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
