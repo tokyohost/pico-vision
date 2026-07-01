@@ -1,17 +1,22 @@
-"""提供大端 RGB565 帧缓冲区上的基础绘图能力。"""
+"""提供带纵向裁剪的 RGB565 条带绘图能力。"""
 
 from config import BLACK
 from font_5x7 import FONT_5X7
 
 
 class Canvas:
-    """在大端 RGB565 字节缓冲区上提供轻量绘图能力。"""
+    """在小型条带缓冲区中绘图，坐标仍使用完整屏幕坐标。"""
 
     def __init__(self, width, height):
-        """创建指定尺寸的 RGB565 帧缓冲区。"""
+        """创建指定大小的 RGB565 条带缓冲区。"""
         self.width = width
         self.height = height
+        self.origin_y = 0
         self.buffer = bytearray(width * height * 2)
+
+    def set_origin(self, origin_y):
+        """设置当前条带在完整屏幕中的纵向起点。"""
+        self.origin_y = origin_y
 
     @staticmethod
     def _pixel_bytes(color):
@@ -19,31 +24,31 @@ class Canvas:
         return bytes(((color >> 8) & 0xFF, color & 0xFF))
 
     def clear(self, color=BLACK):
-        """使用指定颜色逐行清空画布，避免创建完整帧大小的临时对象。"""
+        """使用指定颜色清空当前条带。"""
         row = self._pixel_bytes(color) * self.width
-        row_length = len(row)
-        for line_y in range(self.height):
-            start = line_y * row_length
-            self.buffer[start:start + row_length] = row
+        for local_y in range(self.height):
+            start = local_y * len(row)
+            self.buffer[start:start + len(row)] = row
 
     def pixel(self, x, y, color):
-        """在画布范围内绘制一个像素。"""
-        if 0 <= x < self.width and 0 <= y < self.height:
-            offset = (y * self.width + x) * 2
+        """在当前条带范围内绘制一个像素。"""
+        local_y = y - self.origin_y
+        if 0 <= x < self.width and 0 <= local_y < self.height:
+            offset = (local_y * self.width + x) * 2
             self.buffer[offset] = (color >> 8) & 0xFF
             self.buffer[offset + 1] = color & 0xFF
 
     def fill_rect(self, x, y, width, height, color):
-        """绘制经过边界裁剪的实心矩形。"""
+        """绘制经过当前条带边界裁剪的实心矩形。"""
         left = max(0, x)
-        top = max(0, y)
+        top = max(self.origin_y, y)
         right = min(self.width, x + width)
-        bottom = min(self.height, y + height)
+        bottom = min(self.origin_y + self.height, y + height)
         if left >= right or top >= bottom:
             return
         row = self._pixel_bytes(color) * (right - left)
         for line_y in range(top, bottom):
-            start = (line_y * self.width + left) * 2
+            start = ((line_y - self.origin_y) * self.width + left) * 2
             self.buffer[start:start + len(row)] = row
 
     def line(self, x0, y0, x1, y1, color):
@@ -76,8 +81,6 @@ class Canvas:
                         self.fill_rect(
                             cursor_x + column_index * scale,
                             y + row_index * scale,
-                            scale,
-                            scale,
-                            color,
+                            scale, scale, color,
                         )
             cursor_x += 6 * scale

@@ -8,6 +8,7 @@ from config import (
     GRAY,
     GREEN,
     HEIGHT,
+    LCD_STRIP_HEIGHT,
     PURPLE,
     RED,
     WHITE,
@@ -22,7 +23,29 @@ class DashboardRenderer:
     def __init__(self, lcd):
         """创建渲染画布并保存 LCD 输出设备。"""
         self.lcd = lcd
-        self.canvas = Canvas(WIDTH, HEIGHT)
+        self.canvas = Canvas(WIDTH, LCD_STRIP_HEIGHT)
+        self._snapshot = None
+        self._next_y = HEIGHT
+
+    def request_render(self, snapshot):
+        """登记最新快照并从屏幕顶部开始新一轮条带刷新。"""
+        self._snapshot = snapshot or {}
+        self._next_y = 0
+
+    def update(self):
+        """绘制并提交一个屏幕条带，完成后立即返回主循环。"""
+        if self._next_y >= HEIGHT:
+            return False
+        strip_height = min(LCD_STRIP_HEIGHT, HEIGHT - self._next_y)
+        self.canvas.set_origin(self._next_y)
+        self._draw(self._snapshot)
+        byte_count = WIDTH * strip_height * 2
+        self.lcd.show_region(
+            0, self._next_y, WIDTH, strip_height,
+            memoryview(self.canvas.buffer)[:byte_count],
+        )
+        self._next_y += strip_height
+        return True
 
     @staticmethod
     def _number(value, default=0):
@@ -91,7 +114,7 @@ class DashboardRenderer:
         self._draw_bar(8, y + 34, 105, 10, percent, color)
         self._draw_history(126, y + 18, 105, 27, history, color)
 
-    def render(self, snapshot):
+    def _draw(self, snapshot):
         """绘制最新系统快照并将完整帧提交到 LCD。"""
         snapshot = snapshot or {}
         cpu = snapshot.get("cpu", {})
@@ -171,4 +194,3 @@ class DashboardRenderer:
             GRAY,
             1,
         )
-        self.lcd.show(self.canvas.buffer)

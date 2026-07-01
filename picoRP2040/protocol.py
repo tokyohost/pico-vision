@@ -1,126 +1,106 @@
-"""处理 Pico USB 串口握手和 JSON 数据包接收。"""
+"""实现基于纯 ASCII 行的 USB 串口握手与 JSON 接收协议。"""
 
-import struct
 import sys
-import time
+
+try:
+    import uselect as select
+except ImportError:
+    import select
 
 try:
     import ujson as json
 except ImportError:
     import json
 
-try:
-    import uselect as select
-except ImportError:
-    try:
-        import select
-    except ImportError:
-        select = None
-
 from config import (
     DEVICE_NAME,
     HEIGHT,
-    JSON_MAGIC,
+    JSON_PREFIX,
     LCD_DRIVER,
     MAX_JSON_SIZE,
     PING_TEXT,
     PIXEL_FORMAT,
+    SERIAL_READ_BUDGET,
     WIDTH,
 )
 
 
 class JsonProtocol:
-    """处理 USB 串口握手和带长度前缀的 JSON 数据包。"""
+    """增量接收 ASCII 行，避免二进制控制字节触发 MicroPython 中断。"""
 
     def __init__(self):
-        """获取标准输入输出的二进制串口流。"""
-        self.input = getattr(sys.stdin, "buffer", sys.stdin)
-        self.output = getattr(sys.stdout, "buffer", sys.stdout)
+        """初始化标准输入输出、轮询器和行缓冲区。"""
+        self._poll_target = sys.stdin
+        self._input = getattr(sys.stdin, "buffer", sys.stdin)
+        self._output = getattr(sys.stdout, "buffer", sys.stdout)
+        self._poller = select.poll()
+        self._poller.register(self._poll_target, select.POLLIN)
+        self._buffer = bytearray()
 
     def write(self, data):
-        """通过 USB 串口向系统端发送二进制响应。"""
-        self.output.write(data)
+        """向 USB 串口写入响应并尽可能立即刷新。"""
         try:
-            self.output.flush()
+            self._output.write(data)
+        except TypeError:
+            self._output.write(data.decode("ascii"))
+        try:
+            self._output.flush()
         except Exception:
             pass
 
-    def read_exact(self, length):
-        """从 USB 串口阻塞读取指定数量的字节。"""
-        result = bytearray(length)
-        view = memoryview(result)
-        position = 0
-        while position < length:
-            chunk = self.input.read(length - position)
-            if chunk:
-                size = len(chunk)
-                view[position:position + size] = chunk
-                position += size
-            else:
-                time.sleep_ms(1)
-        return result
+    def poll(self):
+        """在固定读取预算内接收数据并返回最新完整 JSON 对象。"""
+        read_count = 0
+        while read_count < SERIAL_READ_BUDGET and self._poller.poll(0):
+            chunk = self._input.read(1)
+            if not chunk:
+                break
+            if isinstance(chunk, str):
+                chunk = chunk.encode("ascii")
+            self._buffer.extend(chunk)
+            read_count += 1
+            if len(self._buffer) > MAX_JSON_SIZE + len(JSON_PREFIX) + 1:
+                self._buffer = bytearray()
+                self.write(b"ERR:BAD_JSON_SIZE\n")
+                return None
+        return self._parse_lines()
 
-    def read_line(self, first_byte, maximum=128):
-        """从首字节开始读取一个长度受限的文本命令。"""
-        result = bytearray(first_byte)
-        while len(result) < maximum:
-            byte = self.input.read(1)
-            if byte:
-                result.extend(byte)
-                if byte == b"\n":
-                    break
-            else:
-                time.sleep_ms(1)
-        return bytes(result)
+    def is_busy(self):
+        """判断串口是否有待接收字节或未完成的行。"""
+        return bool(self._buffer) or bool(self._poller.poll(0))
 
-    def discard(self, length):
-        """丢弃异常数据包的剩余字节，以恢复下一包协议同步。"""
-        remaining = length
-        while remaining > 0:
-            size = min(remaining, 512)
-            self.read_exact(size)
-            remaining -= size
-
-    def receive(self):
-        """读取一个命令，返回新系统快照或空值。"""
-        first = self.input.read(1)
-        if not first:
-            return None
-        if first == b"P":
-            line = self.read_line(first).strip()
+    def _parse_lines(self):
+        """依次解析已完整接收的命令行，并保留最后一个 JSON。"""
+        latest = None
+        while True:
+            newline = self._buffer.find(b"\n")
+            if newline < 0:
+                break
+            line = bytes(self._buffer[:newline]).strip()
+            self._consume(newline + 1)
             if line == PING_TEXT:
-                response = "PONG:{}:{}:{}x{}:{}:JSON\n".format(
-                    DEVICE_NAME,
-                    LCD_DRIVER,
-                    WIDTH,
-                    HEIGHT,
-                    PIXEL_FORMAT,
-                )
-                self.write(response.encode())
-            return None
-        if first != b"J":
-            return None
-        magic = first + self.read_exact(3)
-        if magic != JSON_MAGIC:
-            return None
-        payload_size = struct.unpack(">I", self.read_exact(4))[0]
-        if payload_size <= 0 or payload_size > MAX_JSON_SIZE:
-            self.write(b"ERR:BAD_JSON_SIZE\n")
-            if 0 < payload_size < 1024 * 1024:
-                self.discard(payload_size)
-            return None
-        payload = self.read_exact(payload_size)
-        try:
-            return json.loads(payload.decode("utf-8"))
-        except (ValueError, UnicodeError):
-            self.write(b"ERR:BAD_JSON\n")
-            return None
+                self._write_pong()
+                continue
+            if not line.startswith(JSON_PREFIX):
+                continue
+            payload = line[len(JSON_PREFIX):]
+            try:
+                latest = json.loads(payload.decode("utf-8"))
+                self.write(b"ACK:JSON\n")
+            except (ValueError, UnicodeError):
+                self.write(b"ERR:BAD_JSON\n")
+        return latest
 
+    def _consume(self, count):
+        """重建剩余缓冲区以兼容 RP2040 MicroPython。"""
+        if count >= len(self._buffer):
+            self._buffer = bytearray()
+        else:
+            self._buffer = bytearray(self._buffer[count:])
 
-def create_poller(stream):
-    """创建 USB 输入轮询器；不支持轮询时返回空值。"""
-    if select is None or not hasattr(select, "poll"):
-        return None
-    poller = select.poll()
-    poller.register(stream, select.POLLIN)
-    return poller
+    def _write_pong(self):
+        """返回包含设备与屏幕能力的握手响应。"""
+        response = "PONG:{}:{}:{}x{}:{}:JSON\n".format(
+            DEVICE_NAME, LCD_DRIVER, WIDTH, HEIGHT, PIXEL_FORMAT
+        )
+        self.write(response.encode())

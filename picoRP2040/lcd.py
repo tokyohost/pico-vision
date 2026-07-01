@@ -89,8 +89,12 @@ class LcdDevice:
 
     def show(self, frame):
         """将一帧大端 RGB565 数据完整写入 LCD。"""
-        self.set_window(0, 0, WIDTH - 1, HEIGHT - 1)
+        self.show_region(0, 0, WIDTH, HEIGHT, frame)
+
+    def show_region(self, x, y, width, height, pixels):
+        """将一块 RGB565 像素数据写入指定屏幕区域。"""
+        self.set_window(x, y, x + width - 1, y + height - 1)
         self.dc.value(1)
         self.cs.value(0)
-        self.spi.write(frame)
+        self.spi.write(pixels)
         self.cs.value(1)

@@ -44,11 +44,7 @@ def main():
             snapshot = collector.collect()
             client.send(snapshot)
             print(
-                "已发送 {} | CPU {}% | 内存 {}%".format(
-                    snapshot["timestamp"],
-                    snapshot["cpu"]["percent"],
-                    snapshot["memory"]["percent"],
-                )
+                snapshot
             )
             if arguments.once:
                 break

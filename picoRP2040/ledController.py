@@ -1,8 +1,9 @@
-"""控制 RP2040 开发板上的 WS2812 状态灯。"""
+"""以非阻塞状态机控制 RP2040 板载 WS2812 状态灯。"""
 
-import micropython
+import time
+
 import neopixel
-from machine import Pin, Timer
+from machine import Pin
 
 from config import (
     LED_BRIGHTNESS,
@@ -15,91 +16,54 @@ from config import (
 
 
 class LedController:
-    """以非阻塞方式控制板载 WS2812 绿灯闪烁。"""
+    """管理心跳灯和数据接收提示灯，不执行任何阻塞等待。"""
 
-    def __init__(
-        self,
-        pin=PIN_LED,
-        led_count=LED_COUNT,
-        brightness=LED_BRIGHTNESS,
-        on_duration_ms=LED_ON_DURATION_MS,
-        off_duration_ms=LED_OFF_DURATION_MS,
-        data_pulse_duration_ms=LED_DATA_PULSE_DURATION_MS,
-    ):
-        """初始化状态灯，并设置心跳灯与数据提示灯的时长。"""
+    def __init__(self, pin=PIN_LED, led_count=LED_COUNT):
+        """初始化灯珠驱动与状态机时间参数。"""
         self._pixels = neopixel.NeoPixel(Pin(pin), led_count)
-        self._brightness = brightness
-        self._on_duration_ms = on_duration_ms
-        self._off_duration_ms = off_duration_ms
-        self._data_pulse_duration_ms = data_pulse_duration_ms
+        self._brightness = LED_BRIGHTNESS
         self._state = "off"
-        self._generation = 0
-        self._timer = Timer()
-        self._timer_callback = self._handle_timer
-        self._scheduled_toggle = self._toggle
-        self._write_off()
+        self._deadline = time.ticks_ms()
+        self._write((0, 0, 0))
 
     def start(self):
-        """立即点亮绿灯，并通过硬件定时器启动周期闪烁。"""
-        self._timer.deinit()
-        self._generation += 1
-        self._state = "green"
-        self._write_green()
-        self._arm_timer(self._on_duration_ms)
+        """启动绿色心跳状态。"""
+        self._set_state("green", LED_ON_DURATION_MS)
 
-    def blink_blue(self):
-        """收到有效数据时立即闪烁一次蓝灯，并重新开始心跳周期。"""
-        self._timer.deinit()
-        self._generation += 1
-        self._state = "blue"
-        self._write_blue()
-        self._arm_timer(self._data_pulse_duration_ms)
+    def notify_data(self):
+        """收到有效 JSON 后短暂显示蓝色。"""
+        self._set_state("blue", LED_DATA_PULSE_DURATION_MS)
+
+    def update(self):
+        """根据系统时钟推进灯光状态，调用后立即返回。"""
+        now = time.ticks_ms()
+        if time.ticks_diff(now, self._deadline) < 0:
+            return
+        if self._state == "off":
+            self._set_state("green", LED_ON_DURATION_MS, now)
+        else:
+            self._set_state("off", LED_OFF_DURATION_MS, now)
 
     def off(self):
-        """停止闪烁并关闭状态灯。"""
-        self._timer.deinit()
-        self._generation += 1
+        """关闭状态灯。"""
         self._state = "off"
-        self._write_off()
+        self._write((0, 0, 0))
 
-    def _toggle(self, generation):
-        """在 MicroPython 调度上下文中切换灯光并设置下一段时长。"""
-        if generation != self._generation:
-            return
-
-        if self._state == "off":
-            self._state = "green"
-            self._write_green()
-            duration_ms = self._on_duration_ms
+    def _set_state(self, state, duration_ms, now=None):
+        """切换灯光状态并设置下一次状态变更时间。"""
+        now = time.ticks_ms() if now is None else now
+        self._state = state
+        if state == "green":
+            color = (0, self._brightness, 0)
+        elif state == "blue":
+            color = (0, 0, self._brightness)
         else:
-            self._state = "off"
-            self._write_off()
-            duration_ms = self._off_duration_ms
-        self._arm_timer(duration_ms)
+            color = (0, 0, 0)
+        self._write(color)
+        self._deadline = time.ticks_add(now, duration_ms)
 
-    def _handle_timer(self, _timer):
-        """响应定时器中断，并将灯光切换安排到安全的调度上下文。"""
-        micropython.schedule(self._scheduled_toggle, self._generation)
-
-    def _arm_timer(self, duration_ms):
-        """启动一次性定时器，在指定毫秒数后触发灯光切换。"""
-        self._timer.init(
-            period=duration_ms,
-            mode=Timer.ONE_SHOT,
-            callback=self._timer_callback,
-        )
-
-    def _write_off(self):
-        """向灯珠写入黑色以关闭状态灯。"""
-        self._pixels[0] = (0, 0, 0)
-        self._pixels.write()
-
-    def _write_green(self):
-        """按照配置亮度写入绿色灯光。"""
-        self._pixels[0] = (0, self._brightness, 0)
-        self._pixels.write()
-
-    def _write_blue(self):
-        """按照配置亮度写入蓝色数据提示灯。"""
-        self._pixels[0] = (0, 0, self._brightness)
+    def _write(self, color):
+        """向全部灯珠写入指定 RGB 颜色。"""
+        for index in range(len(self._pixels)):
+            self._pixels[index] = color
         self._pixels.write()

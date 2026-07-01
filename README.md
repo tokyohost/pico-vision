@@ -1,40 +1,46 @@
-# Pico 系统监控屏
+# Pico RP2040 系统监控屏
 
-本项目将系统信息采集与图像渲染彻底分离：电脑只负责采集系统参数并通过 JSON 发送，Pico 负责生成 RGB565 图像，并固定每 0.5 秒刷新一次 ST7789 屏幕。
+项目包含电脑端数据采集程序和 Pico RP2040 显示程序，实现两个独立功能：
 
-## 文件职责
+1. 非阻塞控制 GPIO22 上的 WS2812 状态灯；绿色表示运行，蓝色表示收到有效 JSON。
+2. 通过 USB 串口增量接收 JSON，并将 ST7789 LCD 按 20 行条带异步刷新。
 
-Pico 端文件位于 `pico/`，需要将该目录中的全部文件复制到 Pico 根目录：
+## 设计约束
 
-- `pico/main.py`：启动入口，只负责编排 JSON 接收和 0.5 秒渲染循环。
-- `pico/config.py`：屏幕、引脚、协议和颜色配置。
-- `pico/ledController.py`：以非阻塞方式控制 RP2040 板载绿灯闪烁。
-- `pico/lcd.py`：ST7789 初始化与整帧输出驱动。
-- `pico/canvas.py`：RGB565 帧缓冲基础绘图。
-- `pico/font_5x7.py`：紧凑型 ASCII 点阵字体。
-- `pico/dashboard.py`：系统监控仪表盘布局和渲染。
-- `pico/protocol.py`：USB 握手、轮询和 JSON 数据包解析。
+- 不使用 RP2040 第二核心，规避 MicroPython 线程、USB 和 SPI 之间的互锁风险。
+- 串口通过 `uselect.poll()` 检查后逐字节读取，主循环中不存在无限阻塞读取。
+- LCD 不申请 240×320 的整帧缓冲，仅使用 240×20×2，即 9,600 字节条带缓冲。
+- LED、串口接收和 LCD 刷新均由单核协作式主循环调度。
+- JSON 最大长度为 16 KiB，超限数据包会被拒绝。
 
-电脑端文件位于项目根目录：
+## Pico 端文件
 
-- `send_frame.py`：电脑端启动入口和发送周期编排。
-- `system_monitor.py`：CPU、内存、磁盘、网络、温度与 Ping 数据采集。
-- `pico_client.py`：Pico 串口发现、握手和 JSON 发送。
+将 `picoRP2040/` 内全部 `.py` 文件复制到 Pico 根目录：
+
+- `main.py`：应用入口和协作式主循环。
+- `ledController.py`：WS2812 非阻塞状态机。
+- `protocol.py`：USB 握手及 JSON 增量接收状态机。
+- `data_receiver.py`：最新 JSON 快照缓存。
+- `lcd.py`：ST7789 初始化和区域写屏。
+- `canvas.py`：带条带裁剪的 RGB565 绘图。
+- `dashboard.py`：仪表盘布局和分段刷新。
+- `config.py`：引脚、周期、协议和颜色配置。
 
 ## 通信协议
 
-每个数据包由三部分连续组成：
+数据包采用纯 ASCII 行协议，避免 MicroPython 将二进制 `0x03` 解释为 Ctrl+C：
 
 ```text
-JSN0 + 4 字节大端 JSON 长度 + UTF-8 JSON
+JSON: + 单行 UTF-8 JSON + 换行符
 ```
 
-握手命令保持为 `PING:PICO_LCD?\n`，支持自动发现串口。Pico 只缓存最新 JSON；即使电脑发送间隔发生抖动，LCD 仍由 Pico 自身时钟每 500 ms 重绘。
+设备发现命令为 `PING:PICO_LCD?\n`，有效 JSON 接收完成后返回 `ACK:JSON\n`。
 
-## 使用方法
+## 启动方式
 
-1. 将 `pico/` 目录内的全部 `.py` 文件保存到 Pico 根目录并重启。
-2. 在电脑端安装依赖：`python -m pip install -r requirements.txt`。
-3. 启动采集程序：`python send_frame.py`。
+```powershell
+python -m pip install -r requirements.txt
+python send_frame.py
+```
 
-可使用 `--port COM3` 固定串口，使用 `--ping-target 1.1.1.1` 修改 Ping 目标。
+固定串口时可增加 `--port COM3` 参数。
