@@ -55,9 +55,15 @@ class Application:
                 if time.ticks_diff(now, self._next_render) >= 0:
                     self._next_render = time.ticks_add(now, RENDER_INTERVAL_MS)
             if self._renderer.update():
-                response = "ACK:LCD_FRAME:{}:{}MS\n".format(
+                canvas_us, lcd_us, region_count = self._renderer.last_profile()
+                response = (
+                    "ACK:LCD_FRAME:{}:TOTAL={}MS:CANVAS={}US:LCD={}US:REGIONS={}\n"
+                ).format(
                     self._rendering_version,
                     self._renderer.last_render_ms(),
+                    canvas_us,
+                    lcd_us,
+                    region_count,
                 )
                 self._protocol.write(response.encode())
             time.sleep_ms(1)

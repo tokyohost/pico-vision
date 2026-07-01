@@ -8,7 +8,7 @@ from pico_client import PicoJsonClient
 from system_monitor import SystemInformationCollector
 
 
-SEND_INTERVAL_SECONDS = 0.5
+SEND_INTERVAL_SECONDS = 1.0
 
 
 def create_argument_parser():

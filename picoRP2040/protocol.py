@@ -21,6 +21,7 @@ from config import (
     PING_TEXT,
     PIXEL_FORMAT,
     SERIAL_READ_BUDGET,
+    SERIAL_READ_CHUNK_SIZE,
     WIDTH,
 )
 
@@ -52,13 +53,14 @@ class JsonProtocol:
         """在固定读取预算内接收数据并返回最新完整 JSON 对象。"""
         read_count = 0
         while read_count < SERIAL_READ_BUDGET and self._poller.poll(0):
-            chunk = self._input.read(1)
+            remaining = SERIAL_READ_BUDGET - read_count
+            chunk = self._input.read(min(SERIAL_READ_CHUNK_SIZE, remaining))
             if not chunk:
                 break
             if isinstance(chunk, str):
                 chunk = chunk.encode("ascii")
             self._buffer.extend(chunk)
-            read_count += 1
+            read_count += len(chunk)
             if len(self._buffer) > MAX_JSON_SIZE + len(JSON_PREFIX) + 1:
                 self._buffer = bytearray()
                 self.write(b"ERR:BAD_JSON_SIZE\n")
