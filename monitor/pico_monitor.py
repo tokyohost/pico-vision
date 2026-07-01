@@ -26,6 +26,7 @@ def create_argument_parser():
     parser.add_argument("--interval", type=float, default=float(os.getenv("PICO_MONITOR_INTERVAL", "1.0")), help="采集和发送间隔，单位为秒")
     parser.add_argument("--reconnect-interval", type=float, default=float(os.getenv("PICO_MONITOR_RECONNECT_INTERVAL", "3.0")), help="设备断线后的重连间隔，单位为秒")
     parser.add_argument("--screen-rotation", type=int, choices=(0, 180), default=int(os.getenv("PICO_MONITOR_SCREEN_ROTATION", "0")), help="Pico 屏幕旋转角度，可选 0 或 180")
+    parser.add_argument("--network-unit", choices=("MB", "Mbps"), default=os.getenv("PICO_MONITOR_NETWORK_UNIT", "MB"), help="上传下载速率显示单位，可选 MB 或 Mbps")
     parser.add_argument("--once", action="store_true", help="仅成功发送一次数据")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     return parser
@@ -50,7 +51,7 @@ class MonitorService:
 
     def run(self):
         """持续连接设备、采集指标并发送最新系统快照。"""
-        LOGGER.info("监控服务启动：端口=%s，发送间隔=%.1f 秒，重连间隔=%.1f 秒，屏幕旋转=%d°", self.arguments.port or "自动发现", self.arguments.interval, self.arguments.reconnect_interval, self.arguments.screen_rotation)
+        LOGGER.info("监控服务启动：端口=%s，Ping=%s，发送间隔=%.1f 秒，重连间隔=%.1f 秒，屏幕旋转=%d°，网络单位=%s", self.arguments.port or "自动发现", self.arguments.ping_target, self.arguments.interval, self.arguments.reconnect_interval, self.arguments.screen_rotation, self.arguments.network_unit)
         while not self.stopping.is_set():
             try:
                 if not self.client.is_connected:
@@ -59,7 +60,10 @@ class MonitorService:
                     LOGGER.info("Pico LCD 已连接：%s", self.client.port_name)
                 started = time.monotonic()
                 snapshot = self.collector.collect()
-                snapshot["display"] = {"rotation": self.arguments.screen_rotation}
+                snapshot["display"] = {
+                    "rotation": self.arguments.screen_rotation,
+                    "network_unit": self.arguments.network_unit,
+                }
                 self.client.send(snapshot)
                 if self.arguments.once:
                     return 0

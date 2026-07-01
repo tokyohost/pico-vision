@@ -53,6 +53,14 @@ class PicoClientTest(unittest.TestCase):
         arguments = create_argument_parser().parse_args(["--screen-rotation", "180"])
         self.assertEqual(arguments.screen_rotation, 180)
 
+    def test_ping_and_network_unit_arguments(self):
+        """确认 Ping 默认地址和网络速率单位可以独立配置。"""
+        defaults = create_argument_parser().parse_args([])
+        self.assertEqual(defaults.ping_target, "www.baidu.com")
+        arguments = create_argument_parser().parse_args(["--ping-target", "1.1.1.1", "--network-unit", "Mbps"])
+        self.assertEqual(arguments.ping_target, "1.1.1.1")
+        self.assertEqual(arguments.network_unit, "Mbps")
+
 
 class SystemCollectorTest(unittest.TestCase):
     """验证系统采集器输出 Pico 仪表盘需要的字段。"""

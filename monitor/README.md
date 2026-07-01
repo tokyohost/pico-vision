@@ -25,10 +25,11 @@ python pico_monitor.py
 ```text
 --port COM3                 固定 Windows 串口
 --port /dev/ttyACM0         固定 Linux 串口
---ping-target 1.1.1.1       指定延迟探测目标
+--ping-target 1.1.1.1       指定延迟探测目标，默认 www.baidu.com
 --interval 1.0              指定采集发送间隔
 --reconnect-interval 3.0    指定断线重连间隔
 --screen-rotation 180       将 Pico 屏幕旋转一百八十度
+--network-unit Mbps         上传下载使用 MB/s 或 Mbps 显示
 --once                      成功发送一次后退出
 ```
 

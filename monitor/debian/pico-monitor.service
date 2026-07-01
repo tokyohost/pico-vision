@@ -10,6 +10,7 @@ Environment=PICO_MONITOR_PING_TARGET=www.baidu.com
 Environment=PICO_MONITOR_INTERVAL=1.0
 Environment=PICO_MONITOR_RECONNECT_INTERVAL=3.0
 Environment=PICO_MONITOR_SCREEN_ROTATION=0
+Environment=PICO_MONITOR_NETWORK_UNIT=MB
 EnvironmentFile=-/etc/pico-monitor.conf
 ExecStart=/usr/bin/pico-monitor
 Restart=always

@@ -140,6 +140,14 @@ class DashboardRenderer:
         return "0B"
 
     @staticmethod
+    def _format_network_rate(value, unit):
+        """按配置将每秒字节数格式化为 MB/s 或 Mbps。"""
+        bytes_per_second = max(0, DashboardRenderer._number(value))
+        if unit == "Mbps":
+            return "{:.2f}Mbps".format(bytes_per_second * 8 / 1_000_000)
+        return "{:.2f}MB/S".format(bytes_per_second / 1_000_000)
+
+    @staticmethod
     def _format_uptime(seconds):
         """将运行秒数格式化为天、小时和分钟。"""
         minutes = int(DashboardRenderer._number(seconds)) // 60
@@ -183,14 +191,15 @@ class DashboardRenderer:
         memory = snapshot.get("memory", {})
         disk = snapshot.get("disk", {})
         network = snapshot.get("network", {})
+        network_unit = snapshot.get("display", {}).get("network_unit", "MB")
         self.canvas.clear(BLACK)
 
         if key == "status_light":
             self.canvas.fill_rect(219, 10, 12, 12, GREEN if network.get("online") else RED)
             return
         if key == "network_rate":
-            self.canvas.text(8, 245, "UP " + self._format_bytes(network.get("upload_bps")) + "/S", BLUE, 1)
-            self.canvas.text(122, 245, "DN " + self._format_bytes(network.get("download_bps")) + "/S", GREEN, 1)
+            self.canvas.text(8, 245, "UP " + self._format_network_rate(network.get("upload_bps"), network_unit), BLUE, 1)
+            self.canvas.text(122, 245, "DN " + self._format_network_rate(network.get("download_bps"), network_unit), GREEN, 1)
             return
         if key == "network_status":
             ping = network.get("ping_ms")
@@ -232,6 +241,7 @@ class DashboardRenderer:
         memory = snapshot.get("memory", {})
         disk = snapshot.get("disk", {})
         network = snapshot.get("network", {})
+        network_unit = snapshot.get("display", {}).get("network_unit", "MB")
         self.canvas.clear(BLACK)
 
         if self._visible(0, 35):
@@ -253,8 +263,8 @@ class DashboardRenderer:
         if self._visible(213, 280):
             self.canvas.line(0, 213, WIDTH - 1, 213, GRAY)
             self.canvas.text(8, 222, "NET", PURPLE, 2)
-            self.canvas.text(8, 245, "UP " + self._format_bytes(network.get("upload_bps")) + "/S", BLUE, 1)
-            self.canvas.text(122, 245, "DN " + self._format_bytes(network.get("download_bps")) + "/S", GREEN, 1)
+            self.canvas.text(8, 245, "UP " + self._format_network_rate(network.get("upload_bps"), network_unit), BLUE, 1)
+            self.canvas.text(122, 245, "DN " + self._format_network_rate(network.get("download_bps"), network_unit), GREEN, 1)
             ping = network.get("ping_ms")
             ping_text = "ERR" if ping is None else "{}MS".format(int(self._number(ping)))
             self.canvas.text(8, 261, "PING " + ping_text, PURPLE, 1)
