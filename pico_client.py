@@ -9,6 +9,8 @@ from serial.tools import list_ports
 
 PING_COMMAND = b"PING:PICO_LCD?\n"
 EXPECTED_PREFIX = "PONG:PICO_LCD:"
+DEVICE_READY_MESSAGE = "BOOT:PICO_LCD_READY"
+LCD_FRAME_ACK_PREFIX = "ACK:LCD_FRAME:"
 JSON_PREFIX = b"JSON:"
 SERIAL_BAUDRATE = 115200
 SERIAL_WRITE_TIMEOUT_SECONDS = 10
@@ -68,12 +70,24 @@ class PicoJsonClient:
                     line = device.readline().decode("utf-8", errors="replace").strip()
                     if line and line not in messages:
                         messages.append(line)
-                    if line.startswith(EXPECTED_PREFIX) and line.endswith(":JSON"):
+                    if PicoJsonClient._is_device_response(line):
                         return device, messages
             device.close()
         except (OSError, serial.SerialException) as error:
             messages.append("串口异常：{}".format(error))
         return None, messages
+
+    @staticmethod
+    def _is_device_response(message):
+        """判断串口消息是否能明确标识正在运行的 Pico LCD 应用。"""
+        return (
+            (
+                message.startswith(EXPECTED_PREFIX)
+                and message.endswith(":JSON")
+            )
+            or message == DEVICE_READY_MESSAGE
+            or message.startswith(LCD_FRAME_ACK_PREFIX)
+        )
 
     def send(self, snapshot):
         """分块发送紧凑 JSON 数据包，并等待 Pico 返回接收确认。"""

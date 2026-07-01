@@ -21,7 +21,6 @@ from config import (
     PING_TEXT,
     PIXEL_FORMAT,
     SERIAL_READ_BUDGET,
-    SERIAL_READ_CHUNK_SIZE,
     WIDTH,
 )
 
@@ -31,11 +30,12 @@ class JsonProtocol:
 
     def __init__(self):
         """初始化标准输入输出、轮询器和行缓冲区。"""
-        self._poll_target = sys.stdin
-        self._input = getattr(sys.stdin, "buffer", sys.stdin)
+        self._input = sys.stdin
         self._output = getattr(sys.stdout, "buffer", sys.stdout)
         self._poller = select.poll()
-        self._poller.register(self._poll_target, select.POLLIN)
+        # RP2 的 USB REPL 在 sys.stdin 上实现流轮询接口；部分固件的
+        # sys.stdin.buffer 虽可读取，却不会正确报告 POLLIN 可读事件。
+        self._poller.register(self._input, select.POLLIN)
         self._buffer = bytearray()
 
     def write(self, data):
@@ -53,8 +53,8 @@ class JsonProtocol:
         """在固定读取预算内接收数据并返回最新完整 JSON 对象。"""
         read_count = 0
         while read_count < SERIAL_READ_BUDGET and self._poller.poll(0):
-            remaining = SERIAL_READ_BUDGET - read_count
-            chunk = self._input.read(min(SERIAL_READ_CHUNK_SIZE, remaining))
+            # 每次只读取一个字符，避免部分 RP2 固件等待凑满请求长度。
+            chunk = self._input.read(1)
             if not chunk:
                 break
             if isinstance(chunk, str):

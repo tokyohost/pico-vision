@@ -9,6 +9,7 @@ NUM_LEDS = 1
 np = neopixel.NeoPixel(Pin(LED_PIN), NUM_LEDS)
 
 def set_color(r, g, b):
+    """将指定 RGB 颜色写入板载 WS2812 灯珠。"""
     np[0] = (r, g, b)
     np.write()
 
