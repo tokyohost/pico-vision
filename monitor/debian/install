@@ -1,0 +1,5 @@
+pico_monitor.py usr/lib/pico-monitor
+pico_client.py usr/lib/pico-monitor
+system_monitor.py usr/lib/pico-monitor
+bin/pico-monitor usr/bin
+debian/pico-monitor.conf etc

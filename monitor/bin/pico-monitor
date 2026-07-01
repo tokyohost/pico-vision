@@ -1,0 +1,4 @@
+#!/bin/sh
+# 启动 Debian 软件包安装的 Pico 系统监控程序。
+set -eu
+exec /usr/bin/python3 /usr/lib/pico-monitor/pico_monitor.py "$@"

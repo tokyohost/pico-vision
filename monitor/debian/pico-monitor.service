@@ -1,0 +1,23 @@
+[Unit]
+Description=Pico LCD 系统硬件监控服务
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=PICO_MONITOR_PORT=
+Environment=PICO_MONITOR_PING_TARGET=www.baidu.com
+Environment=PICO_MONITOR_INTERVAL=1.0
+Environment=PICO_MONITOR_RECONNECT_INTERVAL=3.0
+EnvironmentFile=-/etc/pico-monitor.conf
+ExecStart=/usr/bin/pico-monitor
+Restart=always
+RestartSec=3
+User=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,5 @@
+pico-monitor (1.0.0) unstable; urgency=medium
+
+  * 首次发布 Windows 与 Linux 跨平台系统硬件监控程序。
+
+ -- Pico Monitor Maintainer <maintainer@example.com>  Wed, 01 Jul 2026 00:00:00 +0800

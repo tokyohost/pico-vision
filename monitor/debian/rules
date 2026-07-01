@@ -1,0 +1,10 @@
+#!/usr/bin/make -f
+# 使用 debhelper 执行标准 Debian 软件包构建流程。
+%:
+	dh $@
+
+# Python 源码无需额外编译步骤。
+override_dh_auto_build:
+
+# 自动化测试由项目验证流程独立执行。
+override_dh_auto_test:
