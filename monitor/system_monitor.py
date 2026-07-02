@@ -17,6 +17,7 @@ import psutil
 
 HISTORY_LENGTH = 24
 DISK_TEMPERATURE_CACHE_SECONDS = 30
+DISK_COLLECTION_INTERVAL_SECONDS = 10
 
 
 class PingMonitor:
@@ -130,8 +131,32 @@ class SystemInformationCollector:
         self.power_monitor = PowerMonitor()
         self.disk_temperature_cache = {}
         self.disk_temperature_time = 0.0
+        self.disk_snapshot = []
+        self.disk_snapshot_lock = threading.Lock()
         self.ping_monitor.start()
+        threading.Thread(
+            target=self._disk_collection_loop,
+            name="磁盘信息采集",
+            daemon=True,
+        ).start()
         psutil.cpu_percent(interval=None)
+
+    def _disk_collection_loop(self):
+        """在后台低频采集磁盘信息，避免慢盘阻塞主发送循环。"""
+        while True:
+            try:
+                disks = self._disk_details()
+            except (OSError, ValueError, psutil.Error, subprocess.SubprocessError):
+                disks = None
+            if disks is not None:
+                with self.disk_snapshot_lock:
+                    self.disk_snapshot = disks
+            time.sleep(DISK_COLLECTION_INTERVAL_SECONDS)
+
+    def _latest_disks(self):
+        """返回后台线程最近一次完成的磁盘信息快照。"""
+        with self.disk_snapshot_lock:
+            return list(self.disk_snapshot)
 
     @staticmethod
     def _cpu_temperature():
@@ -360,7 +385,7 @@ class SystemInformationCollector:
     def collect(self):
         """采集一次完整系统状态并更新全部历史趋势序列。"""
         cpu, memory = round(psutil.cpu_percent(interval=None), 1), psutil.virtual_memory()
-        disks = self._disk_details()
+        disks = self._latest_disks()
         disk_used, disk_total, disk_percent = self._disk_usage(disks)
         network = self._network_rates()
         power = self.power_monitor.snapshot()

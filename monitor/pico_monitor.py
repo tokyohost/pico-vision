@@ -62,6 +62,12 @@ class MonitorService:
                     LOGGER.info("Pico LCD 已连接：%s", self.client.port_name)
                 started = time.monotonic()
                 snapshot = self.collector.collect()
+                collection_elapsed = time.monotonic() - started
+                if collection_elapsed > 0.5:
+                    LOGGER.warning(
+                        "系统指标采集耗时较长：%.3f 秒",
+                        collection_elapsed,
+                    )
                 snapshot["display"] = {
                     "rotation": self.arguments.screen_rotation,
                     "network_unit": self.arguments.network_unit,

@@ -46,6 +46,7 @@ class Application:
             if (
                 time.ticks_diff(now, self._next_render) >= 0
                 and not self._renderer.is_rendering()
+                and version != self._rendering_version
             ):
                 display = snapshot.get("display", {}) if snapshot else {}
                 requested_rotation = display.get("rotation", 0)
