@@ -16,7 +16,7 @@ from system_monitor import SystemInformationCollector
 
 
 LOGGER = logging.getLogger("pico-monitor")
-BUILTIN_LCD_STYLES = ("default", "disk", "horizontal")
+BUILTIN_LCD_STYLES = ("default", "disk")
 
 
 def create_argument_parser():

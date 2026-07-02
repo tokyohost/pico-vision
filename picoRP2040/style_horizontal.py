@@ -14,10 +14,16 @@ class HorizontalStyle:
 
     @staticmethod
     def create_dirty_regions():
-        """按条带创建横屏样式的动态刷新区域。"""
+        """按独立数据面板创建横屏样式的动态刷新区域。"""
         return [
-            ("strip_{}".format(y), 0, y, 320, min(40, 240 - y))
-            for y in range(0, 240, 40)
+            ("cpu", 2, 2, 100, 69),
+            ("memory", 2, 75, 100, 48),
+            ("network", 2, 127, 100, 82),
+            ("storage_summary", 106, 2, 212, 43),
+            ("disk_row_0", 106, 49, 212, 48),
+            ("disk_row_1", 106, 101, 212, 48),
+            ("disk_row_2", 106, 153, 212, 48),
+            ("footer", 2, 213, 316, 25),
         ]
 
     @staticmethod
@@ -37,6 +43,36 @@ class HorizontalStyle:
                 return ("{:.1f}{}" if unit in ("G", "T") else "{:.0f}{}").format(amount, unit)
             amount /= 1024
         return "0B"
+
+    @classmethod
+    def _format_disk_capacity(cls, used_bytes, total_bytes):
+        """使用共享单位生成不超过八个字符的磁盘容量文本。"""
+        used = max(0, cls._number(used_bytes))
+        total = max(0, cls._number(total_bytes))
+        units = ("B", "K", "M", "G", "T")
+        unit_index = 0
+        while total >= 1024 and unit_index < len(units) - 1:
+            used /= 1024
+            total /= 1024
+            unit_index += 1
+
+        def compact(value):
+            """按当前容量量级输出最短且可辨识的数值。"""
+            if value >= 10:
+                return str(int(round(value)))
+            return "{:.1f}".format(value)
+
+        result = "{}/{}{}".format(
+            compact(used), compact(total), units[unit_index]
+        )
+        if len(result) > 8 and unit_index < len(units) - 1:
+            used /= 1024
+            total /= 1024
+            unit_index += 1
+            result = "{}/{}{}".format(
+                compact(used), compact(total), units[unit_index]
+            )
+        return result[:8]
 
     @classmethod
     def _format_rate(cls, value, unit):
@@ -145,23 +181,27 @@ class HorizontalStyle:
         canvas.text(280, 7, "{}%".format(percent), YELLOW, 2)
         self._bar(canvas, 112, 33, 198, 8, percent, YELLOW)
 
-    def _draw_disk_cards(self, canvas, snapshot):
-        """按三列网格绘制最多九个物理磁盘卡片。"""
+    def _draw_disk_cards(self, canvas, snapshot, selected_row=None):
+        """按三列网格绘制指定行或全部物理磁盘卡片。"""
         disks = snapshot.get("disks", ())[:9]
         for index, disk in enumerate(disks):
             column, row = index % 3, index // 3
+            if selected_row is not None and row != selected_row:
+                continue
             x, y = 106 + column * 71, 49 + row * 52
             self._frame(canvas, x, y, 68, 48, YELLOW)
-            name = str(disk.get("name", "DISK{}".format(index)))[:7]
+            name = str(disk.get("name", "DISK{}".format(index)))[:5]
             temperature = disk.get("temperature_c")
             temperature_text = "--C" if temperature is None else "{}C".format(int(self._number(temperature)))
             canvas.text(x + 4, y + 4, name, YELLOW, 1)
             canvas.text(x + 43, y + 4, temperature_text, WHITE, 1)
-            capacity = self._format_bytes(disk.get("used_bytes")) + "/" + self._format_bytes(disk.get("total_bytes"))
-            canvas.text(x + 4, y + 18, capacity[:10], WHITE, 1)
+            capacity = self._format_disk_capacity(
+                disk.get("used_bytes"), disk.get("total_bytes")
+            )
+            canvas.text(x + 3, y + 18, capacity[:8], WHITE, 1)
             percent = int(self._number(disk.get("percent")))
             canvas.text(x + 4, y + 32, "{}%".format(percent), YELLOW, 1)
-            self._bar(canvas, x + 32, y + 34, 31, 8, percent, YELLOW)
+            self._bar(canvas, x + 38, y + 34, 25, 8, percent, YELLOW)
 
     def _draw_footer(self, canvas, snapshot):
         """绘制横屏底部的时间、运行时长和功耗。"""
@@ -192,9 +232,21 @@ class HorizontalStyle:
             self._draw_footer(canvas, snapshot)
 
     def draw_dirty(self, canvas, key, snapshot):
-        """重绘横屏样式的一个动态条带区域。"""
-        del key
-        self.draw_visible(canvas, snapshot)
+        """仅重绘横屏样式中指定的动态数据面板。"""
+        snapshot = snapshot or {}
+        canvas.clear(BLACK)
+        if key == "cpu":
+            self._draw_cpu(canvas, snapshot)
+        elif key == "memory":
+            self._draw_memory(canvas, snapshot)
+        elif key == "network":
+            self._draw_network(canvas, snapshot)
+        elif key == "storage_summary":
+            self._draw_storage_summary(canvas, snapshot)
+        elif key.startswith("disk_row_"):
+            self._draw_disk_cards(canvas, snapshot, int(key[-1]))
+        else:
+            self._draw_footer(canvas, snapshot)
 
 
 def create_horizontal_style():
