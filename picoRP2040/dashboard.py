@@ -52,12 +52,16 @@ class DashboardRenderer:
         self.lcd.set_landscape(bool(getattr(self._style, "landscape", False)))
 
     def set_rotation(self, rotation):
-        """旋转前清空旧画面，并要求下一帧执行完整刷新。"""
+        """切换方向后按新扫描方向清屏，并要求下一帧完整刷新。"""
         normalized = 180 if rotation == 180 else 0
         if normalized == self.lcd.rotation():
             return False
-        self._clear_screen()
-        changed = self.lcd.set_rotation(normalized)
+        self.lcd.set_display_enabled(False)
+        try:
+            changed = self.lcd.set_rotation(normalized)
+            self._clear_screen()
+        finally:
+            self.lcd.set_display_enabled(True)
         if changed:
             self._initialized = False
         return changed
@@ -129,6 +133,15 @@ class DashboardRenderer:
             self._last_render_ms = time.ticks_diff(time.ticks_ms(), self._render_started)
             self._render_started = None
         return completed
+
+    def update_pending(self, max_regions=8):
+        """在单轮循环内批量刷新多个区域，减少区域间的调度延迟。"""
+        updated = 0
+        while updated < max_regions and self.is_rendering():
+            updated += 1
+            if self.update():
+                return True
+        return False
 
     def _show_view(self, x, y, width, height):
         """将当前视口的有效像素提交到 LCD。"""

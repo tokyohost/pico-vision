@@ -81,7 +81,7 @@ class Application:
                 )
                 if time.ticks_diff(now, self._next_render) >= 0:
                     self._next_render = time.ticks_add(now, RENDER_INTERVAL_MS)
-            if self._renderer.update():
+            if self._renderer.update_pending():
                 canvas_us, lcd_us, region_count = self._renderer.last_profile()
                 response = (
                     "ACK:LCD_FRAME:{}:TOTAL={}MS:CANVAS={}US:LCD={}US:REGIONS={}\n"

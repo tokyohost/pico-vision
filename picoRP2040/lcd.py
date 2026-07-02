@@ -120,6 +120,10 @@ class LcdDevice:
         """返回当前生效的屏幕旋转角度。"""
         return self._rotation
 
+    def set_display_enabled(self, enabled):
+        """开启或关闭 LCD 显示输出，显存内容保持不变。"""
+        self.command(0x29 if enabled else 0x28)
+
     def show(self, frame):
         """将一帧大端 RGB565 数据完整写入 LCD。"""
         self.show_region(0, 0, WIDTH, HEIGHT, frame)
