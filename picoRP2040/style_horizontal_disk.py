@@ -1,4 +1,4 @@
-"""实现参考监控大屏布局的横向 LCD 仪表盘样式。"""
+"""实现以磁盘统计为重点的横向 LCD 仪表盘样式。"""
 
 from config import BLACK, BLUE, DARK, GRAY, GREEN, PURPLE, WHITE, YELLOW
 from style_plugins import register_style
@@ -10,10 +10,10 @@ ELEMENT_WARNING = 0xE507
 ELEMENT_DANGER = 0xF36D
 
 
-class HorizontalStyle:
-    """封装三百二十乘二百四十横屏仪表盘的绘制规则。"""
+class HorizontalDiskStyle:
+    """封装三百二十乘二百四十横向磁盘统计仪表盘的绘制规则。"""
 
-    name = "horizontal"
+    name = "horizontal_disk"
     width = 320
     height = 240
     landscape = True
@@ -356,9 +356,9 @@ class HorizontalStyle:
             self._draw_footer(canvas, snapshot)
 
 
-def create_horizontal_style():
-    """创建横屏 LCD 仪表盘样式插件。"""
-    return HorizontalStyle()
+def create_horizontal_disk_style():
+    """创建横向磁盘统计 LCD 仪表盘样式插件。"""
+    return HorizontalDiskStyle()
 
 
-register_style(HorizontalStyle.name, create_horizontal_style)
+register_style(HorizontalDiskStyle.name, create_horizontal_disk_style)
