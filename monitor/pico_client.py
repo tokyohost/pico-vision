@@ -8,8 +8,12 @@ import serial
 from serial.tools import list_ports
 
 
-PING_COMMAND = b"PING:PICO_LCD?\n"
+SERIAL_PROTOCOL_BLOCK_SIZE = 64
+PING_COMMAND = b"PING:PICO_LCD?".ljust(
+    SERIAL_PROTOCOL_BLOCK_SIZE - 1, b" "
+) + b"\n"
 JSON_ACK = b"ACK:JSON"
+SERIAL_WRITE_CHUNK_SIZE = 512
 LOGGER = logging.getLogger("pico-monitor.serial")
 
 
@@ -72,13 +76,15 @@ class PicoJsonClient:
 
     @staticmethod
     def build_packet(snapshot):
-        """将系统快照编码为与 Pico 串口协议完全一致的 JSON 数据包。"""
+        """编码 JSON 并补齐协议块，支持 Pico 批量读取且不阻塞尾块。"""
         payload = json.dumps(
             snapshot,
             ensure_ascii=True,
             separators=(",", ":"),
         ).encode("utf-8")
-        return b"JSON:" + payload + b"\n"
+        line = b"JSON:" + payload
+        padding_size = -(len(line) + 1) % SERIAL_PROTOCOL_BLOCK_SIZE
+        return line + b" " * padding_size + b"\n"
 
     def send(self, snapshot):
         """分块发送单行 JSON 数据，并等待 Pico 返回接收确认。"""
@@ -86,12 +92,21 @@ class PicoJsonClient:
             raise RuntimeError("Pico 串口尚未连接")
         packet = memoryview(self.build_packet(snapshot))
         LOGGER.info("[Monitor -> Pico][%s][JSON][%d 字节] %s", self.port_name, len(packet), bytes(packet).decode("utf-8", errors="replace").rstrip())
+        send_started = time.monotonic()
         chunk_count = 0
-        for position in range(0, len(packet), 64):
-            self.serial.write(packet[position:position + 64])
+        for position in range(0, len(packet), SERIAL_WRITE_CHUNK_SIZE):
+            self.serial.write(
+                packet[position:position + SERIAL_WRITE_CHUNK_SIZE]
+            )
             chunk_count += 1
         self.serial.flush()
-        LOGGER.info("[Monitor -> Pico][%s][发送完成] 共 %d 个数据块", self.port_name, chunk_count)
+        send_elapsed_ms = (time.monotonic() - send_started) * 1000
+        LOGGER.info(
+            "[Monitor -> Pico][%s][发送完成] 共 %d 个数据块，耗时 %.1f ms",
+            self.port_name,
+            chunk_count,
+            send_elapsed_ms,
+        )
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             response = self.serial.readline().strip()

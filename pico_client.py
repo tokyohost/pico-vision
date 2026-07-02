@@ -7,7 +7,10 @@ import serial
 from serial.tools import list_ports
 
 
-PING_COMMAND = b"PING:PICO_LCD?\n"
+SERIAL_PROTOCOL_BLOCK_SIZE = 64
+PING_COMMAND = b"PING:PICO_LCD?".ljust(
+    SERIAL_PROTOCOL_BLOCK_SIZE - 1, b" "
+) + b"\n"
 EXPECTED_PREFIX = "PONG:PICO_LCD:"
 DEVICE_READY_MESSAGE = "BOOT:PICO_LCD_READY"
 LCD_FRAME_ACK_PREFIX = "ACK:LCD_FRAME:"
@@ -99,7 +102,9 @@ class PicoJsonClient:
             ensure_ascii=True,
             separators=(",", ":"),
         ).encode("utf-8")
-        packet = JSON_PREFIX + payload + b"\n"
+        line = JSON_PREFIX + payload
+        padding_size = -(len(line) + 1) % SERIAL_PROTOCOL_BLOCK_SIZE
+        packet = line + b" " * padding_size + b"\n"
         self._write_packet(packet)
         self.serial.flush()
         self._wait_for_ack()

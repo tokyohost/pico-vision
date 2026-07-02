@@ -29,7 +29,9 @@ class Application:
         self._cache = SnapshotCache()
         self._receiver = DataReceiver(self._protocol, self._cache, self._led)
         self._rendering_version = -1
-        self._next_render = time.ticks_add(time.ticks_ms(), RENDER_INTERVAL_MS)
+        self._next_render = time.ticks_add(
+            time.ticks_ms(), RENDER_INTERVAL_MS
+        )
 
     def run(self):
         """持续推进各组件，每轮均在有限时间内返回。"""
@@ -43,10 +45,12 @@ class Application:
                 continue
             now = time.ticks_ms()
             snapshot, version = self._cache.latest()
+            has_new_snapshot = version != self._rendering_version
+            idle_refresh_due = time.ticks_diff(now, self._next_render) >= 0
             if (
-                time.ticks_diff(now, self._next_render) >= 0
+                snapshot is not None
                 and not self._renderer.is_rendering()
-                and version != self._rendering_version
+                and (has_new_snapshot or idle_refresh_due)
             ):
                 display = snapshot.get("display", {}) if snapshot else {}
                 requested_rotation = display.get("rotation", 0)
@@ -74,13 +78,13 @@ class Application:
                             self._lcd.rotation()
                         ).encode()
                     )
-                self._renderer.request_render(snapshot)
+                self._renderer.request_render(
+                    snapshot, force=not has_new_snapshot
+                )
                 self._rendering_version = version
                 self._next_render = time.ticks_add(
-                    self._next_render, RENDER_INTERVAL_MS
+                    now, RENDER_INTERVAL_MS
                 )
-                if time.ticks_diff(now, self._next_render) >= 0:
-                    self._next_render = time.ticks_add(now, RENDER_INTERVAL_MS)
             if self._renderer.update_pending():
                 canvas_us, lcd_us, region_count = self._renderer.last_profile()
                 response = (

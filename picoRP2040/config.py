@@ -4,7 +4,8 @@
 WIDTH = 240
 HEIGHT = 320
 LCD_STRIP_HEIGHT = 40
-RENDER_INTERVAL_MS = 300
+# 未收到新 JSON 时仍使用缓存快照主动刷新的最大间隔，保证至少一帧每秒。
+RENDER_INTERVAL_MS = 1000
 LCD_STYLE = "disk"
 
 # JSON 数据包限制与单次读取预算。

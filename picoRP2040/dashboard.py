@@ -84,13 +84,15 @@ class DashboardRenderer:
             )
             y += height
 
-    def request_render(self, snapshot):
-        """登记快照并准备完整刷新或动态区域刷新。"""
+    def request_render(self, snapshot, force=False):
+        """登记快照，并按差异刷新或强制刷新动态区域。"""
         next_snapshot = snapshot or {}
         if self._initialized:
             self._next_y = self._height
             selector = getattr(self._style, "select_dirty_regions", None)
-            if callable(selector):
+            if force:
+                self._dirty_regions = self._style.create_dirty_regions()
+            elif callable(selector):
                 self._dirty_regions = selector(
                     self._snapshot or {}, next_snapshot
                 )

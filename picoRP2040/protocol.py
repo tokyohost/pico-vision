@@ -20,6 +20,7 @@ from config import (
     MAX_JSON_SIZE,
     PING_TEXT,
     PIXEL_FORMAT,
+    SERIAL_READ_CHUNK_SIZE,
     SERIAL_READ_BUDGET,
     WIDTH,
 )
@@ -53,8 +54,12 @@ class JsonProtocol:
         """在固定读取预算内接收数据并返回最新完整 JSON 对象。"""
         read_count = 0
         while read_count < SERIAL_READ_BUDGET and self._poller.poll(0):
-            # 每次只读取一个字符，避免部分 RP2 固件等待凑满请求长度。
-            chunk = self._input.read(1)
+            # Monitor 会把协议行补齐为固定块，批量读取不会在尾块等待。
+            read_size = min(
+                SERIAL_READ_CHUNK_SIZE,
+                SERIAL_READ_BUDGET - read_count,
+            )
+            chunk = self._input.read(read_size)
             if not chunk:
                 break
             if isinstance(chunk, str):

@@ -18,9 +18,11 @@ class FakeSerial:
         self.is_open = True
         self.port = "TEST"
         self.written = bytearray()
+        self.write_calls = 0
 
     def write(self, data):
         """记录主机写入的协议字节。"""
+        self.write_calls += 1
         self.written.extend(data)
         return len(data)
 
@@ -50,12 +52,22 @@ class PicoClientTest(unittest.TestCase):
         self.assertTrue(any("Monitor -> Pico" in message for message in logs.output))
         self.assertTrue(any("Pico -> Monitor" in message for message in logs.output))
 
+    def test_large_json_uses_larger_serial_chunks(self):
+        """确认较大 JSON 不再拆分成大量六十四字节串口写入。"""
+        client = PicoJsonClient()
+        client.serial = FakeSerial()
+
+        client.send({"payload": "x" * 2800})
+
+        self.assertLessEqual(client.serial.write_calls, 6)
+
     def test_build_packet_for_development_mode(self):
         """确认开发模式打印内容与真实串口 JSON 协议行一致。"""
         packet = PicoJsonClient.build_packet({"host": "开发机"})
 
         self.assertTrue(packet.startswith(b"JSON:"))
         self.assertTrue(packet.endswith(b"\n"))
+        self.assertEqual(len(packet) % 64, 0)
         self.assertIn(b'"host"', packet)
 
     def test_screen_rotation_argument(self):
