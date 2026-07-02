@@ -2,6 +2,7 @@
 
 import unittest
 from unittest import mock
+from types import SimpleNamespace
 
 from pico_client import PicoJsonClient
 from pico_monitor import create_argument_parser
@@ -78,6 +79,28 @@ class SystemCollectorTest(unittest.TestCase):
         snapshot = collector.collect()
         self.assertEqual(snapshot["version"], 1)
         self.assertTrue({"cpu", "memory", "disk", "network"}.issubset(snapshot))
+
+    @mock.patch("system_monitor.psutil.disk_usage")
+    @mock.patch("system_monitor.psutil.disk_partitions")
+    def test_disk_usage_sums_all_local_disks(self, disk_partitions, disk_usage):
+        """确认磁盘容量汇总全部本地分区并跳过重复挂载和光驱。"""
+        disk_partitions.return_value = [
+            SimpleNamespace(device="C:", mountpoint="C:\\", opts="rw,fixed"),
+            SimpleNamespace(device="D:", mountpoint="D:\\", opts="rw,fixed"),
+            SimpleNamespace(device="D:", mountpoint="D:\\mirror", opts="rw,fixed"),
+            SimpleNamespace(device="E:", mountpoint="E:\\", opts="ro,cdrom"),
+        ]
+        usages = {
+            "C:\\": SimpleNamespace(total=1000, used=400),
+            "D:\\": SimpleNamespace(total=2000, used=500),
+        }
+        disk_usage.side_effect = lambda mountpoint: usages[mountpoint]
+
+        used, total, percent = SystemInformationCollector._disk_usage()
+
+        self.assertEqual((used, total), (900, 3000))
+        self.assertEqual(percent, 30.0)
+        self.assertEqual(disk_usage.call_count, 2)
 
 
 if __name__ == "__main__":

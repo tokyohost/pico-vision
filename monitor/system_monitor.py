@@ -97,11 +97,40 @@ class SystemInformationCollector:
         self.last_network, self.last_network_time = current, now
         return round(upload), round(download)
 
+    @staticmethod
+    def _disk_usage():
+        """汇总所有有效本地磁盘分区的已用空间和总空间。"""
+        total_bytes = 0
+        used_bytes = 0
+        visited_devices = set()
+        for partition in psutil.disk_partitions(all=False):
+            options = set(str(partition.opts).lower().split(","))
+            if "cdrom" in options:
+                continue
+            device_key = os.path.normcase(partition.device or partition.mountpoint)
+            if device_key in visited_devices:
+                continue
+            try:
+                usage = psutil.disk_usage(partition.mountpoint)
+            except (OSError, PermissionError):
+                continue
+            if usage.total <= 0:
+                continue
+            visited_devices.add(device_key)
+            total_bytes += int(usage.total)
+            used_bytes += int(usage.used)
+        if total_bytes <= 0:
+            usage = psutil.disk_usage(os.path.abspath(os.sep))
+            total_bytes, used_bytes = int(usage.total), int(usage.used)
+        percent = used_bytes * 100 / total_bytes if total_bytes else 0
+        return used_bytes, total_bytes, round(percent, 1)
+
     def collect(self):
         """采集一次完整系统状态并更新全部历史趋势序列。"""
         cpu, memory = round(psutil.cpu_percent(interval=None), 1), psutil.virtual_memory()
-        disk, network = psutil.disk_usage(os.path.abspath(os.sep)), self._network_rates()
+        disk_used, disk_total, disk_percent = self._disk_usage()
+        network = self._network_rates()
         ping, online = self.ping_monitor.snapshot()
-        for name, value in (("cpu", cpu), ("memory", memory.percent), ("disk", disk.percent), ("upload", network[0]), ("download", network[1])):
+        for name, value in (("cpu", cpu), ("memory", memory.percent), ("disk", disk_percent), ("upload", network[0]), ("download", network[1])):
             self.histories[name].append(round(value, 1))
-        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": round(disk.percent, 1), "used_bytes": disk.used, "total_bytes": disk.total, "history": list(self.histories["disk"])}, "network": {"upload_bps": network[0], "download_bps": network[1], "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": self._local_ip()}}
+        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total, "history": list(self.histories["disk"])}, "network": {"upload_bps": network[0], "download_bps": network[1], "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": self._local_ip()}}
