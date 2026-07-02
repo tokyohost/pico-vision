@@ -336,7 +336,7 @@ class HorizontalDiskStyle:
         percent = int(self._number(disk.get("percent")))
         usage_color = self._disk_usage_color(percent)
         self._frame(canvas, 106, 2, 212, 43, YELLOW)
-        canvas.text(112, 7, "STORAGE OVERALL", YELLOW, 1)
+        canvas.text(112, 7, "DISK OVERALL", YELLOW, 1)
         capacity = self._format_bytes(disk.get("used_bytes")) + "/" + self._format_bytes(disk.get("total_bytes"))
         canvas.text(112, 20, capacity, WHITE, 1)
         canvas.text(280, 7, "{}%".format(percent), usage_color, 2)
