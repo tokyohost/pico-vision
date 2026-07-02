@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 
+import psutil
 import serial
 
 from pico_client import PicoJsonClient
@@ -19,6 +20,14 @@ LOGGER = logging.getLogger("pico-monitor")
 BUILTIN_LCD_STYLES = ("default", "disk", "horizontal_disk")
 
 
+def environment_flag(name, default=False):
+    """读取常见布尔环境变量值，无法识别时使用默认值。"""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
 def create_argument_parser():
     """创建监控程序统一命令行参数解析器。"""
     parser = argparse.ArgumentParser(description="Pico LCD 系统硬件监控程序")
@@ -26,9 +35,10 @@ def create_argument_parser():
     parser.add_argument("--ping-target", default=os.getenv("PICO_MONITOR_PING_TARGET", "www.baidu.com"), help="网络延迟检测目标")
     parser.add_argument("--interval", type=float, default=float(os.getenv("PICO_MONITOR_INTERVAL", "1.0")), help="采集和发送间隔，单位为秒")
     parser.add_argument("--reconnect-interval", type=float, default=float(os.getenv("PICO_MONITOR_RECONNECT_INTERVAL", "3.0")), help="设备断线后的重连间隔，单位为秒")
-    parser.add_argument("--screen-rotation", type=int, choices=(0, 180), default=int(os.getenv("PICO_MONITOR_SCREEN_ROTATION", "0")), help="Pico 屏幕旋转角度，可选 0 或 180")
+    parser.add_argument("--screen-rotation", type=int, choices=(0, 180), default=int(os.getenv("PICO_MONITOR_SCREEN_ROTATION", "180")), help="Pico 屏幕旋转角度，可选 0 或 180")
     parser.add_argument("--network-unit", choices=("MB", "Mbps"), default=os.getenv("PICO_MONITOR_NETWORK_UNIT", "MB"), help="网络速率模式：MB 自动使用 B/KB/MB/GB，Mbps 自动使用 bps/Kbps/Mbps/Gbps")
     parser.add_argument("--lcd-style", choices=BUILTIN_LCD_STYLES, default=os.getenv("PICO_MONITOR_LCD_STYLE", "horizontal_disk"), help="Pico LCD 内置界面样式")
+    parser.add_argument("--dev", action="store_true", default=environment_flag("PICO_MONITOR_DEV"), help="开发模式：未发现 Pico 时仍打印待发送的 JSON 协议行")
     parser.add_argument("--once", action="store_true", help="仅成功发送一次数据")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     return parser
@@ -53,26 +63,26 @@ class MonitorService:
 
     def run(self):
         """持续连接设备、采集指标并发送最新系统快照。"""
-        LOGGER.info("监控服务启动：端口=%s，Ping=%s，发送间隔=%.1f 秒，重连间隔=%.1f 秒，屏幕旋转=%d°，网络单位=%s，LCD 样式=%s", self.arguments.port or "自动发现", self.arguments.ping_target, self.arguments.interval, self.arguments.reconnect_interval, self.arguments.screen_rotation, self.arguments.network_unit, self.arguments.lcd_style)
+        LOGGER.info("监控服务启动：端口=%s，Ping=%s，发送间隔=%.1f 秒，重连间隔=%.1f 秒，屏幕旋转=%d°，网络单位=%s，LCD 样式=%s，开发模式=%s", self.arguments.port or "自动发现", self.arguments.ping_target, self.arguments.interval, self.arguments.reconnect_interval, self.arguments.screen_rotation, self.arguments.network_unit, self.arguments.lcd_style, "开启" if self.arguments.dev else "关闭")
         while not self.stopping.is_set():
             try:
                 if not self.client.is_connected:
                     LOGGER.info("正在搜索 Pico LCD 设备")
-                    self.client.connect()
+                    try:
+                        self.client.connect()
+                    except (OSError, RuntimeError, serial.SerialException):
+                        if self.arguments.dev:
+                            self._print_development_snapshot()
+                        raise
                     LOGGER.info("Pico LCD 已连接：%s", self.client.port_name)
                 started = time.monotonic()
-                snapshot = self.collector.collect()
+                snapshot = self._collect_snapshot()
                 collection_elapsed = time.monotonic() - started
                 if collection_elapsed > 0.5:
                     LOGGER.warning(
                         "系统指标采集耗时较长：%.3f 秒",
                         collection_elapsed,
                     )
-                snapshot["display"] = {
-                    "rotation": self.arguments.screen_rotation,
-                    "network_unit": self.arguments.network_unit,
-                    "style": self.arguments.lcd_style,
-                }
                 self.client.send(snapshot)
                 if self.arguments.once:
                     return 0
@@ -84,6 +94,27 @@ class MonitorService:
                 self.stopping.wait(self.arguments.reconnect_interval)
         LOGGER.info("监控服务已停止")
         return 0
+
+    def _collect_snapshot(self):
+        """采集系统指标并补充 Pico 显示配置。"""
+        snapshot = self.collector.collect()
+        snapshot["display"] = {
+            "rotation": self.arguments.screen_rotation,
+            "network_unit": self.arguments.network_unit,
+            "style": self.arguments.lcd_style,
+        }
+        return snapshot
+
+    def _print_development_snapshot(self):
+        """在未发现 Pico 时打印本应发送的完整 JSON 协议行。"""
+        try:
+            packet = PicoJsonClient.build_packet(self._collect_snapshot())
+            LOGGER.info(
+                "[DEV][Monitor -> Pico][JSON] %s",
+                packet.decode("utf-8", errors="replace").rstrip(),
+            )
+        except (OSError, ValueError, psutil.Error) as error:
+            LOGGER.warning("[DEV][JSON] 系统指标采集失败：%s", error)
 
 
 def configure_logging():

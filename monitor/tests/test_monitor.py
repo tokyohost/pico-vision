@@ -50,10 +50,23 @@ class PicoClientTest(unittest.TestCase):
         self.assertTrue(any("Monitor -> Pico" in message for message in logs.output))
         self.assertTrue(any("Pico -> Monitor" in message for message in logs.output))
 
+    def test_build_packet_for_development_mode(self):
+        """确认开发模式打印内容与真实串口 JSON 协议行一致。"""
+        packet = PicoJsonClient.build_packet({"host": "开发机"})
+
+        self.assertTrue(packet.startswith(b"JSON:"))
+        self.assertTrue(packet.endswith(b"\n"))
+        self.assertIn(b'"host"', packet)
+
     def test_screen_rotation_argument(self):
         """确认屏幕旋转参数只接受固件支持的方向。"""
         arguments = create_argument_parser().parse_args(["--screen-rotation", "180"])
         self.assertEqual(arguments.screen_rotation, 180)
+
+    def test_development_mode_argument(self):
+        """确认命令行可以显式开启开发模式。"""
+        arguments = create_argument_parser().parse_args(["--dev"])
+        self.assertTrue(arguments.dev)
 
     def test_ping_and_network_unit_arguments(self):
         """确认 Ping 默认地址和网络速率单位可以独立配置。"""

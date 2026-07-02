@@ -52,8 +52,32 @@ class DashboardRenderer:
         self.lcd.set_landscape(bool(getattr(self._style, "landscape", False)))
 
     def set_rotation(self, rotation):
-        """按当前样式方向设置屏幕正向或反向显示。"""
-        return self.lcd.set_rotation(rotation)
+        """旋转前清空旧画面，并要求下一帧执行完整刷新。"""
+        normalized = 180 if rotation == 180 else 0
+        if normalized == self.lcd.rotation():
+            return False
+        self._clear_screen()
+        changed = self.lcd.set_rotation(normalized)
+        if changed:
+            self._initialized = False
+        return changed
+
+    def _clear_screen(self):
+        """按当前屏幕方向分条带写入黑色，避免旋转后残留旧画面。"""
+        strip_height = min(LCD_STRIP_HEIGHT, self._height)
+        black_strip = bytes(self._width * strip_height * 2)
+        y = 0
+        while y < self._height:
+            height = min(strip_height, self._height - y)
+            byte_count = self._width * height * 2
+            self.lcd.show_region(
+                0,
+                y,
+                self._width,
+                height,
+                memoryview(black_strip)[:byte_count],
+            )
+            y += height
 
     def request_render(self, snapshot):
         """登记快照并准备完整刷新或动态区域刷新。"""

@@ -70,12 +70,21 @@ class PicoJsonClient:
                     return True
         return False
 
+    @staticmethod
+    def build_packet(snapshot):
+        """将系统快照编码为与 Pico 串口协议完全一致的 JSON 数据包。"""
+        payload = json.dumps(
+            snapshot,
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return b"JSON:" + payload + b"\n"
+
     def send(self, snapshot):
         """分块发送单行 JSON 数据，并等待 Pico 返回接收确认。"""
         if not self.is_connected:
             raise RuntimeError("Pico 串口尚未连接")
-        payload = json.dumps(snapshot, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
-        packet = memoryview(b"JSON:" + payload + b"\n")
+        packet = memoryview(self.build_packet(snapshot))
         LOGGER.info("[Monitor -> Pico][%s][JSON][%d 字节] %s", self.port_name, len(packet), bytes(packet).decode("utf-8", errors="replace").rstrip())
         chunk_count = 0
         for position in range(0, len(packet), 64):

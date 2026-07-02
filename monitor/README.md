@@ -37,8 +37,11 @@ python pico_monitor.py
 --network-unit Mbps         按 bps、Kbps、Mbps、Gbps 自动选择单位
 --lcd-style default|disk|horizontal_disk
                             切换 Pico 固件内置 LCD 样式，horizontal_disk 为横向磁盘统计仪表盘
+--dev                       开发模式；未发现 Pico 时打印完整 JSON 协议行
 --once                      成功发送一次后退出
 ```
+
+开发模式也可通过环境变量 `PICO_MONITOR_DEV=1` 开启。串口扫描未找到 Pico 时，日志会以 `[DEV][Monitor -> Pico][JSON]` 标识打印本次原本要发送的 `JSON:` 协议行，方便在没有硬件时调试采集数据。
 
 ## 构建 Windows EXE
 
