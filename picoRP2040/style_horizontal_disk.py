@@ -221,7 +221,8 @@ class HorizontalDiskStyle:
         )
         self._history(
             canvas, 8, 31, 88, 35,
-            cpu.get("history", ()), usage_color, True,
+            cpu.get("history", ()), usage_color,
+            percentage=True, filled=True,
         )
 
     def _draw_memory(self, canvas, snapshot):
@@ -247,19 +248,27 @@ class HorizontalDiskStyle:
         self._frame(canvas, 2, 127, 100, 82, BLUE)
         canvas.text(8, 132, "NET", BLUE, 1)
         ping = network.get("ping_ms")
-        ping_text = "ERR" if ping is None else "{}ms".format(
+        ping_text = "ERR" if ping is None else "P{}ms".format(
             int(self._number(ping))
         )
         canvas.text(
             96 - len(ping_text) * 8, 132,
             ping_text, self._ping_color(ping), 1,
         )
-        canvas.text(8, 145, "UP " + self._format_rate(network.get("upload_bps"), unit), WHITE, 1)
+        canvas.text(8, 145, "↑UP", WHITE, 1)
+        canvas.text(
+            40, 145,
+            self._format_rate(network.get("upload_bps"), unit), BLUE, 1,
+        )
         self._history(
             canvas, 8, 157, 88, 13,
             network.get("upload_history", ()), BLUE, filled=True,
         )
-        canvas.text(8, 174, "DN " + self._format_rate(network.get("download_bps"), unit), WHITE, 1)
+        canvas.text(8, 174, "↓DN", WHITE, 1)
+        canvas.text(
+            40, 174,
+            self._format_rate(network.get("download_bps"), unit), GREEN, 1,
+        )
         self._history(
             canvas, 8, 186, 88, 12,
             network.get("download_history", ()), GREEN, filled=True,
