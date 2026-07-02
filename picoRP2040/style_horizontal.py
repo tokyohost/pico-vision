@@ -4,6 +4,12 @@ from config import BLACK, BLUE, DARK, GRAY, GREEN, PURPLE, WHITE, YELLOW
 from style_plugins import register_style
 
 
+# Element UI 经典状态色转换后的 RGB565 色值。
+ELEMENT_SUCCESS = 0x6607
+ELEMENT_WARNING = 0xE507
+ELEMENT_DANGER = 0xF36D
+
+
 class HorizontalStyle:
     """封装三百二十乘二百四十横屏仪表盘的绘制规则。"""
 
@@ -11,6 +17,7 @@ class HorizontalStyle:
     width = 320
     height = 240
     landscape = True
+    font_name = "screen_2inch"
 
     @staticmethod
     def create_dirty_regions():
@@ -33,6 +40,28 @@ class HorizontalStyle:
             return float(value)
         except (TypeError, ValueError):
             return float(default)
+
+    @classmethod
+    def _usage_color(cls, percent):
+        """按照 Element UI 状态色返回资源占用率对应颜色。"""
+        value = max(0, min(100, cls._number(percent)))
+        if value < 50:
+            return ELEMENT_SUCCESS
+        if value < 80:
+            return ELEMENT_WARNING
+        return ELEMENT_DANGER
+
+    @classmethod
+    def _ping_color(cls, ping_ms):
+        """按照网络延迟分级返回 Element UI 状态颜色。"""
+        if ping_ms is None:
+            return ELEMENT_DANGER
+        value = max(0, cls._number(ping_ms))
+        if value < 50:
+            return ELEMENT_SUCCESS
+        if value < 100:
+            return ELEMENT_WARNING
+        return ELEMENT_DANGER
 
     @classmethod
     def _format_bytes(cls, value):
@@ -91,11 +120,14 @@ class HorizontalStyle:
 
     @classmethod
     def _format_uptime(cls, seconds):
-        """把运行秒数格式化为紧凑的天时分文本。"""
-        minutes = int(cls._number(seconds)) // 60
-        days, remainder = divmod(minutes, 1440)
-        hours, minutes = divmod(remainder, 60)
-        return "{}D {:02d}H {:02d}M".format(days, hours, minutes)
+        """把运行秒数格式化为天数与时分秒文本。"""
+        total_seconds = max(0, int(cls._number(seconds)))
+        days, remainder = divmod(total_seconds, 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return "{}D {:02d}:{:02d}:{:02d}".format(
+            days, hours, minutes, seconds
+        )
 
     @staticmethod
     def _visible(canvas, top, bottom):
@@ -117,8 +149,11 @@ class HorizontalStyle:
         canvas.fill_rect(x + 1, y + 1, int((width - 2) * value / 100), height - 2, color)
         self._frame(canvas, x, y, width, height, GRAY)
 
-    def _history(self, canvas, x, y, width, height, values, color, percentage=False):
-        """绘制含点阵背景的历史趋势折线。"""
+    def _history(
+        self, canvas, x, y, width, height, values, color,
+        percentage=False, filled=False,
+    ):
+        """绘制含点阵背景的历史趋势折线或实心面积图。"""
         for grid_x in range(x, x + width, 12):
             for grid_y in range(y, y + height, 7):
                 canvas.pixel(grid_x, grid_y, GRAY)
@@ -131,6 +166,16 @@ class HorizontalStyle:
             ratio = max(0, min(1, self._number(value) / maximum))
             point_y = y + height - 1 - int(ratio * (height - 1))
             if previous is not None:
+                if filled:
+                    span = max(1, point_x - previous[0])
+                    for fill_x in range(previous[0], point_x + 1):
+                        offset = fill_x - previous[0]
+                        fill_y = previous[1] + int(
+                            (point_y - previous[1]) * offset / span
+                        )
+                        canvas.line(
+                            fill_x, fill_y, fill_x, y + height - 1, color
+                        )
                 canvas.line(previous[0], previous[1], point_x, point_y, color)
             previous = (point_x, point_y)
 
@@ -138,37 +183,58 @@ class HorizontalStyle:
         """绘制左上角 CPU 百分比、温度与趋势。"""
         cpu = snapshot.get("cpu", {})
         percent = int(self._number(cpu.get("percent")))
+        usage_color = self._usage_color(percent)
         temperature = cpu.get("temperature_c")
         temperature_text = "--C" if temperature is None else "{}C".format(int(self._number(temperature)))
         self._frame(canvas, 2, 2, 100, 69, GREEN)
-        canvas.text(8, 7, "CPU", GREEN, 2)
-        canvas.text(8, 27, "{}%".format(percent), GREEN, 3)
-        canvas.text(66, 31, temperature_text, GREEN, 1)
-        self._history(canvas, 8, 53, 88, 13, cpu.get("history", ()), GREEN, True)
+        canvas.text(8, 7, "CPU", GREEN, 1)
+        canvas.text(8, 19, temperature_text, GREEN, 1)
+        percent_text = "{}%".format(percent)
+        canvas.text(
+            96 - len(percent_text) * 16, 10,
+            percent_text, usage_color, 2,
+        )
+        self._history(
+            canvas, 8, 31, 88, 35,
+            cpu.get("history", ()), usage_color, True,
+        )
 
     def _draw_memory(self, canvas, snapshot):
         """绘制左侧内存占用率与容量进度条。"""
         memory = snapshot.get("memory", {})
         percent = int(self._number(memory.get("percent")))
+        usage_color = self._usage_color(percent)
         self._frame(canvas, 2, 75, 100, 48, PURPLE)
         canvas.text(8, 80, "MEM", PURPLE, 1)
-        canvas.text(8, 94, "{}%".format(percent), PURPLE, 2)
-        self._bar(canvas, 49, 95, 47, 12, percent, PURPLE)
+        canvas.text(8, 94, "{}%".format(percent), usage_color, 2)
+        self._bar(canvas, 49, 95, 47, 12, percent, usage_color)
         detail = self._format_bytes(memory.get("used_bytes")) + "/" + self._format_bytes(memory.get("total_bytes"))
         canvas.text(8, 111, detail, WHITE, 1)
 
     def _draw_network(self, canvas, snapshot):
-        """绘制左侧上下行速率、历史趋势和延迟。"""
+        """绘制左侧上下行速率、历史趋势和标题栏延迟。"""
         network = snapshot.get("network", {})
         unit = snapshot.get("display", {}).get("network_unit", "MB")
         self._frame(canvas, 2, 127, 100, 82, BLUE)
         canvas.text(8, 132, "NETWORK", BLUE, 1)
-        canvas.text(8, 145, "UP " + self._format_rate(network.get("upload_bps"), unit), WHITE, 1)
-        self._history(canvas, 8, 157, 88, 13, network.get("upload_history", ()), BLUE)
-        canvas.text(8, 174, "DN " + self._format_rate(network.get("download_bps"), unit), WHITE, 1)
-        self._history(canvas, 8, 186, 88, 12, network.get("download_history", ()), BLUE)
         ping = network.get("ping_ms")
-        canvas.text(8, 199, "PING " + ("ERR" if ping is None else "{}MS".format(int(self._number(ping)))), BLUE, 1)
+        ping_text = "ERR" if ping is None else "{}ms".format(
+            int(self._number(ping))
+        )
+        canvas.text(
+            96 - len(ping_text) * 8, 132,
+            ping_text, self._ping_color(ping), 1,
+        )
+        canvas.text(8, 145, "UP " + self._format_rate(network.get("upload_bps"), unit), WHITE, 1)
+        self._history(
+            canvas, 8, 157, 88, 13,
+            network.get("upload_history", ()), BLUE, filled=True,
+        )
+        canvas.text(8, 174, "DN " + self._format_rate(network.get("download_bps"), unit), WHITE, 1)
+        self._history(
+            canvas, 8, 186, 88, 12,
+            network.get("download_history", ()), GREEN, filled=True,
+        )
 
     def _draw_storage_summary(self, canvas, snapshot):
         """绘制右上角磁盘总容量和总体占用率。"""
@@ -209,10 +275,17 @@ class HorizontalStyle:
         timestamp = str(snapshot.get("timestamp", ""))
         clock = timestamp[11:19] if len(timestamp) >= 19 else "--:--:--"
         canvas.text(8, 221, clock, BLUE, 1)
-        canvas.text(79, 221, "UPTIME " + self._format_uptime(snapshot.get("uptime_seconds")), WHITE, 1)
+        canvas.line(77, 217, 77, 233, BLUE)
+        canvas.text(85, 221, "UPTIME", BLUE, 1)
+        canvas.text(
+            141, 221,
+            self._format_uptime(snapshot.get("uptime_seconds")), WHITE, 1,
+        )
+        canvas.line(237, 217, 237, 233, BLUE)
         watts = snapshot.get("power", {}).get("watts")
         power_text = "--W" if watts is None else "{:.0f}W".format(self._number(watts))
-        canvas.text(267, 221, power_text, YELLOW, 1)
+        canvas.text(245, 221, "PWR", BLUE, 1)
+        canvas.text(277, 221, power_text, YELLOW, 1)
 
     def draw_visible(self, canvas, snapshot):
         """绘制与当前条带相交的横屏仪表盘内容。"""

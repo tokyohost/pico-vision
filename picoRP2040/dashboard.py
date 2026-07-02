@@ -48,6 +48,7 @@ class DashboardRenderer:
         self._width = int(getattr(self._style, "width", WIDTH))
         self._height = int(getattr(self._style, "height", HEIGHT))
         self.canvas = Canvas(self._width, LCD_STRIP_HEIGHT)
+        self.canvas.set_font(getattr(self._style, "font_name", "native"))
         self.lcd.set_landscape(bool(getattr(self._style, "landscape", False)))
 
     def set_rotation(self, rotation):

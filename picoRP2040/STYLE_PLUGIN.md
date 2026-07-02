@@ -14,6 +14,8 @@ LCD 渲染由 `dashboard.py` 统一调度，具体布局由 `style_<名称>.py` 
    `config.py` 的 `LCD_STYLE` 默认值。
 5. 横屏样式声明 `width = 320`、`height = 240` 和 `landscape = True`，
    渲染器会自动切换画布尺寸与 LCD 扫描方向。
+6. 样式可通过 `font_name = "native"` 使用固件原生字体，或通过
+   `font_name = "screen_2inch"` 使用适合二寸屏幕的高辨识度点阵字体。
 
 `create_dirty_regions()` 返回 `(键, x, y, 宽度, 高度)` 列表；首次显示由
 `draw_visible(canvas, snapshot)` 按条带完整绘制，后续刷新由

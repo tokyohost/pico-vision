@@ -11,6 +11,7 @@ class DefaultStyle:
     """封装默认仪表盘的布局、配色和数据格式化规则。"""
 
     name = "default"
+    font_name = "native"
 
     @staticmethod
     def create_dirty_regions():

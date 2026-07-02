@@ -10,6 +10,7 @@ class DiskStyle:
     """封装磁盘主视图的布局、格式化和增量绘制规则。"""
 
     name = "disk"
+    font_name = "native"
 
     @staticmethod
     def create_dirty_regions():

@@ -2,6 +2,7 @@
 
 from config import BLACK
 from font_5x7 import FONT_5X7
+from font_screen_2inch import FONT_SCREEN_2INCH
 
 try:
     import framebuf
@@ -23,7 +24,21 @@ class Canvas:
         self._framebuffers = {}
         self._framebuffer = None
         self._glyph_cache = {}
+        self._font_name = "native"
+        self._font = FONT_5X7
         self._select_framebuffer()
+
+    def set_font(self, font_name):
+        """选择当前样式使用的点阵字体。"""
+        normalized_name = str(font_name or "native").strip().lower()
+        fonts = {
+            "native": FONT_5X7,
+            "screen_2inch": FONT_SCREEN_2INCH,
+        }
+        if normalized_name not in fonts:
+            raise ValueError("未知点阵字体：{}".format(normalized_name))
+        self._font_name = normalized_name
+        self._font = fonts[normalized_name]
 
     def set_origin(self, origin_y):
         """设置当前条带在完整屏幕中的纵向起点。"""
@@ -149,8 +164,12 @@ class Canvas:
 
     def text(self, x, y, value, color, scale=1):
         """使用内置 5×7 点阵字体绘制 ASCII 文本。"""
-        value = str(value).upper()
-        if self._framebuffer is not None and scale == 1:
+        value = str(value)
+        if (
+            self._framebuffer is not None
+            and scale == 1
+            and self._font_name == "native"
+        ):
             self._framebuffer.text(
                 value,
                 x - self.origin_x,
@@ -158,12 +177,15 @@ class Canvas:
                 self._native_color(color),
             )
             return
+        if self._framebuffer is not None and scale == 1:
+            self._blit_font_text(x, y, value, color)
+            return
         if self._framebuffer is not None and scale > 1:
             self._blit_scaled_text(x, y, value, color, scale)
             return
         cursor_x = x
         for character in value:
-            columns = FONT_5X7.get(character, FONT_5X7["?"])
+            columns = self._font.get(character, self._font["?"])
             for column_index, bits in enumerate(columns):
                 for row_index in range(7):
                     if bits & (1 << row_index):
@@ -172,7 +194,21 @@ class Canvas:
                             y + row_index * scale,
                             scale, scale, color,
                         )
-            cursor_x += 6 * scale
+            cursor_x += 8 if scale == 1 and self._font_name != "native" else 6 * scale
+
+    def _blit_font_text(self, x, y, value, color):
+        """按照原生字符间距绘制当前样式选择的点阵字体。"""
+        cursor_x = x
+        transparent = self._native_color(BLACK)
+        for character in value:
+            glyph = self._get_scaled_glyph(character, color, 1)
+            self._framebuffer.blit(
+                glyph,
+                cursor_x + 1 - self.origin_x,
+                y - self.origin_y,
+                transparent,
+            )
+            cursor_x += 8
 
     def _blit_scaled_text(self, x, y, value, color, scale):
         """使用缓存字形快速绘制放大文本。"""
@@ -190,7 +226,7 @@ class Canvas:
 
     def _get_scaled_glyph(self, character, color, scale):
         """获取或创建指定字符的原生放大字形缓存。"""
-        key = (character, color, scale)
+        key = (self._font_name, character, color, scale)
         glyph = self._glyph_cache.get(key)
         if glyph is not None:
             return glyph
@@ -204,7 +240,7 @@ class Canvas:
             framebuf.RGB565,
         )
         glyph.fill(self._native_color(BLACK))
-        columns = FONT_5X7.get(character, FONT_5X7["?"])
+        columns = self._font.get(character, self._font["?"])
         native_color = self._native_color(color)
         for column_index, bits in enumerate(columns):
             for row_index in range(7):
