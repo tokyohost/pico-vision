@@ -9,6 +9,7 @@ import subprocess
 import threading
 import time
 from collections import deque
+from pathlib import Path
 
 import psutil
 
@@ -53,14 +54,78 @@ class PingMonitor:
         return round(float(match.group(1)), 1) if result.returncode == 0 and match else (1.0 if result.returncode == 0 else None)
 
 
+class PowerMonitor:
+    """通过 Linux RAPL 能耗计数器计算可获得的硬件实时功耗。"""
+
+    def __init__(self):
+        """初始化上一组能耗计数器和采样时间。"""
+        self.last_counters = None
+        self.last_time = None
+
+    @staticmethod
+    def _read_integer(path):
+        """读取 sysfs 中的整数计数器，读取失败时返回空值。"""
+        try:
+            return int(path.read_text(encoding="ascii").strip())
+        except (OSError, ValueError):
+            return None
+
+    @classmethod
+    def _read_energy_counters(cls):
+        """读取顶层 RAPL 区域，避免把子区域功耗重复计入。"""
+        if platform.system() != "Linux":
+            return {}
+        counters = {}
+        powercap_root = Path("/sys/class/powercap")
+        try:
+            energy_paths = powercap_root.rglob("energy_uj")
+        except OSError:
+            return counters
+        for energy_path in energy_paths:
+            parent_energy = energy_path.parent.parent / "energy_uj"
+            if parent_energy.exists():
+                continue
+            energy = cls._read_integer(energy_path)
+            maximum = cls._read_integer(energy_path.parent / "max_energy_range_uj")
+            if energy is not None:
+                counters[str(energy_path.parent)] = (energy, maximum)
+        return counters
+
+    def snapshot(self):
+        """返回当前功耗瓦数、采集来源和统计范围。"""
+        counters = self._read_energy_counters()
+        now = time.monotonic()
+        watts = None
+        if counters and self.last_counters and self.last_time is not None:
+            elapsed = now - self.last_time
+            if elapsed > 0 and counters.keys() == self.last_counters.keys():
+                energy_delta = 0
+                for key, (energy, maximum) in counters.items():
+                    previous = self.last_counters[key][0]
+                    delta = energy - previous
+                    if delta < 0 and maximum:
+                        delta += maximum
+                    energy_delta += max(0, delta)
+                watts = round(energy_delta / 1_000_000 / elapsed, 1)
+        self.last_counters = counters or None
+        self.last_time = now if counters else None
+        return {
+            "watts": watts,
+            "source": "linux_rapl" if counters else "unavailable",
+            "scope": "rapl_packages" if counters else "unavailable",
+        }
+
+
 class SystemInformationCollector:
-    """采集 CPU、内存、磁盘、网络和温度并生成协议快照。"""
+    """采集 CPU、内存、磁盘、网络、温度和功耗并生成协议快照。"""
 
     def __init__(self, ping_target):
         """初始化历史序列、网络计数基线和异步延迟监控器。"""
         self.histories = {name: deque([0] * HISTORY_LENGTH, maxlen=HISTORY_LENGTH) for name in ("cpu", "memory", "disk", "upload", "download")}
+        self.power_history = deque(maxlen=HISTORY_LENGTH)
         self.last_network = self.last_network_time = None
         self.ping_monitor = PingMonitor(ping_target)
+        self.power_monitor = PowerMonitor()
         self.ping_monitor.start()
         psutil.cpu_percent(interval=None)
 
@@ -130,7 +195,11 @@ class SystemInformationCollector:
         cpu, memory = round(psutil.cpu_percent(interval=None), 1), psutil.virtual_memory()
         disk_used, disk_total, disk_percent = self._disk_usage()
         network = self._network_rates()
+        power = self.power_monitor.snapshot()
         ping, online = self.ping_monitor.snapshot()
         for name, value in (("cpu", cpu), ("memory", memory.percent), ("disk", disk_percent), ("upload", network[0]), ("download", network[1])):
             self.histories[name].append(round(value, 1))
-        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total, "history": list(self.histories["disk"])}, "network": {"upload_bps": network[0], "download_bps": network[1], "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": self._local_ip()}}
+        if power["watts"] is not None:
+            self.power_history.append(power["watts"])
+        power["history"] = list(self.power_history)
+        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total, "history": list(self.histories["disk"])}, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": self._local_ip()}}

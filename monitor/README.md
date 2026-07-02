@@ -8,6 +8,7 @@
 
 - 自动发现并握手识别 Pico LCD，也可固定串口。
 - 磁盘已用空间和总空间统计所有有效本地磁盘分区。
+- Linux 支持通过 RAPL 能耗计数器发送实时功耗；不支持的平台明确发送空值。
 - 设备拔插、休眠唤醒或通信失败后自动重连。
 - 完整记录握手、JSON 原文、数据块数量、Pico 响应、异常和超时。
 - Windows 单文件 EXE、托盘运行、日志查看和当前用户自启动。
@@ -30,7 +31,8 @@ python pico_monitor.py
 --interval 1.0              指定采集发送间隔
 --reconnect-interval 3.0    指定断线重连间隔
 --screen-rotation 180       将 Pico 屏幕旋转一百八十度
---network-unit Mbps         上传下载使用 MB/s 或 Mbps 显示
+--network-unit MB           按 B/s、KB/s、MB/s、GB/s 自动选择单位
+--network-unit Mbps         按 bps、Kbps、Mbps、Gbps 自动选择单位
 --lcd-style default         切换 Pico 固件内置 LCD 样式
 --once                      成功发送一次后退出
 ```

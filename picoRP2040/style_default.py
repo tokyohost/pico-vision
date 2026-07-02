@@ -46,11 +46,24 @@ class DefaultStyle:
 
     @classmethod
     def _format_network_rate(cls, value, unit):
-        """按配置将每秒字节数格式化为 MB/s 或 Mbps。"""
-        bytes_per_second = max(0, cls._number(value))
+        """按字节或比特模式自动选择合适的网络速率量级。"""
+        amount = max(0, cls._number(value))
         if unit == "Mbps":
-            return "{:.2f}Mbps".format(bytes_per_second * 8 / 1_000_000)
-        return "{:.2f}MB/S".format(bytes_per_second / 1_000_000)
+            amount *= 8
+            units = ("bps", "Kbps", "Mbps", "Gbps", "Tbps")
+        else:
+            units = ("B/S", "KB/S", "MB/S", "GB/S", "TB/S")
+        unit_index = 0
+        while amount >= 1000 and unit_index < len(units) - 1:
+            amount /= 1000
+            unit_index += 1
+        if unit_index == 0 or amount >= 100:
+            template = "{:.0f}{}"
+        elif amount >= 10:
+            template = "{:.1f}{}"
+        else:
+            template = "{:.2f}{}"
+        return template.format(amount, units[unit_index])
 
     @classmethod
     def _format_uptime(cls, seconds):

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from pico_client import PicoJsonClient
 from pico_monitor import create_argument_parser
-from system_monitor import SystemInformationCollector
+from system_monitor import PowerMonitor, SystemInformationCollector
 
 
 class FakeSerial:
@@ -78,7 +78,8 @@ class SystemCollectorTest(unittest.TestCase):
         collector = SystemInformationCollector("127.0.0.1")
         snapshot = collector.collect()
         self.assertEqual(snapshot["version"], 1)
-        self.assertTrue({"cpu", "memory", "disk", "network"}.issubset(snapshot))
+        self.assertTrue({"cpu", "memory", "disk", "power", "network"}.issubset(snapshot))
+        self.assertTrue({"watts", "source", "scope", "history"}.issubset(snapshot["power"]))
 
     @mock.patch("system_monitor.psutil.disk_usage")
     @mock.patch("system_monitor.psutil.disk_partitions")
@@ -101,6 +102,24 @@ class SystemCollectorTest(unittest.TestCase):
         self.assertEqual((used, total), (900, 3000))
         self.assertEqual(percent, 30.0)
         self.assertEqual(disk_usage.call_count, 2)
+
+    @mock.patch("system_monitor.time.monotonic", side_effect=(10.0, 12.0))
+    @mock.patch.object(PowerMonitor, "_read_energy_counters")
+    def test_power_monitor_calculates_watts(self, energy_counters, monotonic):
+        """确认相邻 RAPL 能耗读数能够换算为实时功耗瓦数。"""
+        del monotonic
+        energy_counters.side_effect = (
+            {"package0": (1_000_000, 10_000_000)},
+            {"package0": (5_000_000, 10_000_000)},
+        )
+        monitor = PowerMonitor()
+
+        first = monitor.snapshot()
+        second = monitor.snapshot()
+
+        self.assertIsNone(first["watts"])
+        self.assertEqual(second["watts"], 2.0)
+        self.assertEqual(second["source"], "linux_rapl")
 
 
 if __name__ == "__main__":
