@@ -52,6 +52,16 @@ class HorizontalStyle:
         return ELEMENT_DANGER
 
     @classmethod
+    def _disk_usage_color(cls, percent):
+        """按照磁盘占用率分级返回状态颜色，九成及以上标记为危险。"""
+        value = max(0, min(100, cls._number(percent)))
+        if value < 50:
+            return ELEMENT_SUCCESS
+        if value < 90:
+            return ELEMENT_WARNING
+        return ELEMENT_DANGER
+
+    @classmethod
     def _ping_color(cls, ping_ms):
         """按照网络延迟分级返回 Element UI 状态颜色。"""
         if ping_ms is None:
@@ -60,6 +70,18 @@ class HorizontalStyle:
         if value < 50:
             return ELEMENT_SUCCESS
         if value < 100:
+            return ELEMENT_WARNING
+        return ELEMENT_DANGER
+
+    @classmethod
+    def _temperature_color(cls, temperature_c):
+        """按照摄氏温度分级返回状态颜色，无数据时返回灰色。"""
+        if temperature_c is None:
+            return GRAY
+        value = cls._number(temperature_c)
+        if value < 50:
+            return ELEMENT_SUCCESS
+        if value < 70:
             return ELEMENT_WARNING
         return ELEMENT_DANGER
 
@@ -111,7 +133,7 @@ class HorizontalStyle:
             amount *= 8
             units = ("BPS", "KBPS", "MBPS", "GBPS")
         else:
-            units = ("B/S", "KB/S", "MB/S", "GB/S")
+            units = ("B/s", "KB/s", "MB/s", "GB/s")
         index = 0
         while amount >= 1000 and index < len(units) - 1:
             amount /= 1000
@@ -188,10 +210,13 @@ class HorizontalStyle:
         temperature_text = "--C" if temperature is None else "{}C".format(int(self._number(temperature)))
         self._frame(canvas, 2, 2, 100, 69, GREEN)
         canvas.text(8, 7, "CPU", GREEN, 1)
-        canvas.text(8, 19, temperature_text, GREEN, 1)
+        canvas.text(
+            8, 19, temperature_text,
+            self._temperature_color(temperature), 1,
+        )
         percent_text = "{}%".format(percent)
         canvas.text(
-            96 - len(percent_text) * 16, 10,
+            100 - len(percent_text) * 12, 10,
             percent_text, usage_color, 2,
         )
         self._history(
@@ -208,7 +233,11 @@ class HorizontalStyle:
         canvas.text(8, 80, "MEM", PURPLE, 1)
         canvas.text(8, 94, "{}%".format(percent), usage_color, 2)
         self._bar(canvas, 49, 95, 47, 12, percent, usage_color)
-        detail = self._format_bytes(memory.get("used_bytes")) + "/" + self._format_bytes(memory.get("total_bytes"))
+        used_text = self._format_bytes(memory.get("used_bytes"))
+        total_text = self._format_bytes(memory.get("total_bytes"))
+        if used_text[-1:] == total_text[-1:]:
+            used_text = used_text[:-1]
+        detail = used_text + "/" + total_text
         canvas.text(8, 111, detail, WHITE, 1)
 
     def _draw_network(self, canvas, snapshot):
@@ -216,7 +245,7 @@ class HorizontalStyle:
         network = snapshot.get("network", {})
         unit = snapshot.get("display", {}).get("network_unit", "MB")
         self._frame(canvas, 2, 127, 100, 82, BLUE)
-        canvas.text(8, 132, "NETWORK", BLUE, 1)
+        canvas.text(8, 132, "NET", BLUE, 1)
         ping = network.get("ping_ms")
         ping_text = "ERR" if ping is None else "{}ms".format(
             int(self._number(ping))
@@ -240,12 +269,13 @@ class HorizontalStyle:
         """绘制右上角磁盘总容量和总体占用率。"""
         disk = snapshot.get("disk", {})
         percent = int(self._number(disk.get("percent")))
+        usage_color = self._disk_usage_color(percent)
         self._frame(canvas, 106, 2, 212, 43, YELLOW)
         canvas.text(112, 7, "STORAGE OVERALL", YELLOW, 1)
         capacity = self._format_bytes(disk.get("used_bytes")) + "/" + self._format_bytes(disk.get("total_bytes"))
         canvas.text(112, 20, capacity, WHITE, 1)
-        canvas.text(280, 7, "{}%".format(percent), YELLOW, 2)
-        self._bar(canvas, 112, 33, 198, 8, percent, YELLOW)
+        canvas.text(280, 7, "{}%".format(percent), usage_color, 2)
+        self._bar(canvas, 112, 33, 198, 8, percent, usage_color)
 
     def _draw_disk_cards(self, canvas, snapshot, selected_row=None):
         """按三列网格绘制指定行或全部物理磁盘卡片。"""
@@ -255,19 +285,23 @@ class HorizontalStyle:
             if selected_row is not None and row != selected_row:
                 continue
             x, y = 106 + column * 71, 49 + row * 52
-            self._frame(canvas, x, y, 68, 48, YELLOW)
+            percent = int(self._number(disk.get("percent")))
+            usage_color = self._disk_usage_color(percent)
+            self._frame(canvas, x, y, 68, 48, usage_color)
             name = str(disk.get("name", "DISK{}".format(index)))[:5]
             temperature = disk.get("temperature_c")
             temperature_text = "--C" if temperature is None else "{}C".format(int(self._number(temperature)))
-            canvas.text(x + 4, y + 4, name, YELLOW, 1)
-            canvas.text(x + 43, y + 4, temperature_text, WHITE, 1)
+            canvas.text(x + 4, y + 4, name, usage_color, 1)
+            canvas.text(
+                x + 43, y + 4, temperature_text,
+                self._temperature_color(temperature), 1,
+            )
             capacity = self._format_disk_capacity(
                 disk.get("used_bytes"), disk.get("total_bytes")
             )
             canvas.text(x + 3, y + 18, capacity[:8], WHITE, 1)
-            percent = int(self._number(disk.get("percent")))
-            canvas.text(x + 4, y + 32, "{}%".format(percent), YELLOW, 1)
-            self._bar(canvas, x + 38, y + 34, 25, 8, percent, YELLOW)
+            canvas.text(x + 4, y + 32, "{}%".format(percent), usage_color, 1)
+            self._bar(canvas, x + 38, y + 34, 25, 8, percent, usage_color)
 
     def _draw_footer(self, canvas, snapshot):
         """绘制横屏底部的时间、运行时长和功耗。"""
