@@ -33,7 +33,7 @@ def create_argument_parser():
     parser = argparse.ArgumentParser(description="Pico LCD 系统硬件监控程序")
     parser.add_argument("--port", default=os.getenv("PICO_MONITOR_PORT") or None, help="固定串口名称，留空时自动发现")
     parser.add_argument("--ping-target", default=os.getenv("PICO_MONITOR_PING_TARGET", "www.baidu.com"), help="网络延迟检测目标")
-    parser.add_argument("--interval", type=float, default=float(os.getenv("PICO_MONITOR_INTERVAL", "1.0")), help="采集和发送间隔，单位为秒")
+    parser.add_argument("--interval", type=float, default=float(os.getenv("PICO_MONITOR_INTERVAL", "0.5")), help="采集和发送间隔，单位为秒")
     parser.add_argument("--reconnect-interval", type=float, default=float(os.getenv("PICO_MONITOR_RECONNECT_INTERVAL", "3.0")), help="设备断线后的重连间隔，单位为秒")
     parser.add_argument("--screen-rotation", type=int, choices=(0, 180), default=int(os.getenv("PICO_MONITOR_SCREEN_ROTATION", "0")), help="Pico 屏幕旋转角度，可选 0 或 180")
     parser.add_argument("--network-unit", choices=("MB", "Mbps"), default=os.getenv("PICO_MONITOR_NETWORK_UNIT", "MB"), help="网络速率模式：MB 自动使用 B/KB/MB/GB，Mbps 自动使用 bps/Kbps/Mbps/Gbps")

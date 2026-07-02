@@ -33,6 +33,46 @@ class HorizontalDiskStyle:
             ("footer", 2, 213, 316, 25),
         ]
 
+    @classmethod
+    def select_dirty_regions(cls, previous, current):
+        """根据相邻快照差异仅返回实际变化的横屏面板。"""
+        regions = cls.create_dirty_regions()
+        selected = []
+        region_map = {region[0]: region for region in regions}
+        if previous.get("cpu") != current.get("cpu"):
+            selected.append(region_map["cpu"])
+        if previous.get("memory") != current.get("memory"):
+            selected.append(region_map["memory"])
+        previous_network = (
+            previous.get("network"),
+            previous.get("display", {}).get("network_unit"),
+        )
+        current_network = (
+            current.get("network"),
+            current.get("display", {}).get("network_unit"),
+        )
+        if previous_network != current_network:
+            selected.append(region_map["network"])
+        if previous.get("disk") != current.get("disk"):
+            selected.append(region_map["storage_summary"])
+        previous_disks = previous.get("physical_disks") or previous.get("disks", ())
+        current_disks = current.get("physical_disks") or current.get("disks", ())
+        for row in range(3):
+            start = row * 3
+            if previous_disks[start:start + 3] != current_disks[start:start + 3]:
+                selected.append(region_map["disk_row_{}".format(row)])
+        previous_footer = (
+            previous.get("timestamp"), previous.get("uptime_seconds"),
+            previous.get("power"),
+        )
+        current_footer = (
+            current.get("timestamp"), current.get("uptime_seconds"),
+            current.get("power"),
+        )
+        if previous_footer != current_footer:
+            selected.append(region_map["footer"])
+        return selected
+
     @staticmethod
     def _number(value, default=0):
         """安全地把快照值转换为浮点数。"""

@@ -26,6 +26,7 @@ class DashboardRenderer:
         self._initialized = False
         self._dirty_regions = []
         self._dirty_index = 0
+        self._completion_pending = False
 
     def style_name(self):
         """返回当前生效的样式插件名称。"""
@@ -85,15 +86,23 @@ class DashboardRenderer:
 
     def request_render(self, snapshot):
         """登记快照并准备完整刷新或动态区域刷新。"""
-        self._snapshot = snapshot or {}
+        next_snapshot = snapshot or {}
         if self._initialized:
             self._next_y = self._height
-            self._dirty_regions = self._style.create_dirty_regions()
+            selector = getattr(self._style, "select_dirty_regions", None)
+            if callable(selector):
+                self._dirty_regions = selector(
+                    self._snapshot or {}, next_snapshot
+                )
+            else:
+                self._dirty_regions = self._style.create_dirty_regions()
             self._dirty_index = 0
         else:
             self._next_y = 0
             self._dirty_regions = []
+        self._snapshot = next_snapshot
         self._render_started = time.ticks_ms()
+        self._completion_pending = True
         self._canvas_us = 0
         self._lcd_us = 0
         self._region_count = 0
@@ -132,10 +141,18 @@ class DashboardRenderer:
         if completed:
             self._last_render_ms = time.ticks_diff(time.ticks_ms(), self._render_started)
             self._render_started = None
+            self._completion_pending = False
         return completed
 
     def update_pending(self, max_regions=8):
         """在单轮循环内批量刷新多个区域，减少区域间的调度延迟。"""
+        if not self.is_rendering() and self._completion_pending:
+            self._last_render_ms = time.ticks_diff(
+                time.ticks_ms(), self._render_started
+            )
+            self._render_started = None
+            self._completion_pending = False
+            return True
         updated = 0
         while updated < max_regions and self.is_rendering():
             updated += 1
