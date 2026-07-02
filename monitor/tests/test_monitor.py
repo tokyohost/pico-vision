@@ -81,8 +81,26 @@ class SystemCollectorTest(unittest.TestCase):
         collector = SystemInformationCollector("127.0.0.1")
         snapshot = collector.collect()
         self.assertEqual(snapshot["version"], 1)
-        self.assertTrue({"cpu", "memory", "disk", "disks", "power", "network"}.issubset(snapshot))
+        self.assertTrue({"cpu", "memory", "disk", "disks", "physical_disks", "power", "network"}.issubset(snapshot))
         self.assertTrue({"watts", "source", "scope", "history"}.issubset(snapshot["power"]))
+
+    def test_physical_disk_statistics_contains_temperature(self):
+        """验证发送给 Pico 的物理磁盘统计包含温度和容量指标。"""
+        statistics = SystemInformationCollector._physical_disk_statistics([
+            {
+                "name": "NVME0",
+                "devices": ["C:"],
+                "mountpoints": ["C:\\"],
+                "used_bytes": 400,
+                "total_bytes": 1000,
+                "percent": 40,
+                "temperature_c": 42.5,
+            }
+        ])
+
+        self.assertEqual(statistics[0]["name"], "NVME0")
+        self.assertEqual(statistics[0]["temperature_c"], 42.5)
+        self.assertEqual(statistics[0]["total_bytes"], 1000)
 
     @mock.patch.object(SystemInformationCollector, "_disk_temperatures")
     @mock.patch("system_monitor.psutil.disk_usage")

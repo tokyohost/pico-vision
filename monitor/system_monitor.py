@@ -159,6 +159,22 @@ class SystemInformationCollector:
             return list(self.disk_snapshot)
 
     @staticmethod
+    def _physical_disk_statistics(disks):
+        """从磁盘明细生成发送给 Pico 的物理磁盘统计，重点保留温度指标。"""
+        return [
+            {
+                "name": disk.get("name", "DISK"),
+                "devices": list(disk.get("devices", ())),
+                "mountpoints": list(disk.get("mountpoints", ())),
+                "used_bytes": int(disk.get("used_bytes", 0)),
+                "total_bytes": int(disk.get("total_bytes", 0)),
+                "percent": float(disk.get("percent", 0)),
+                "temperature_c": disk.get("temperature_c"),
+            }
+            for disk in disks
+        ]
+
+    @staticmethod
     def _cpu_temperature():
         """从系统温度传感器中选择有效的最高 CPU 温度。"""
         try:
@@ -386,6 +402,7 @@ class SystemInformationCollector:
         """采集一次完整系统状态并更新全部历史趋势序列。"""
         cpu, memory = round(psutil.cpu_percent(interval=None), 1), psutil.virtual_memory()
         disks = self._latest_disks()
+        physical_disks = self._physical_disk_statistics(disks)
         disk_used, disk_total, disk_percent = self._disk_usage(disks)
         network = self._network_rates()
         power = self.power_monitor.snapshot()
@@ -395,4 +412,4 @@ class SystemInformationCollector:
         if power["watts"] is not None:
             self.power_history.append(power["watts"])
         power["history"] = list(self.power_history)
-        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total, "history": list(self.histories["disk"])}, "disks": disks, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": self._local_ip()}}
+        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total, "history": list(self.histories["disk"])}, "disks": disks, "physical_disks": physical_disks, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": self._local_ip()}}

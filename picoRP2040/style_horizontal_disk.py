@@ -288,7 +288,9 @@ class HorizontalDiskStyle:
 
     def _draw_disk_cards(self, canvas, snapshot, selected_row=None):
         """按三列网格绘制指定行或全部物理磁盘卡片。"""
-        disks = snapshot.get("disks", ())[:9]
+        # 优先使用主机端明确提供的物理磁盘统计，并兼容旧版 disks 字段。
+        disks = snapshot.get("physical_disks") or snapshot.get("disks", ())
+        disks = disks[:9]
         for index, disk in enumerate(disks):
             column, row = index % 3, index // 3
             if selected_row is not None and row != selected_row:
