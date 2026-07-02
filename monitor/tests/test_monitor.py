@@ -1,5 +1,6 @@
 """验证系统快照结构和 Pico 串口协议的核心行为。"""
 
+import os
 import unittest
 from unittest import mock
 from types import SimpleNamespace
@@ -72,15 +73,65 @@ class PicoClientTest(unittest.TestCase):
 class SystemCollectorTest(unittest.TestCase):
     """验证系统采集器输出 Pico 仪表盘需要的字段。"""
 
+    @mock.patch.object(SystemInformationCollector, "_disk_temperatures", return_value={})
     @mock.patch.object(SystemInformationCollector, "_cpu_temperature", return_value=None)
-    def test_collect_snapshot_structure(self, temperature):
+    def test_collect_snapshot_structure(self, temperature, disk_temperatures):
         """确认完整快照包含四组核心硬件指标。"""
-        del temperature
+        del temperature, disk_temperatures
         collector = SystemInformationCollector("127.0.0.1")
         snapshot = collector.collect()
         self.assertEqual(snapshot["version"], 1)
-        self.assertTrue({"cpu", "memory", "disk", "power", "network"}.issubset(snapshot))
+        self.assertTrue({"cpu", "memory", "disk", "disks", "power", "network"}.issubset(snapshot))
         self.assertTrue({"watts", "source", "scope", "history"}.issubset(snapshot["power"]))
+
+    @mock.patch.object(SystemInformationCollector, "_disk_temperatures")
+    @mock.patch("system_monitor.psutil.disk_usage")
+    @mock.patch("system_monitor.psutil.disk_partitions")
+    def test_disk_details_include_capacity_usage_and_temperature(self, disk_partitions, disk_usage, disk_temperatures):
+        """确认每个磁盘明细包含容量、占用情况和对应温度。"""
+        disk_partitions.return_value = [
+            SimpleNamespace(device="C:", mountpoint="C:\\", fstype="NTFS", opts="rw,fixed"),
+            SimpleNamespace(device="D:", mountpoint="D:\\", fstype="NTFS", opts="rw,fixed"),
+        ]
+        disk_usage.side_effect = (
+            SimpleNamespace(total=1000, used=400, percent=40),
+            SimpleNamespace(total=2000, used=500, percent=25),
+        )
+        disk_temperatures.return_value = {
+            os.path.normcase("C:"): {"name": "NVME0", "temperature_c": 41.0},
+            os.path.normcase("D:"): {"name": "SATA1", "temperature_c": 36.0},
+        }
+        collector = SystemInformationCollector.__new__(SystemInformationCollector)
+
+        disks = collector._disk_details()
+
+        self.assertEqual(len(disks), 2)
+        self.assertEqual(disks[0]["name"], "NVME0")
+        self.assertEqual(disks[0]["temperature_c"], 41.0)
+        self.assertEqual((disks[1]["used_bytes"], disks[1]["total_bytes"], disks[1]["percent"]), (500, 2000, 25.0))
+
+    @mock.patch.object(SystemInformationCollector, "_disk_temperatures")
+    @mock.patch("system_monitor.psutil.disk_usage")
+    @mock.patch("system_monitor.psutil.disk_partitions")
+    def test_disk_details_merge_partitions_on_same_physical_disk(self, disk_partitions, disk_usage, disk_temperatures):
+        """确认同一物理硬盘的多个分区会聚合为一个磁盘明细。"""
+        disk_partitions.return_value = [
+            SimpleNamespace(device="C:", mountpoint="C:\\", fstype="NTFS", opts="rw,fixed"),
+            SimpleNamespace(device="D:", mountpoint="D:\\", fstype="NTFS", opts="rw,fixed"),
+        ]
+        disk_usage.side_effect = (
+            SimpleNamespace(total=1000, used=400, percent=40),
+            SimpleNamespace(total=2000, used=500, percent=25),
+        )
+        sensor = {"name": "DISK0 NVME", "temperature_c": 40.0}
+        disk_temperatures.return_value = {os.path.normcase("C:"): sensor, os.path.normcase("D:"): sensor}
+        collector = SystemInformationCollector.__new__(SystemInformationCollector)
+
+        disks = collector._disk_details()
+
+        self.assertEqual(len(disks), 1)
+        self.assertEqual((disks[0]["used_bytes"], disks[0]["total_bytes"], disks[0]["percent"]), (900, 3000, 30.0))
+        self.assertEqual(disks[0]["mountpoints"], ["C:\\", "D:\\"])
 
     @mock.patch("system_monitor.psutil.disk_usage")
     @mock.patch("system_monitor.psutil.disk_partitions")

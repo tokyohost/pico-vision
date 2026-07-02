@@ -1,6 +1,7 @@
 """通过操作系统接口采集系统硬件和网络运行指标。"""
 
 import datetime as dt
+import json
 import os
 import platform
 import re
@@ -15,6 +16,7 @@ import psutil
 
 
 HISTORY_LENGTH = 24
+DISK_TEMPERATURE_CACHE_SECONDS = 30
 
 
 class PingMonitor:
@@ -126,6 +128,8 @@ class SystemInformationCollector:
         self.last_network = self.last_network_time = None
         self.ping_monitor = PingMonitor(ping_target)
         self.power_monitor = PowerMonitor()
+        self.disk_temperature_cache = {}
+        self.disk_temperature_time = 0.0
         self.ping_monitor.start()
         psutil.cpu_percent(interval=None)
 
@@ -163,8 +167,171 @@ class SystemInformationCollector:
         return round(upload), round(download)
 
     @staticmethod
-    def _disk_usage():
-        """汇总所有有效本地磁盘分区的已用空间和总空间。"""
+    def _normalize_temperature(value):
+        """校验并规范化磁盘温度，过滤无效传感器读数。"""
+        try:
+            temperature = float(value)
+        except (TypeError, ValueError):
+            return None
+        if 0 < temperature < 150:
+            return round(temperature, 1)
+        return None
+
+    @staticmethod
+    def _linux_physical_disk(device):
+        """将 Linux 分区设备名称转换为对应的物理块设备名称。"""
+        name = os.path.basename(str(device))
+        match = re.match(r"^(nvme\d+n\d+|mmcblk\d+)p\d+$", name)
+        if match:
+            return match.group(1)
+        match = re.match(r"^(.+?)\d+$", name)
+        return match.group(1) if match else name
+
+    @classmethod
+    def _read_linux_disk_temperature(cls, device):
+        """从 Linux hwmon 或 smartctl 读取指定物理磁盘温度。"""
+        disk_name = cls._linux_physical_disk(device)
+        hwmon_root = Path("/sys/class/block") / disk_name / "device" / "hwmon"
+        try:
+            temperature_paths = list(hwmon_root.glob("hwmon*/temp*_input"))
+        except OSError:
+            temperature_paths = []
+        for temperature_path in temperature_paths:
+            try:
+                temperature = cls._normalize_temperature(float(temperature_path.read_text(encoding="ascii").strip()) / 1000)
+            except (OSError, ValueError):
+                temperature = None
+            if temperature is not None:
+                return temperature
+        try:
+            result = subprocess.run(
+                ["smartctl", "-a", "-j", "/dev/" + disk_name],
+                capture_output=True, text=True, errors="replace", timeout=5,
+                check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            payload = json.loads(result.stdout) if result.stdout.strip() else {}
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            return None
+        temperature = payload.get("temperature", {})
+        return cls._normalize_temperature(temperature.get("current"))
+
+    @classmethod
+    def _windows_disk_temperatures(cls):
+        """通过 PowerShell 建立 Windows 盘符到物理磁盘温度的映射。"""
+        script = (
+            "$items=@(); Get-Partition | Where-Object DriveLetter | ForEach-Object {"
+            "$p=$_; $d=$p | Get-Disk; $physical=Get-PhysicalDisk | Where-Object DeviceId -eq ([string]$d.Number) | Select-Object -First 1;"
+            "$temperature=$null; if($physical){try{$temperature=($physical | Get-StorageReliabilityCounter -ErrorAction Stop).Temperature}catch{}};"
+            "$items += [pscustomobject]@{Device=([string]$p.DriveLetter + ':');DiskName=('DISK' + [string]$d.Number + ' ' + [string]$d.FriendlyName);Temperature=$temperature}"
+            "}; $items | ConvertTo-Json -Compress"
+        )
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                capture_output=True, text=True, errors="replace", timeout=15,
+                check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            payload = json.loads(result.stdout) if result.stdout.strip() else []
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            return {}
+        if isinstance(payload, dict):
+            payload = [payload]
+        temperatures = {}
+        for item in payload:
+            device = os.path.normcase(str(item.get("Device", "")))
+            temperatures[device] = {
+                "name": str(item.get("DiskName") or item.get("Device") or "DISK"),
+                "temperature_c": cls._normalize_temperature(item.get("Temperature")),
+            }
+        return temperatures
+
+    def _disk_temperatures(self, devices):
+        """按固定周期缓存全部磁盘温度，避免每帧调用慢速系统接口。"""
+        now = time.monotonic()
+        if self.disk_temperature_time and now - self.disk_temperature_time < DISK_TEMPERATURE_CACHE_SECONDS:
+            return self.disk_temperature_cache
+        if platform.system() == "Windows":
+            temperatures = self._windows_disk_temperatures()
+        elif platform.system() == "Linux":
+            temperatures = {}
+            for device in devices:
+                physical_name = self._linux_physical_disk(device)
+                temperatures[os.path.normcase(device)] = {
+                    "name": physical_name,
+                    "temperature_c": self._read_linux_disk_temperature(device),
+                }
+        else:
+            temperatures = {}
+        self.disk_temperature_cache = temperatures
+        self.disk_temperature_time = now
+        return temperatures
+
+    def _disk_details(self):
+        """采集所有有效本地磁盘分区的容量、占用率和温度。"""
+        partitions = []
+        visited_devices = set()
+        for partition in psutil.disk_partitions(all=False):
+            options = set(str(partition.opts).lower().split(","))
+            if "cdrom" in options:
+                continue
+            device = str(partition.device or partition.mountpoint)
+            device_key = os.path.normcase(device)
+            if device_key in visited_devices:
+                continue
+            try:
+                usage = psutil.disk_usage(partition.mountpoint)
+            except (OSError, PermissionError):
+                continue
+            if usage.total <= 0:
+                continue
+            visited_devices.add(device_key)
+            partitions.append((partition, usage, device, device_key))
+        if not partitions:
+            mountpoint = os.path.abspath(os.sep)
+            usage = psutil.disk_usage(mountpoint)
+            fallback = type("DiskPartition", (), {"device": mountpoint, "mountpoint": mountpoint, "fstype": ""})()
+            partitions.append((fallback, usage, mountpoint, os.path.normcase(mountpoint)))
+        temperatures = self._disk_temperatures([item[2] for item in partitions])
+        grouped = {}
+        for partition, usage, device, device_key in partitions:
+            sensor = temperatures.get(device_key, {})
+            name = sensor.get("name") or device
+            current = grouped.get(name)
+            if current is None:
+                current = {
+                    "name": name,
+                    "devices": [],
+                    "mountpoints": [],
+                    "filesystems": [],
+                    "used_bytes": 0,
+                    "total_bytes": 0,
+                    "temperature_c": sensor.get("temperature_c"),
+                }
+                grouped[name] = current
+            current["devices"].append(device)
+            current["mountpoints"].append(str(partition.mountpoint))
+            filesystem = str(partition.fstype or "")
+            if filesystem and filesystem not in current["filesystems"]:
+                current["filesystems"].append(filesystem)
+            current["used_bytes"] += int(usage.used)
+            current["total_bytes"] += int(usage.total)
+            if current["temperature_c"] is None:
+                current["temperature_c"] = sensor.get("temperature_c")
+        details = []
+        for current in grouped.values():
+            total_bytes = current["total_bytes"]
+            current["percent"] = round(current["used_bytes"] * 100 / total_bytes, 1) if total_bytes else 0
+            details.append(current)
+        return details
+
+    @staticmethod
+    def _disk_usage(disks=None):
+        """汇总有效本地磁盘明细中的已用空间和总空间。"""
+        if disks is not None:
+            total_bytes = sum(item["total_bytes"] for item in disks)
+            used_bytes = sum(item["used_bytes"] for item in disks)
+            percent = used_bytes * 100 / total_bytes if total_bytes else 0
+            return used_bytes, total_bytes, round(percent, 1)
         total_bytes = 0
         used_bytes = 0
         visited_devices = set()
@@ -193,7 +360,8 @@ class SystemInformationCollector:
     def collect(self):
         """采集一次完整系统状态并更新全部历史趋势序列。"""
         cpu, memory = round(psutil.cpu_percent(interval=None), 1), psutil.virtual_memory()
-        disk_used, disk_total, disk_percent = self._disk_usage()
+        disks = self._disk_details()
+        disk_used, disk_total, disk_percent = self._disk_usage(disks)
         network = self._network_rates()
         power = self.power_monitor.snapshot()
         ping, online = self.ping_monitor.snapshot()
@@ -202,4 +370,4 @@ class SystemInformationCollector:
         if power["watts"] is not None:
             self.power_history.append(power["watts"])
         power["history"] = list(self.power_history)
-        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total, "history": list(self.histories["disk"])}, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": self._local_ip()}}
+        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total, "history": list(self.histories["disk"])}, "disks": disks, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": self._local_ip()}}

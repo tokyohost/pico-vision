@@ -4,10 +4,12 @@
 
 本程序不安装自定义内核驱动：Windows 使用系统性能接口和串口驱动，Linux 使用 `/proc`、`/sys` 及系统串口驱动。这样无需驱动签名，也不会绑定特定内核版本。
 
+磁盘明细通过 JSON 顶层 `disks` 数组发送。同一物理盘的多个分区会合并，字段包括 `name`、`devices`、`mountpoints`、`filesystems`、`used_bytes`、`total_bytes`、`percent` 和 `temperature_c`。无法读取温度时 `temperature_c` 为 `null`；Linux 可安装 `smartmontools` 作为 hwmon 之外的温度读取后备来源。
+
 ## 主要功能
 
 - 自动发现并握手识别 Pico LCD，也可固定串口。
-- 磁盘已用空间和总空间统计所有有效本地磁盘分区。
+- 磁盘汇总统计所有有效本地分区，并发送每个磁盘的设备、挂载点、容量、占用率和可用温度。
 - Linux 支持通过 RAPL 能耗计数器发送实时功耗；不支持的平台明确发送空值。
 - 设备拔插、休眠唤醒或通信失败后自动重连。
 - 完整记录握手、JSON 原文、数据块数量、Pico 响应、异常和超时。
