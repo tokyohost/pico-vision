@@ -1,5 +1,6 @@
 """验证系统快照结构和 Pico 串口协议的核心行为。"""
 
+import json
 import os
 import unittest
 from unittest import mock
@@ -201,6 +202,53 @@ class SystemCollectorTest(unittest.TestCase):
         self.assertEqual(len(disks), 1)
         self.assertEqual((disks[0]["used_bytes"], disks[0]["total_bytes"], disks[0]["percent"]), (900, 3000, 30.0))
         self.assertEqual(disks[0]["mountpoints"], ["C:\\", "D:\\"])
+
+    @mock.patch.object(SystemInformationCollector, "_read_unassigned_disk_temperatures", return_value=[])
+    @mock.patch.object(SystemInformationCollector, "_discover_linux_disks", return_value=[("sdb", "/dev/sdb", None)])
+    @mock.patch.object(SystemInformationCollector, "_read_linux_disk_temperature", return_value=38.0)
+    @mock.patch.object(SystemInformationCollector, "_linux_backing_disks")
+    @mock.patch("system_monitor.platform.system", return_value="Linux")
+    def test_linux_disk_temperatures_resolve_logical_devices(
+        self, system, backing_disks, read_temperature, discover_disks, unassigned_temperatures
+    ):
+        """确认 Linux 逻辑卷映射到底层物理盘，并排除 loop 等虚拟设备。"""
+        del system, discover_disks, unassigned_temperatures
+        backing_disks.side_effect = lambda device: {
+            "/dev/mapper/data": ("sdb",),
+            "/dev/loop0": (),
+        }[device]
+        collector = SystemInformationCollector.__new__(SystemInformationCollector)
+        collector.disk_temperature_cache = {}
+        collector.disk_temperature_time = 0.0
+
+        temperatures = collector._disk_temperatures(["/dev/mapper/data", "/dev/loop0"])
+
+        mapper_key = os.path.normcase("/dev/mapper/data")
+        loop_key = os.path.normcase("/dev/loop0")
+        self.assertEqual(temperatures[mapper_key]["name"], "sdb")
+        self.assertEqual(temperatures[mapper_key]["temperature_c"], 38.0)
+        self.assertNotIn(loop_key, temperatures)
+        read_temperature.assert_called_once_with("/dev/sdb", None, "sdb")
+
+    @mock.patch("system_monitor.subprocess.run")
+    def test_smart_scan_discovers_sata_nvme_and_raid_disks(self, process_runner):
+        """确认 SMART 自动扫描能够发现 SATA、NVMe 和 RAID 控制器磁盘。"""
+        process_runner.return_value = SimpleNamespace(stdout=json.dumps({
+            "devices": [
+                {"name": "/dev/sda", "type": "sat"},
+                {"name": "/dev/nvme0", "type": "nvme"},
+                {"name": "/dev/bus/0", "type": "megaraid,0"},
+                {"name": "/dev/sdb", "type": "sat", "open_error": "拒绝访问"},
+            ]
+        }))
+
+        devices = SystemInformationCollector._scan_linux_smart_devices()
+
+        self.assertEqual(devices, {
+            "sda": ("/dev/sda", "sat"),
+            "nvme0n1": ("/dev/nvme0", "nvme"),
+            "megaraid0": ("/dev/bus/0", "megaraid,0"),
+        })
 
     @mock.patch("system_monitor.psutil.disk_usage")
     @mock.patch("system_monitor.psutil.disk_partitions")
