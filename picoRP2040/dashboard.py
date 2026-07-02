@@ -4,7 +4,7 @@ import time
 
 from canvas import Canvas
 from config import HEIGHT, LCD_STRIP_HEIGHT, LCD_STYLE, WIDTH
-from style_plugins import create_style
+from style_plugins import create_style, normalize_style_name
 
 
 class DashboardRenderer:
@@ -33,9 +33,10 @@ class DashboardRenderer:
 
     def set_style(self, style_name):
         """切换样式插件，并要求下一次渲染执行完整刷新。"""
-        style = create_style(style_name)
-        if style.name == self._style_name:
+        normalized_name = normalize_style_name(style_name)
+        if normalized_name == self._style_name:
             return False
+        style = create_style(normalized_name)
         self._style = style
         self._style_name = style.name
         self._initialized = False

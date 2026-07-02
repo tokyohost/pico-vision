@@ -61,6 +61,11 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual(arguments.ping_target, "1.1.1.1")
         self.assertEqual(arguments.network_unit, "Mbps")
 
+    def test_lcd_style_argument(self):
+        """确认 monitor 可以选择固件提供的内置 LCD 样式。"""
+        arguments = create_argument_parser().parse_args(["--lcd-style", "default"])
+        self.assertEqual(arguments.lcd_style, "default")
+
 
 class SystemCollectorTest(unittest.TestCase):
     """验证系统采集器输出 Pico 仪表盘需要的字段。"""

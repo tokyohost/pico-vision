@@ -27,6 +27,11 @@ def create_style(name):
     return style
 
 
+def normalize_style_name(name):
+    """返回经过安全校验和规范化处理的样式名称。"""
+    return _normalize_name(name)
+
+
 def available_styles():
     """返回当前已经注册的样式名称元组。"""
     return tuple(sorted(_STYLE_FACTORIES))

@@ -3,7 +3,7 @@
 import sys
 import time
 
-from config import RENDER_INTERVAL_MS
+from config import LCD_STYLE, RENDER_INTERVAL_MS
 from protocol import JsonProtocol
 
 
@@ -58,6 +58,20 @@ class Application:
                         "CONFIG:SCREEN_ROTATION:{}\n".format(
                             self._lcd.rotation()
                         ).encode()
+                    )
+                requested_style = display.get("style", LCD_STYLE)
+                try:
+                    if self._renderer.set_style(requested_style):
+                        self._protocol.write(
+                            "CONFIG:LCD_STYLE:{}\n".format(
+                                self._renderer.style_name()
+                            ).encode()
+                        )
+                except (ImportError, TypeError, ValueError) as error:
+                    self._protocol.write(
+                        "CONFIG:LCD_STYLE_ERROR:{}:{}\n".format(
+                            requested_style, error
+                        ).encode("utf-8")
                     )
                 self._renderer.request_render(snapshot)
                 self._rendering_version = version
