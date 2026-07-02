@@ -8,6 +8,7 @@ from style_plugins import register_style
 ELEMENT_SUCCESS = 0x6607
 ELEMENT_WARNING = 0xE507
 ELEMENT_DANGER = 0xF36D
+NETWORK_RATE_MAX_CHARS = 8
 
 
 class HorizontalDiskStyle:
@@ -167,7 +168,7 @@ class HorizontalDiskStyle:
 
     @classmethod
     def _format_rate(cls, value, unit):
-        """按监控端配置格式化网络传输速率。"""
+        """按监控端配置生成不超过八个字符的网络速率。"""
         amount = max(0, cls._number(value))
         if unit == "Mbps":
             amount *= 8
@@ -178,7 +179,22 @@ class HorizontalDiskStyle:
         while amount >= 1000 and index < len(units) - 1:
             amount /= 1000
             index += 1
-        return ("{:.0f}{}" if amount >= 100 else "{:.1f}{}").format(amount, units[index])
+        while True:
+            # 临近一千时提前提升单位，避免四位整数挤出边框。
+            if amount >= 999.5 and index < len(units) - 1:
+                amount /= 1000
+                index += 1
+                continue
+            number = "{:.1f}".format(amount) if amount < 100 else str(int(round(amount)))
+            result = number + units[index]
+            if len(result) <= NETWORK_RATE_MAX_CHARS:
+                return result
+            if index < len(units) - 1:
+                amount /= 1000
+                index += 1
+                continue
+            available = NETWORK_RATE_MAX_CHARS - len(units[index])
+            return (">" + "9" * max(0, available - 1) + units[index])[:NETWORK_RATE_MAX_CHARS]
 
     @classmethod
     def _format_uptime(cls, seconds):
@@ -295,18 +311,18 @@ class HorizontalDiskStyle:
             96 - len(ping_text) * 8, 132,
             ping_text, self._ping_color(ping), 1,
         )
-        canvas.text(8, 145, "↑UP", WHITE, 1)
+        canvas.text(8, 145, "↑U", WHITE, 1)
         canvas.text(
-            40, 145,
+            32, 145,
             self._format_rate(network.get("upload_bps"), unit), BLUE, 1,
         )
         self._history(
             canvas, 8, 157, 88, 13,
             network.get("upload_history", ()), BLUE, filled=True,
         )
-        canvas.text(8, 174, "↓DN", WHITE, 1)
+        canvas.text(8, 174, "↓D", WHITE, 1)
         canvas.text(
-            40, 174,
+            32, 174,
             self._format_rate(network.get("download_bps"), unit), GREEN, 1,
         )
         self._history(
