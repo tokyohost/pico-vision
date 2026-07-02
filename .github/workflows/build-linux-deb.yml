@@ -42,8 +42,13 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           version="${GITHUB_REF_NAME#v}"
-          version="${version//-/~}"
-          sed -i "1s/([^)]*)/(${version})/" debian/changelog
+          if [[ ! "${version}" =~ ^[0-9]+([.][0-9]+){2}(-[0-9A-Za-z.+]+)?$ ]]; then
+            echo "不支持的版本标签：${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+          debian_version="${version//-/\~}"
+          echo "Git 标签 ${GITHUB_REF_NAME} 对应 Debian 版本 ${debian_version}"
+          sed -i "1s|([^)]*)|(${debian_version})|" debian/changelog
 
       - name: 构建并检查 DEB 软件包
         env:
