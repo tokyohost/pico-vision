@@ -242,6 +242,39 @@ class SystemCollectorTest(unittest.TestCase):
         self.assertEqual(second["watts"], 2.0)
         self.assertEqual(second["source"], "linux_rapl")
 
+    def test_power_monitor_follows_linked_directories(self):
+        """确认功耗目录扫描会进入 Debian sysfs 使用的目录符号链接。"""
+        class FakePath:
+            """模拟可解析到真实目录的 sysfs 路径节点。"""
+
+            def __init__(self, name, resolved, children=(), directory=False):
+                """保存节点名称、真实路径、子节点和目录标记。"""
+                self.name = name
+                self.resolved = resolved
+                self.children = children
+                self.directory = directory
+
+            def resolve(self):
+                """返回节点解析后的真实路径标识。"""
+                return self.resolved
+
+            def iterdir(self):
+                """返回当前模拟目录的直接子节点。"""
+                return iter(self.children)
+
+            def is_dir(self):
+                """返回当前节点是否可作为目录遍历。"""
+                return self.directory
+
+        energy = FakePath("energy_uj", "真实区域/energy_uj")
+        linked_zone = FakePath("intel-rapl:0", "真实区域", (energy,), True)
+        duplicate_link = FakePath("package-0", "真实区域", (energy,), True)
+        root = FakePath("powercap", "powercap", (linked_zone, duplicate_link), True)
+
+        paths = list(PowerMonitor._iter_energy_paths(root))
+
+        self.assertEqual(paths, ["真实区域/energy_uj"])
+
 
 if __name__ == "__main__":
     unittest.main()

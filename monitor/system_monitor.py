@@ -73,6 +73,34 @@ class PowerMonitor:
         except (OSError, ValueError):
             return None
 
+    @staticmethod
+    def _iter_energy_paths(powercap_root):
+        """遍历 powercap 目录并跟随 sysfs 区域链接，返回去重后的能耗文件。"""
+        directories = [powercap_root]
+        visited_directories = set()
+        visited_energy_paths = set()
+        while directories:
+            directory = directories.pop()
+            try:
+                directory_key = str(directory.resolve())
+                children = tuple(directory.iterdir())
+            except OSError:
+                continue
+            if directory_key in visited_directories:
+                continue
+            visited_directories.add(directory_key)
+            for child in children:
+                try:
+                    if child.name == "energy_uj":
+                        energy_key = str(child.resolve())
+                        if energy_key not in visited_energy_paths:
+                            visited_energy_paths.add(energy_key)
+                            yield child.resolve()
+                    elif child.is_dir():
+                        directories.append(child)
+                except OSError:
+                    continue
+
     @classmethod
     def _read_energy_counters(cls):
         """读取顶层 RAPL 区域，避免把子区域功耗重复计入。"""
@@ -80,11 +108,7 @@ class PowerMonitor:
             return {}
         counters = {}
         powercap_root = Path("/sys/class/powercap")
-        try:
-            energy_paths = powercap_root.rglob("energy_uj")
-        except OSError:
-            return counters
-        for energy_path in energy_paths:
+        for energy_path in cls._iter_energy_paths(powercap_root):
             parent_energy = energy_path.parent.parent / "energy_uj"
             if parent_energy.exists():
                 continue
