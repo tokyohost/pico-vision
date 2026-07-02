@@ -6,7 +6,7 @@ from unittest import mock
 from types import SimpleNamespace
 
 from pico_client import PicoJsonClient
-from pico_monitor import create_argument_parser
+from pico_monitor import MonitorService, create_argument_parser
 from system_monitor import PowerMonitor, SystemInformationCollector
 
 
@@ -79,6 +79,32 @@ class PicoClientTest(unittest.TestCase):
         """确认命令行可以显式开启开发模式。"""
         arguments = create_argument_parser().parse_args(["--dev"])
         self.assertTrue(arguments.dev)
+
+    def test_development_mode_stops_reconnecting_without_pico(self):
+        """确认开发模式首次连接失败后直接进入 JSON 输出循环。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(
+            port=None,
+            ping_target="127.0.0.1",
+            interval=1.0,
+            reconnect_interval=3.0,
+            screen_rotation=0,
+            network_unit="MB",
+            lcd_style="horizontal_disk",
+            dev=True,
+        )
+        service.stopping = mock.Mock()
+        service.stopping.is_set.return_value = False
+        service.client = mock.Mock()
+        service.client.is_connected = False
+        service.client.connect.side_effect = RuntimeError("未找到 Pico")
+        service._run_development_loop = mock.Mock(return_value=0)
+
+        result = service.run()
+
+        self.assertEqual(result, 0)
+        service.client.connect.assert_called_once_with()
+        service._run_development_loop.assert_called_once_with()
 
     def test_ping_and_network_unit_arguments(self):
         """确认 Ping 默认地址和网络速率单位可以独立配置。"""
