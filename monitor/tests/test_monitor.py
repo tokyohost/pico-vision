@@ -64,8 +64,9 @@ class PicoClientTest(unittest.TestCase):
 
     def test_lcd_style_argument(self):
         """确认 monitor 可以选择固件提供的内置 LCD 样式。"""
-        arguments = create_argument_parser().parse_args(["--lcd-style", "default"])
-        self.assertEqual(arguments.lcd_style, "default")
+        for style_name in ("default", "disk"):
+            arguments = create_argument_parser().parse_args(["--lcd-style", style_name])
+            self.assertEqual(arguments.lcd_style, style_name)
 
 
 class SystemCollectorTest(unittest.TestCase):
