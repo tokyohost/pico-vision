@@ -35,7 +35,8 @@ python pico_monitor.py
 --screen-rotation 180       将 Pico 屏幕旋转一百八十度
 --network-unit MB           按 B/s、KB/s、MB/s、GB/s 自动选择单位
 --network-unit Mbps         按 bps、Kbps、Mbps、Gbps 自动选择单位
---lcd-style default|disk    切换 Pico 固件内置 LCD 样式
+--lcd-style default|disk|horizontal
+                            切换 Pico 固件内置 LCD 样式，horizontal 为横屏仪表盘
 --once                      成功发送一次后退出
 ```
 

@@ -36,6 +36,7 @@ class LcdDevice:
             mosi=Pin(PIN_MOSI),
         )
         self._rotation = 0
+        self._landscape = False
 
     def write_command(self, command):
         """向 LCD 写入一个控制命令。"""
@@ -73,14 +74,14 @@ class LcdDevice:
         self.write_command(0x2C)
 
     def initialize(self):
-        """按照 ST7789 时序初始化竖屏显示模式。"""
+        """按照 ST7789 时序初始化当前屏幕显示方向。"""
         self.reset()
         self.command(0x01)
         time.sleep_ms(150)
         self.command(0x11)
         time.sleep_ms(120)
         self.command(0x3A, b"\x55")
-        self.command(0x36, b"\x00")
+        self._write_orientation()
         self.command(0x21)
         self.command(0x13)
         time.sleep_ms(10)
@@ -94,9 +95,26 @@ class LcdDevice:
         if normalized == self._rotation:
             return False
         # ST7789 MADCTL 的 MX 与 MY 同时启用即为一百八十度旋转。
-        self.command(0x36, b"\xC0" if normalized == 180 else b"\x00")
         self._rotation = normalized
+        self._write_orientation()
         return True
+
+    def set_landscape(self, landscape):
+        """切换 LCD 的横屏或竖屏显存扫描方向。"""
+        landscape = bool(landscape)
+        if landscape == self._landscape:
+            return False
+        self._landscape = landscape
+        self._write_orientation()
+        return True
+
+    def _write_orientation(self):
+        """根据画面方向与翻转角度写入 ST7789 MADCTL。"""
+        if self._landscape:
+            value = 0xA0 if self._rotation == 180 else 0x60
+        else:
+            value = 0xC0 if self._rotation == 180 else 0x00
+        self.command(0x36, bytes((value,)))
 
     def rotation(self):
         """返回当前生效的屏幕旋转角度。"""

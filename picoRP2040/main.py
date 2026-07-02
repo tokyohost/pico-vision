@@ -53,12 +53,6 @@ class Application:
                     requested_rotation = int(requested_rotation)
                 except (TypeError, ValueError):
                     requested_rotation = 0
-                if self._lcd.set_rotation(requested_rotation):
-                    self._protocol.write(
-                        "CONFIG:SCREEN_ROTATION:{}\n".format(
-                            self._lcd.rotation()
-                        ).encode()
-                    )
                 requested_style = display.get("style", LCD_STYLE)
                 try:
                     if self._renderer.set_style(requested_style):
@@ -72,6 +66,12 @@ class Application:
                         "CONFIG:LCD_STYLE_ERROR:{}:{}\n".format(
                             requested_style, error
                         ).encode("utf-8")
+                    )
+                if self._renderer.set_rotation(requested_rotation):
+                    self._protocol.write(
+                        "CONFIG:SCREEN_ROTATION:{}\n".format(
+                            self._lcd.rotation()
+                        ).encode()
                     )
                 self._renderer.request_render(snapshot)
                 self._rendering_version = version

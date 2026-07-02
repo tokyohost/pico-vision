@@ -12,6 +12,8 @@ LCD 渲染由 `dashboard.py` 统一调度，具体布局由 `style_<名称>.py` 
 4. 将名称加入 monitor 的 `BUILTIN_LCD_STYLES`，通过 `--lcd-style <名称>`
    或 `PICO_MONITOR_LCD_STYLE=<名称>` 在线切换；未连接 monitor 时使用
    `config.py` 的 `LCD_STYLE` 默认值。
+5. 横屏样式声明 `width = 320`、`height = 240` 和 `landscape = True`，
+   渲染器会自动切换画布尺寸与 LCD 扫描方向。
 
 `create_dirty_regions()` 返回 `(键, x, y, 宽度, 高度)` 列表；首次显示由
 `draw_visible(canvas, snapshot)` 按条带完整绘制，后续刷新由
