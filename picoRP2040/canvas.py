@@ -28,6 +28,7 @@ class Canvas:
         self._glyph_cache = {}
         self._font_name = "native"
         self._font = FONT_5X7
+        self._polygon_supported = None
         self._select_framebuffer()
 
     def set_font(self, font_name):
@@ -40,6 +41,8 @@ class Canvas:
         }
         if normalized_name not in fonts:
             raise ValueError("未知点阵字体：{}".format(normalized_name))
+        if normalized_name != self._font_name:
+            self._glyph_cache.clear()
         self._font_name = normalized_name
         self._font = fonts[normalized_name]
 
@@ -167,20 +170,33 @@ class Canvas:
 
     def fill_polygon(self, points, color):
         """优先调用原生 FrameBuffer 一次性填充多边形，并返回是否成功。"""
-        if self._framebuffer is None or not hasattr(self._framebuffer, "poly"):
+        if self._polygon_supported is False or self._framebuffer is None:
             return False
-        coordinates = array("h")
-        for point_x, point_y in points:
-            coordinates.append(point_x)
-            coordinates.append(point_y)
-        self._framebuffer.poly(
-            -self.origin_x,
-            -self.origin_y,
-            coordinates,
-            self._native_color(color),
-            True,
-        )
-        return True
+        polygon_method = getattr(self._framebuffer, "poly", None)
+        if polygon_method is None:
+            self._polygon_supported = False
+            return False
+        try:
+            coordinates = array("h")
+            for point_x, point_y in points:
+                coordinates.append(point_x)
+                coordinates.append(point_y)
+            polygon_method(
+                -self.origin_x,
+                -self.origin_y,
+                coordinates,
+                self._native_color(color),
+                True,
+            )
+            self._polygon_supported = True
+            return True
+        except (
+            AttributeError, MemoryError, OSError,
+            OverflowError, RuntimeError, TypeError, ValueError,
+        ):
+            # 不同 MicroPython 固件的 poly 签名并不一致，失败后使用扫描线。
+            self._polygon_supported = False
+            return False
 
     def text(self, x, y, value, color, scale=1):
         """使用内置点阵字体绘制文本，并按实际字形宽度推进光标。"""

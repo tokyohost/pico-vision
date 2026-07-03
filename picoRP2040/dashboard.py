@@ -1,5 +1,6 @@
 """使用可插拔样式将系统快照按可见区域渲染到 Pico LCD。"""
 
+import gc
 import time
 
 from canvas import Canvas
@@ -48,7 +49,23 @@ class DashboardRenderer:
         """应用样式声明的画布尺寸和 LCD 横竖屏方向。"""
         self._width = int(getattr(self._style, "width", WIDTH))
         self._height = int(getattr(self._style, "height", HEIGHT))
-        self.canvas = Canvas(self._width, LCD_STRIP_HEIGHT)
+        required_pixels = self._width * LCD_STRIP_HEIGHT
+        current_canvas = getattr(self, "canvas", None)
+        if (
+            current_canvas is not None
+            and current_canvas._capacity_pixels >= required_pixels
+        ):
+            self.canvas = current_canvas
+            self.canvas.set_view(
+                0, 0, self._width,
+                min(LCD_STRIP_HEIGHT, self._height),
+            )
+        else:
+            if current_canvas is not None:
+                self.canvas = None
+                del current_canvas
+                gc.collect()
+            self.canvas = Canvas(self._width, LCD_STRIP_HEIGHT)
         self.canvas.set_font(getattr(self._style, "font_name", "native"))
         self.lcd.set_landscape(bool(getattr(self._style, "landscape", False)))
 
