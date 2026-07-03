@@ -12,8 +12,10 @@ except ImportError:
     framebuf = None
 
 
-# RP2040 堆空间有限，限制字形缓存数量以避免切换样式后长期占用内存。
-MAX_GLYPH_CACHE_SIZE = 32
+# RP2040 堆空间有限，但横屏仪表盘会同时使用多种颜色的字母与数字。
+# 过小的缓存会在一帧内反复清空并重建字形，128 项可在较低内存开销下
+# 容纳常用字形组合。
+MAX_GLYPH_CACHE_SIZE = 128
 
 
 class Canvas:
@@ -290,7 +292,10 @@ class Canvas:
         if glyph is not None:
             return glyph
         if len(self._glyph_cache) >= MAX_GLYPH_CACHE_SIZE:
-            self._glyph_cache.clear()
+            # 仅淘汰一个旧字形，避免缓存达到上限时整表失效并在同一帧内
+            # 重新生成大量仍会重复使用的字形。
+            oldest_key = next(iter(self._glyph_cache))
+            del self._glyph_cache[oldest_key]
         columns = self._font.get(character, self._font["?"])
         width = max(6, len(columns)) * scale
         height = 7 * scale
