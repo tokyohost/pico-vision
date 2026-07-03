@@ -1,10 +1,18 @@
 """启动 RP2040 状态灯、JSON 接收和 LCD 异步刷新服务。"""
 
+import gc
 import sys
 import time
 
 from config import LCD_STYLE, RENDER_INTERVAL_MS
 from protocol import JsonProtocol
+
+
+def memory_usage():
+    """返回 MicroPython 堆内存的已占用字节数和总字节数。"""
+    allocated = gc.mem_alloc()
+    free = gc.mem_free()
+    return allocated, allocated + free
 
 
 class Application:
@@ -35,6 +43,12 @@ class Application:
 
     def run(self):
         """持续推进各组件，每轮均在有限时间内返回。"""
+        memory_used, memory_total = memory_usage()
+        self._protocol.write(
+            "BOOT:MEMORY:USED={}:TOTAL={}\n".format(
+                memory_used, memory_total
+            ).encode()
+        )
         self._protocol.write(b"BOOT:PICO_LCD_READY\n")
         self._renderer.request_render(None)
         while True:
@@ -87,14 +101,18 @@ class Application:
                 )
             if self._renderer.update_pending():
                 canvas_us, lcd_us, region_count = self._renderer.last_profile()
+                memory_used, memory_total = memory_usage()
                 response = (
-                    "ACK:LCD_FRAME:{}:TOTAL={}MS:CANVAS={}US:LCD={}US:REGIONS={}\n"
+                    "ACK:LCD_FRAME:{}:TOTAL={}MS:CANVAS={}US:LCD={}US:"
+                    "REGIONS={}:MEMORY_USED={}:MEMORY_TOTAL={}\n"
                 ).format(
                     self._rendering_version,
                     self._renderer.last_render_ms(),
                     canvas_us,
                     lcd_us,
                     region_count,
+                    memory_used,
+                    memory_total,
                 )
                 self._protocol.write(response.encode())
             time.sleep_ms(1)
