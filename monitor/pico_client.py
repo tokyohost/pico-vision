@@ -27,6 +27,7 @@ PING_COMMAND = b"PING:PICO_LCD?".ljust(
     SERIAL_PROTOCOL_BLOCK_SIZE - 1, b" "
 ) + b"\n"
 JSON_ACK = b"ACK:JSON"
+BAD_JSON_ERROR = b"ERR:BAD_JSON"
 SERIAL_WRITE_CHUNK_SIZE = 512
 LOGGER = logging.getLogger("pico-monitor.serial")
 
@@ -128,6 +129,12 @@ class PicoJsonClient:
                 LOGGER.info("[Pico -> Monitor][%s][响应] %s", self.port_name, response.decode("utf-8", errors="replace"))
             if response == JSON_ACK:
                 LOGGER.info("[交互完成][%s] Pico 已确认本次 JSON", self.port_name)
+                return
+            if response == BAD_JSON_ERROR:
+                LOGGER.warning(
+                    "[数据帧丢弃][%s] Pico 无法解析本次 JSON，保持串口连接并等待下一帧",
+                    self.port_name,
+                )
                 return
             if response.startswith((b"ERR:", b"FATAL:")):
                 raise RuntimeError(response.decode("utf-8", errors="replace"))

@@ -58,6 +58,14 @@ class FakeSerial:
         self.is_open = False
 
 
+class BadJsonSerial(FakeSerial):
+    """模拟 Pico 拒绝单个损坏 JSON 数据帧的串口设备。"""
+
+    def readline(self):
+        """返回可恢复的 JSON 解析错误。"""
+        return b"ERR:BAD_JSON\n"
+
+
 class PicoClientTest(unittest.TestCase):
     """验证 Pico 客户端生成兼容固件的 JSON 数据包。"""
 
@@ -80,6 +88,17 @@ class PicoClientTest(unittest.TestCase):
         client.send({"payload": "x" * 2800})
 
         self.assertLessEqual(client.serial.write_calls, 6)
+
+    def test_bad_json_keeps_serial_connected(self):
+        """确认单帧 JSON 解析失败时保持串口连接并等待下一帧。"""
+        client = PicoJsonClient()
+        client.serial = BadJsonSerial()
+
+        with self.assertLogs("pico-monitor.serial", level="WARNING") as logs:
+            client.send({"version": 1})
+
+        self.assertTrue(client.is_connected)
+        self.assertTrue(any("数据帧丢弃" in message for message in logs.output))
 
     def test_build_packet_for_development_mode(self):
         """确认开发模式打印内容与真实串口 JSON 协议行一致。"""
@@ -217,6 +236,35 @@ class PicoClientTest(unittest.TestCase):
 
 class SystemCollectorTest(unittest.TestCase):
     """验证系统采集器输出 Pico 仪表盘需要的字段。"""
+
+    def test_network_rates_use_selected_interface_counter(self):
+        """确认网络速率仅根据主通信接口的累计字节差值计算。"""
+        collector = SystemInformationCollector("127.0.0.1")
+        counters = [
+            ("eth0", 1000, 2000),
+            ("eth0", 1600, 2900),
+        ]
+
+        with mock.patch.object(collector, "_network_counter", side_effect=counters):
+            with mock.patch("system_monitor.time.monotonic", side_effect=(10.0, 11.0)):
+                self.assertEqual(collector._network_rates("192.168.1.2")[:2], (0, 0))
+                self.assertEqual(collector._network_rates("192.168.1.2")[:2], (600, 900))
+
+    def test_network_rates_reset_baseline_after_interface_change(self):
+        """确认出口接口切换后重置基线，避免累计计数差产生速率尖峰。"""
+        collector = SystemInformationCollector("127.0.0.1")
+        counters = [
+            ("eth0", 1000, 2000),
+            ("bond0", 500000, 800000),
+        ]
+
+        with mock.patch.object(collector, "_network_counter", side_effect=counters):
+            with mock.patch("system_monitor.time.monotonic", side_effect=(10.0, 11.0)):
+                collector._network_rates("192.168.1.2")
+                rates = collector._network_rates("192.168.1.2")
+
+        self.assertEqual(rates[:2], (0, 0))
+        self.assertEqual(rates[2:], (500000, 800000))
 
     @mock.patch.object(SystemInformationCollector, "_disk_temperatures", return_value={})
     @mock.patch.object(SystemInformationCollector, "_cpu_temperature", return_value=None)
