@@ -116,6 +116,27 @@ sudo systemctl restart pico-monitor
 
 发布版 Monitor 可执行 `pico-monitor --upgrade-pico`，程序会下载同版本 GitHub Release 中的 `pico-upgrade-v<版本>.zip`。开发版使用 `python pico_monitor.py --upgrade-pico --upgrade-url <地址>`。升级时 Monitor 与 Pico 会持续打印下载、传输、安装百分比；Pico 对每个文件核对长度和 SHA-256，全部通过后替换内部文件并自动软重启。传输或校验失败时只删除临时区，不安装未通过校验的文件。
 
+### Linux DEB 安装后升级 Pico
+
+通过 DEB 安装的 `pico-monitor` 默认由 systemd 持续运行。主动升级前必须先停止服务，释放 Pico 使用的 `/dev/ttyACM*` 串口，再以 root 权限执行一次性升级命令：
+
+```bash
+sudo systemctl stop pico-monitor
+sudo /usr/bin/pico-monitor --upgrade-pico
+sudo systemctl start pico-monitor
+sudo journalctl -u pico-monitor -n 100 --no-pager
+```
+
+程序会根据已安装 Monitor 的版本号，从同版本 GitHub Release 下载 `pico-upgrade-v<版本>.zip`。如果机器连接了多个串口设备，或者自动发现没有选中目标 Pico，可查看 `/etc/pico-monitor.conf` 中配置的端口，并在命令中显式指定：
+
+```bash
+sudo /usr/bin/pico-monitor --port /dev/ttyACM0 --upgrade-pico
+```
+
+升级成功时终端会依次显示 `ACK:UPGRADE:BEGIN:<版本>`、文件传输确认、`PROGRESS:UPGRADE:INSTALL:100` 和 `ACK:UPGRADE:COMPLETE:<版本>`。Pico 随后自动重启；重新启动 systemd 服务后，可通过日志确认出现 `PONG:PICO_LCD` 和 `ACK:JSON`。
+
+首次在线升级前，Pico 必须已经部署包含 `upgrade_manager.py` 的固件。如果在 `UPGRADE:BEGIN` 阶段超时，并且 Pico 随后不再响应握手，先按复位键或重新插拔 USB，再确认 Linux 已安装包含固定协议块升级支持的新版本 DEB，然后重新执行上述步骤。安装提交阶段不要断开 USB 或关闭电源。
+
 ### 本地主动升级测试
 
 首次测试前，Pico 中必须已经部署包含 `upgrade_manager.py` 的当前固件，否则设备无法识别 `UPGRADE:` 升级命令。

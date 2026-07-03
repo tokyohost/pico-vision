@@ -12,6 +12,7 @@ import zipfile
 
 
 LOGGER = logging.getLogger("pico-monitor.upgrade")
+SERIAL_PROTOCOL_BLOCK_SIZE = 64
 UPGRADE_CHUNK_SIZE = 384
 
 
@@ -98,7 +99,7 @@ class PicoFirmwareUpgrader:
                 LOGGER.info("[升级发送] %s，整体进度 %d%%", path, int(sent_total * 100 / package_total))
             self._command("UPGRADE:FILE_END", "ACK:UPGRADE:FILE_END:")
         LOGGER.info("[升级安装] Pico 正在校验并替换内部文件")
-        serial_device.write(b"UPGRADE:COMMIT\n")
+        serial_device.write(self._build_command_packet("UPGRADE:COMMIT"))
         serial_device.flush()
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
@@ -117,7 +118,7 @@ class PicoFirmwareUpgrader:
         """发送单条升级命令并等待对应确认响应。"""
         device = self.client.serial
         LOGGER.debug("[Monitor -> Pico][升级] %s", command[:120])
-        device.write((command + "\n").encode("ascii"))
+        device.write(self._build_command_packet(command))
         device.flush()
         for _ in range(100):
             response = device.readline().decode("utf-8", errors="replace").strip()
@@ -129,3 +130,10 @@ class PicoFirmwareUpgrader:
             if response.startswith("ERR:"):
                 raise RuntimeError(response)
         raise RuntimeError("等待 Pico 升级确认超时：{}".format(command.split(":", 2)[:2]))
+
+    @staticmethod
+    def _build_command_packet(command):
+        """把升级命令补齐为固定协议块，避免 Pico 批量读取短命令时阻塞。"""
+        line = command.encode("ascii")
+        padding_size = -(len(line) + 1) % SERIAL_PROTOCOL_BLOCK_SIZE
+        return line + b" " * padding_size + b"\n"

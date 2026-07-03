@@ -7,7 +7,11 @@ import tempfile
 import unittest
 import zipfile
 
-from pico_upgrade import PicoFirmwareUpgrader, PicoUpgradePackage
+from pico_upgrade import (
+    SERIAL_PROTOCOL_BLOCK_SIZE,
+    PicoFirmwareUpgrader,
+    PicoUpgradePackage,
+)
 
 
 class FakeUpgradeSerial:
@@ -16,10 +20,12 @@ class FakeUpgradeSerial:
     def __init__(self):
         """初始化已发送命令和待读取响应队列。"""
         self.commands = []
+        self.packets = []
         self.responses = []
 
     def write(self, data):
         """记录命令并生成与协议对应的确认响应。"""
+        self.packets.append(bytes(data))
         command = bytes(data).decode("ascii").strip()
         self.commands.append(command)
         if command.startswith("UPGRADE:BEGIN:"):
@@ -82,6 +88,8 @@ class PicoUpgradeTests(unittest.TestCase):
             self.assertEqual(client.serial.commands[0], "UPGRADE:BEGIN:1.0.0:1")
             self.assertEqual(client.serial.commands[-1], "UPGRADE:COMMIT")
             self.assertEqual(sum(command.startswith("UPGRADE:DATA:") for command in client.serial.commands), 3)
+            self.assertTrue(all(len(packet) % SERIAL_PROTOCOL_BLOCK_SIZE == 0 for packet in client.serial.packets))
+            self.assertTrue(all(packet.endswith(b"\n") for packet in client.serial.packets))
 
 
 if __name__ == "__main__":
