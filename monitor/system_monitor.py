@@ -153,12 +153,122 @@ class PowerMonitor:
         }
 
 
+class GpuMonitor:
+    """在后台采集可用 GPU 的总体使用率，避免阻塞主监控循环。"""
+
+    def __init__(self, interval=15.0, unavailable_interval=300.0):
+        """初始化正常采样周期、无设备退避周期、结果版本和线程锁。"""
+        self.interval = interval
+        self.unavailable_interval = unavailable_interval
+        self.value = None
+        self.version = 0
+        self.lock = threading.Lock()
+
+    def start(self):
+        """启动 GPU 使用率后台采集线程。"""
+        threading.Thread(
+            target=self._run,
+            name="GPU 使用率采集",
+            daemon=True,
+        ).start()
+
+    def snapshot(self):
+        """返回最近 GPU 使用率及采样版本，主循环仅执行内存读取。"""
+        with self.lock:
+            return self.value, self.version
+
+    def _run(self):
+        """按固定周期探测 GPU 使用率并发布结果。"""
+        while True:
+            value = self._probe()
+            with self.lock:
+                self.value = value
+                self.version += 1
+            time.sleep(
+                self.interval if value is not None else self.unavailable_interval
+            )
+
+    @classmethod
+    def _probe(cls):
+        """依次通过 NVIDIA、Linux sysfs 和 Windows 性能计数器采集。"""
+        value = cls._probe_nvidia()
+        if value is not None:
+            return value
+        if platform.system() == "Linux":
+            return cls._probe_linux_sysfs()
+        if platform.system() == "Windows":
+            return cls._probe_windows_counter()
+        return None
+
+    @staticmethod
+    def _probe_nvidia():
+        """通过 nvidia-smi 返回全部 NVIDIA GPU 中的最高使用率。"""
+        try:
+            result = subprocess.run(
+                [
+                    "nvidia-smi", "--query-gpu=utilization.gpu",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True, text=True, errors="replace", timeout=2,
+                check=False,
+                creationflags=GpuMonitor._background_creation_flags(),
+            )
+            values = [
+                float(line.strip())
+                for line in result.stdout.splitlines()
+                if line.strip()
+            ]
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            return None
+        return round(max(0, min(100, max(values))), 1) if values else None
+
+    @staticmethod
+    def _probe_linux_sysfs():
+        """通过 DRM sysfs 返回 Linux AMD GPU 的最高忙碌百分比。"""
+        values = []
+        for path in Path("/sys/class/drm").glob("card*/device/gpu_busy_percent"):
+            try:
+                values.append(float(path.read_text(encoding="ascii").strip()))
+            except (OSError, ValueError):
+                continue
+        return round(max(0, min(100, max(values))), 1) if values else None
+
+    @staticmethod
+    def _probe_windows_counter():
+        """通过 Windows GPU Engine 性能计数器返回最高 3D 引擎使用率。"""
+        script = (
+            "$values=(Get-Counter '\\GPU Engine(*engtype_3D)\\Utilization Percentage' "
+            "-ErrorAction SilentlyContinue).CounterSamples.CookedValue;"
+            "if($values){($values | Measure-Object -Maximum).Maximum}"
+        )
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                capture_output=True, text=True, errors="replace", timeout=8,
+                check=False,
+                creationflags=GpuMonitor._background_creation_flags(),
+            )
+            value = float(result.stdout.strip())
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            return None
+        return round(max(0, min(100, value)), 1)
+
+    @staticmethod
+    def _background_creation_flags():
+        """返回 Windows 隐藏窗口与低优先级进程标志，其他系统返回零。"""
+        return (
+            getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            | getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
+        )
+
+
 class SystemInformationCollector:
     """采集 CPU、内存、磁盘、网络、温度和功耗并生成协议快照。"""
 
     def __init__(self, ping_target):
         """初始化历史序列、网络计数基线和异步延迟监控器。"""
         self.histories = {name: deque([0] * HISTORY_LENGTH, maxlen=HISTORY_LENGTH) for name in ("cpu", "memory", "upload", "download")}
+        self.gpu_history = deque(maxlen=HISTORY_LENGTH)
         self.power_history = deque(maxlen=HISTORY_LENGTH)
         self.last_network = self.last_network_time = None
         self.last_disk_io = None
@@ -166,6 +276,8 @@ class SystemInformationCollector:
         self.disk_io_histories = {}
         self.ping_monitor = PingMonitor(ping_target)
         self.power_monitor = PowerMonitor()
+        self.gpu_monitor = GpuMonitor()
+        self.last_gpu_version = -1
         self.disk_temperature_cache = {}
         self.disk_temperature_time = 0.0
         self.disk_health_cache = {}
@@ -174,6 +286,7 @@ class SystemInformationCollector:
         self.disk_snapshot = []
         self.disk_snapshot_lock = threading.Lock()
         self.ping_monitor.start()
+        self.gpu_monitor.start()
         threading.Thread(
             target=self._disk_collection_loop,
             name="磁盘信息采集",
@@ -405,6 +518,25 @@ class SystemInformationCollector:
             download = max(0.0, (current.bytes_recv - self.last_network.bytes_recv) / elapsed)
         self.last_network, self.last_network_time = current, now
         return round(upload), round(download), int(current.bytes_sent), int(current.bytes_recv)
+
+    @classmethod
+    def _network_link_speed(cls, local_ip):
+        """按首选本机 IP 查找活动网卡，并返回其协商速率。"""
+        try:
+            addresses = psutil.net_if_addrs()
+            statistics = psutil.net_if_stats()
+        except (AttributeError, OSError):
+            return 0
+        fallback_speed = 0
+        for interface_name, interface_addresses in addresses.items():
+            interface_statistics = statistics.get(interface_name)
+            if interface_statistics is None or not interface_statistics.isup:
+                continue
+            speed = max(0, int(interface_statistics.speed or 0))
+            fallback_speed = max(fallback_speed, speed)
+            if any(address.address == local_ip for address in interface_addresses):
+                return speed
+        return fallback_speed
 
     @staticmethod
     def _normalize_temperature(value):
@@ -900,11 +1032,16 @@ class SystemInformationCollector:
         physical_disks = self._physical_disk_statistics(disks)
         disk_used, disk_total, disk_percent = self._disk_usage(disks)
         network = self._network_rates()
+        local_ip = self._local_ip()
         power = self.power_monitor.snapshot()
+        gpu_percent, gpu_version = self.gpu_monitor.snapshot()
         ping, online = self.ping_monitor.snapshot()
         for name, value in (("cpu", cpu), ("memory", memory.percent), ("upload", network[0]), ("download", network[1])):
             self.histories[name].append(round(value, 1))
         if power["watts"] is not None:
             self.power_history.append(power["watts"])
+        if gpu_percent is not None and gpu_version != self.last_gpu_version:
+            self.gpu_history.append(gpu_percent)
+        self.last_gpu_version = gpu_version
         power["history"] = list(self.power_history)
-        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total}, "disks": disks, "physical_disks": physical_disks, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "transmit_bytes": network[2], "receive_bytes": network[3], "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": self._local_ip()}}
+        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total}, "disks": disks, "physical_disks": physical_disks, "gpu": {"percent": gpu_percent, "history": list(self.gpu_history)} if gpu_percent is not None else None, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "transmit_bytes": network[2], "receive_bytes": network[3], "link_speed_mbps": self._network_link_speed(local_ip), "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": local_ip}}

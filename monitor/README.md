@@ -37,8 +37,8 @@ python pico_monitor.py
 --screen-rotation 180       将 Pico 屏幕旋转一百八十度
 --network-unit MB           按 B/s、KB/s、MB/s、GB/s 自动选择单位
 --network-unit Mbps         按 bps、Kbps、Mbps、Gbps 自动选择单位
---lcd-style default|disk|horizontal_disk|horizontal_disk6x
-                            切换 Pico 固件内置 LCD 样式，horizontal_disk6x 为双列六磁盘实时读写仪表盘
+--lcd-style default|disk|horizontal_disk|horizontal_disk4x|horizontal_disk6x
+                            切换 Pico 固件内置 LCD 样式，horizontal_disk4x 为双列四磁盘及网络详情仪表盘
 --disk-health-test-index 1  指定从 1 开始的磁盘序号并启用 health 显示测试，0 表示关闭
 --disk-health-test-level 3  指定测试 health 等级 0 至 5，默认 3
 --dev                       开发模式；未发现 Pico 后停止重试并持续打印 JSON
