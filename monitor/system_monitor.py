@@ -2,6 +2,7 @@
 
 import datetime as dt
 import json
+import logging
 import os
 import platform
 import re
@@ -15,9 +16,18 @@ from pathlib import Path
 import psutil
 
 
+LOGGER = logging.getLogger("pico-monitor")
 HISTORY_LENGTH = 24
 DISK_TEMPERATURE_CACHE_SECONDS = 30
 DISK_COLLECTION_INTERVAL_SECONDS = 10
+DISK_HEALTH_CACHE_SECONDS = 30 * 60
+
+DISK_HEALTH_UNKNOWN = 0
+DISK_HEALTH_HEALTHY = 1
+DISK_HEALTH_NOTICE = 2
+DISK_HEALTH_WARNING = 3
+DISK_HEALTH_CRITICAL = 4
+DISK_HEALTH_FAILED = 5
 
 
 class PingMonitor:
@@ -158,6 +168,8 @@ class SystemInformationCollector:
         self.power_monitor = PowerMonitor()
         self.disk_temperature_cache = {}
         self.disk_temperature_time = 0.0
+        self.disk_health_cache = {}
+        self.disk_health_time = 0.0
         self.disk_snapshot = []
         self.disk_snapshot_lock = threading.Lock()
         self.ping_monitor.start()
@@ -197,6 +209,7 @@ class SystemInformationCollector:
                 "total_bytes": int(disk.get("total_bytes", 0)),
                 "percent": float(disk.get("percent", 0)),
                 "temperature_c": disk.get("temperature_c"),
+                "health": int(disk.get("health", DISK_HEALTH_UNKNOWN)),
                 "read_bps": int(disk.get("read_bps", 0)),
                 "write_bps": int(disk.get("write_bps", 0)),
                 "read_history": list(disk.get("read_history", ())),
@@ -475,6 +488,88 @@ class SystemInformationCollector:
             for disk_name in sorted(disk_names, key=cls._natural_sort_key)
         ]
 
+    @staticmethod
+    def _smart_attribute_raw_value(attribute):
+        """从 smartctl 属性中提取可比较的原始整数值。"""
+        raw_value = attribute.get("raw", {}).get("value")
+        try:
+            return int(raw_value)
+        except (TypeError, ValueError):
+            match = re.search(r"-?\d+", str(raw_value or ""))
+            return int(match.group()) if match else 0
+
+    @classmethod
+    def _classify_smart_health(cls, payload):
+        """按照 smartmontools 公开指标把 SMART 数据划分为六级健康状态。"""
+        if not isinstance(payload, dict) or not payload:
+            return DISK_HEALTH_UNKNOWN
+        smart_status = payload.get("smart_status", {})
+        if smart_status.get("passed") is False:
+            return DISK_HEALTH_FAILED
+
+        attributes = payload.get("ata_smart_attributes", {}).get("table", ())
+        raw_values = {
+            str(attribute.get("name", "")).lower(): cls._smart_attribute_raw_value(attribute)
+            for attribute in attributes
+        }
+        if any(str(attribute.get("when_failed", "")).strip() not in ("", "-") for attribute in attributes):
+            return DISK_HEALTH_FAILED
+
+        nvme = payload.get("nvme_smart_health_information_log", {})
+        critical_warning = int(nvme.get("critical_warning", 0) or 0)
+        if critical_warning & 0x0C:
+            return DISK_HEALTH_FAILED
+        if critical_warning:
+            return DISK_HEALTH_CRITICAL
+
+        percentage_used = int(nvme.get("percentage_used", 0) or 0)
+        media_errors = int(nvme.get("media_errors", 0) or 0)
+        pending = raw_values.get("current_pending_sector", 0)
+        offline_uncorrectable = raw_values.get("offline_uncorrectable", 0)
+        reallocated = raw_values.get("reallocated_sector_ct", 0)
+        reported_uncorrectable = raw_values.get("reported_uncorrect", 0)
+        if percentage_used >= 100 or pending >= 100 or offline_uncorrectable >= 100:
+            return DISK_HEALTH_CRITICAL
+        if pending or offline_uncorrectable or media_errors >= 100 or reallocated >= 100:
+            return DISK_HEALTH_WARNING
+        if reallocated or reported_uncorrectable or media_errors or percentage_used >= 90:
+            return DISK_HEALTH_NOTICE
+        return DISK_HEALTH_HEALTHY if smart_status.get("passed") is True or nvme or attributes else DISK_HEALTH_UNKNOWN
+
+    @classmethod
+    def _read_smart_health(cls, device, device_type=None):
+        """调用 smartctl 读取单块物理磁盘并返回标准化健康等级。"""
+        command = ["smartctl", "-a", "-j"]
+        if device_type:
+            command.extend(["-d", str(device_type)])
+        command.append(str(device))
+        try:
+            result = subprocess.run(
+                command, capture_output=True, text=True, errors="replace", timeout=10,
+                check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            payload = json.loads(result.stdout) if result.stdout.strip() else {}
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            return DISK_HEALTH_UNKNOWN
+        return cls._classify_smart_health(payload)
+
+    def _disk_health(self, descriptors):
+        """启动时读取 SMART 健康状态，之后以三十分钟周期复用检查结果。"""
+        now = time.monotonic()
+        last_time = getattr(self, "disk_health_time", 0.0)
+        if last_time and now - last_time < DISK_HEALTH_CACHE_SECONDS:
+            return getattr(self, "disk_health_cache", {})
+        health = {
+            name: self._read_smart_health(device, device_type)
+            for name, device, device_type in descriptors
+        }
+        for name, status in health.items():
+            if status >= DISK_HEALTH_NOTICE:
+                LOGGER.warning("磁盘 SMART 健康告警：磁盘=%s，health=%d", name, status)
+        self.disk_health_cache = health
+        self.disk_health_time = now
+        return health
+
     @classmethod
     def _read_linux_temperature_file(cls, path):
         """读取 Linux 温度文件，并兼容摄氏度与千分之一摄氏度单位。"""
@@ -575,7 +670,8 @@ class SystemInformationCollector:
             "$items=@(); Get-Partition | Where-Object DriveLetter | ForEach-Object {"
             "$p=$_; $d=$p | Get-Disk; $physical=Get-PhysicalDisk | Where-Object DeviceId -eq ([string]$d.Number) | Select-Object -First 1;"
             "$temperature=$null; if($physical){try{$temperature=($physical | Get-StorageReliabilityCounter -ErrorAction Stop).Temperature}catch{}};"
-            "$items += [pscustomobject]@{Device=([string]$p.DriveLetter + ':');DiskName=('DISK' + [string]$d.Number + ' ' + [string]$d.FriendlyName);Temperature=$temperature}"
+            "$health=0; if($physical){$health=switch([string]$physical.HealthStatus){'Healthy'{1}'Warning'{3}'Unhealthy'{5}default{0}}};"
+            "$items += [pscustomobject]@{Device=([string]$p.DriveLetter + ':');DiskName=('DISK' + [string]$d.Number + ' ' + [string]$d.FriendlyName);Temperature=$temperature;Health=$health}"
             "}; $items | ConvertTo-Json -Compress"
         )
         try:
@@ -595,6 +691,7 @@ class SystemInformationCollector:
             temperatures[device] = {
                 "name": str(item.get("DiskName") or item.get("Device") or "DISK"),
                 "temperature_c": cls._normalize_temperature(item.get("Temperature")),
+                "health": int(item.get("Health", DISK_HEALTH_UNKNOWN) or DISK_HEALTH_UNKNOWN),
             }
         return temperatures
 
@@ -608,6 +705,7 @@ class SystemInformationCollector:
         elif platform.system() == "Linux":
             temperatures = {}
             descriptors = self._discover_linux_disks()
+            health_by_name = self._disk_health(descriptors)
             disk_sensors_by_name = {}
             missing_names = []
             for physical_name, device_path, device_type in descriptors:
@@ -616,6 +714,7 @@ class SystemInformationCollector:
                     "name": physical_name,
                     "device": device_path,
                     "temperature_c": temperature,
+                    "health": health_by_name.get(physical_name, DISK_HEALTH_UNKNOWN),
                 }
                 if temperature is None:
                     missing_names.append(physical_name)
@@ -634,6 +733,7 @@ class SystemInformationCollector:
                 temperatures[os.path.normcase(device)] = {
                     "name": disk_sensors[0]["name"],
                     "temperature_c": disk_sensors[0]["temperature_c"],
+                    "health": disk_sensors[0].get("health", DISK_HEALTH_UNKNOWN),
                     "physical_disks": disk_sensors,
                 }
             temperatures["__physical_disks__"] = list(disk_sensors_by_name.values())
@@ -675,7 +775,7 @@ class SystemInformationCollector:
             if platform.system() == "Windows" and not sensor:
                 device_number = self._windows_device_number(device)
                 if device_number is not None:
-                    sensor = {"name": "DISK" + str(device_number), "temperature_c": None}
+                    sensor = {"name": "DISK" + str(device_number), "temperature_c": None, "health": DISK_HEALTH_UNKNOWN}
             disk_sensors = sensor.get("physical_disks") or [sensor]
             if platform.system() == "Linux" and not sensor:
                 continue
@@ -691,6 +791,7 @@ class SystemInformationCollector:
                         "used_bytes": 0,
                         "total_bytes": 0,
                         "temperature_c": disk_sensor.get("temperature_c"),
+                        "health": disk_sensor.get("health", DISK_HEALTH_UNKNOWN),
                     }
                     grouped[name] = current
                 current["devices"].append(device)
@@ -702,6 +803,7 @@ class SystemInformationCollector:
                 current["total_bytes"] += int(usage.total)
                 if current["temperature_c"] is None:
                     current["temperature_c"] = disk_sensor.get("temperature_c")
+                current["health"] = max(current["health"], disk_sensor.get("health", DISK_HEALTH_UNKNOWN))
         details = []
         for current in grouped.values():
             total_bytes = current["total_bytes"]
@@ -720,6 +822,7 @@ class SystemInformationCollector:
                 "total_bytes": 0,
                 "percent": 0,
                 "temperature_c": sensor["temperature_c"],
+                "health": sensor.get("health", DISK_HEALTH_UNKNOWN),
             })
         return details
 

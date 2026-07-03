@@ -154,9 +154,47 @@ class SystemCollectorTest(unittest.TestCase):
 
         self.assertEqual(statistics[0]["name"], "NVME0")
         self.assertEqual(statistics[0]["temperature_c"], 42.5)
+        self.assertEqual(statistics[0]["health"], 0)
         self.assertEqual(statistics[0]["total_bytes"], 1000)
         self.assertEqual(statistics[0]["read_bps"], 0)
         self.assertEqual(statistics[0]["write_history"], [])
+
+    def test_smart_health_classification_uses_overall_status_and_attributes(self):
+        """验证 SMART 总体失败和坏块指标会映射到约定的健康等级。"""
+        self.assertEqual(
+            SystemInformationCollector._classify_smart_health({"smart_status": {"passed": False}}),
+            5,
+        )
+        warning_payload = {
+            "smart_status": {"passed": True},
+            "ata_smart_attributes": {"table": [
+                {"name": "Current_Pending_Sector", "raw": {"value": 2}, "when_failed": "-"}
+            ]},
+        }
+        self.assertEqual(SystemInformationCollector._classify_smart_health(warning_payload), 3)
+        notice_payload = {
+            "smart_status": {"passed": True},
+            "ata_smart_attributes": {"table": [
+                {"name": "Reallocated_Sector_Ct", "raw": {"value": 1}, "when_failed": "-"}
+            ]},
+        }
+        self.assertEqual(SystemInformationCollector._classify_smart_health(notice_payload), 2)
+
+    @mock.patch.object(SystemInformationCollector, "_read_smart_health", return_value=1)
+    @mock.patch("system_monitor.time.monotonic", side_effect=(10.0, 100.0, 1900.0))
+    def test_disk_health_checks_at_startup_and_every_thirty_minutes(self, monotonic, read_health):
+        """验证 SMART 健康检查启动时执行，并在三十分钟内复用缓存。"""
+        del monotonic
+        collector = SystemInformationCollector.__new__(SystemInformationCollector)
+        collector.disk_health_cache = {}
+        collector.disk_health_time = 0.0
+        descriptors = [("sda", "/dev/sda", "sat")]
+
+        self.assertEqual(collector._disk_health(descriptors), {"sda": 1})
+        self.assertEqual(collector._disk_health(descriptors), {"sda": 1})
+        self.assertEqual(collector._disk_health(descriptors), {"sda": 1})
+
+        self.assertEqual(read_health.call_count, 2)
 
     @mock.patch("system_monitor.time.monotonic", side_effect=(10.0, 12.0))
     @mock.patch("system_monitor.psutil.disk_io_counters")

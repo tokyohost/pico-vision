@@ -4,7 +4,7 @@
 
 本程序不安装自定义内核驱动：Windows 使用系统性能接口和串口驱动，Linux 使用 `/proc`、`/sys` 及系统串口驱动。这样无需驱动签名，也不会绑定特定内核版本。
 
-磁盘明细通过 JSON 顶层 `disks` 数组发送。同一物理盘的多个分区会合并，字段包括 `name`、`devices`、`mountpoints`、`filesystems`、`used_bytes`、`total_bytes`、`percent` 和 `temperature_c`。同时，面向 Pico 显示的物理磁盘统计通过顶层 `physical_disks` 数组发送，每块物理盘包含 `temperature_c`、容量、占用率、实时读写速度 `read_bps`/`write_bps`，以及固定长度的读写速度历史 `read_history`/`write_history`；无法读取温度时该字段为 `null`。Linux 可安装 `smartmontools` 作为 hwmon 之外的温度读取后备来源。
+磁盘明细通过 JSON 顶层 `disks` 数组发送。同一物理盘的多个分区会合并，字段包括 `name`、`devices`、`mountpoints`、`filesystems`、`used_bytes`、`total_bytes`、`percent`、`temperature_c` 和 `health`。同时，面向 Pico 显示的物理磁盘统计通过顶层 `physical_disks` 数组发送，每块物理盘也包含 `health`、温度、容量、占用率、实时读写速度 `read_bps`/`write_bps`，以及固定长度的读写速度历史 `read_history`/`write_history`。程序在启动时检查 SMART，之后每 30 分钟复查；Linux 需要安装 `smartmontools`。`health` 取值为：`0` 未知、`1` 健康、`2` 注意、`3` 警告、`4` 严重、`5` 失败。分级以 smartmontools 总体自检结论为最高优先级，并结合 NVMe Critical Warning、寿命百分比和 ATA 重映射、待映射及不可校正扇区等公开指标；无法读取 SMART、USB 硬盘盒不支持或权限不足时返回 `0`。
 
 网络统计通过 `network.receive_bytes` 提供已下载总流量，通过 `network.transmit_bytes` 提供已上传总流量，单位均为字节。
 
