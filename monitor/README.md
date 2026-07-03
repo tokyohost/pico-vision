@@ -8,6 +8,8 @@
 
 网络统计通过 `network.receive_bytes` 提供已下载总流量，通过 `network.transmit_bytes` 提供已上传总流量，单位均为字节。
 
+开启并配置 qBittorrent Web UI 后，程序会在后台通过 Web API 采集 `qbittorrent` 顶层指标，不会阻塞系统指标发送。字段包括实时上传下载速度及历史、会话与历史流量、历史分享率、会话丢弃、连接用户、下载目录剩余空间和种子状态数量。完整配置与字段说明见 [qbittorrent_config.md](qbittorrent_config.md)。
+
 ## 主要功能
 
 - 自动发现并握手识别 Pico LCD，也可固定串口。
@@ -37,8 +39,17 @@ python pico_monitor.py
 --screen-rotation 180       将 Pico 屏幕旋转一百八十度
 --network-unit MB           按 B/s、KB/s、MB/s、GB/s 自动选择单位
 --network-unit Mbps         按 bps、Kbps、Mbps、Gbps 自动选择单位
---lcd-style default|disk|horizontal_disk|horizontal_disk4x|horizontal_disk6x
-                            切换 Pico 固件内置 LCD 样式，horizontal_disk4x 为双列四磁盘及网络详情仪表盘
+--lcd-style default|disk|horizontal_disk|horizontal_disk4x|horizontal_disk4x_qb|horizontal_disk6x
+                            切换 Pico 固件内置 LCD 样式；horizontal_disk4x_qb 保留双列四磁盘布局，并将 IP/GPU 区域替换为 qBittorrent 仪表盘
+--qbittorrent-enabled       开启 qBittorrent 指标采集
+--no-qbittorrent            显式关闭 qBittorrent 指标采集
+--qbittorrent-address http://127.0.0.1:8080
+                            qBittorrent Web UI 地址
+--qbittorrent-username admin
+                            qBittorrent Web UI 登录账号
+--qbittorrent-password password
+                            qBittorrent Web UI 登录密码
+--qbittorrent-interval 2.0 qBittorrent 指标采集间隔，单位为秒
 --disk-health-test-index 1  指定从 1 开始的磁盘序号并启用 health 显示测试，0 表示关闭
 --disk-health-test-level 3  指定测试 health 等级 0 至 5，默认 3
 --dev                       开发模式；未发现 Pico 后停止重试并持续打印 JSON
@@ -46,6 +57,8 @@ python pico_monitor.py
 ```
 
 开发模式也可通过环境变量 `PICO_MONITOR_DEV=1` 开启。首次串口扫描未找到 Pico 后，程序不再重试 COM 口，而是按照 `--interval` 周期持续采集，并以 `[DEV][Monitor -> Pico][JSON]` 标识打印完整 `JSON:` 协议行，方便在没有硬件时调试采集数据。
+
+qBittorrent 也可通过环境变量 `PICO_MONITOR_QBITTORRENT_ENABLED`、`PICO_MONITOR_QBITTORRENT_ADDRESS`、`PICO_MONITOR_QBITTORRENT_USERNAME`、`PICO_MONITOR_QBITTORRENT_PASSWORD` 和 `PICO_MONITOR_QBITTORRENT_INTERVAL` 配置。启用采集后地址、账号、密码必须全部配置。建议使用环境变量或 Linux 配置文件保存密码，避免密码出现在进程命令行中。
 
 ## 构建 Windows EXE
 

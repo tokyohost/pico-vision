@@ -11,6 +11,7 @@ if str(PICO_SOURCE) not in sys.path:
 
 from config import GRAY, RED, YELLOW  # noqa: E402
 from style_horizontal_disk import HorizontalDiskStyle  # noqa: E402
+from style_horizontal_disk4x_qb import HorizontalDisk4xQbStyle  # noqa: E402
 from style_horizontal_disk6x import (  # noqa: E402
     ELEMENT_DANGER,
     ELEMENT_SUCCESS,
@@ -85,6 +86,20 @@ class CpuHistoryColorTest(unittest.TestCase):
             red_columns = {line[0] for line in canvas.lines if line[-1] == ELEMENT_DANGER}
             all_columns = {line[0] for line in canvas.lines}
             self.assertLess(len(red_columns), len(all_columns))
+
+
+class QbittorrentStyleTest(unittest.TestCase):
+    """验证四磁盘 qBittorrent 样式的注册名称和局部刷新规则。"""
+
+    def test_qbittorrent_change_refreshes_replaced_panel(self):
+        """确认 qBittorrent 数据变化只会触发原网络详情区域刷新。"""
+        previous = {"qbittorrent": {"online": False}}
+        current = {"qbittorrent": {"online": True}}
+
+        regions = HorizontalDisk4xQbStyle.select_dirty_regions(previous, current)
+
+        self.assertEqual(HorizontalDisk4xQbStyle.name, "horizontal_disk4x_qb")
+        self.assertIn("network_details", [region[0] for region in regions])
 
 
 if __name__ == "__main__":

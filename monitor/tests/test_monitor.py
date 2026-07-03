@@ -7,7 +7,7 @@ from unittest import mock
 from types import SimpleNamespace
 
 from pico_client import PicoJsonClient
-from pico_monitor import MonitorService, create_argument_parser
+from pico_monitor import MonitorService, create_argument_parser, validate_arguments
 from system_monitor import PowerMonitor, SystemInformationCollector
 
 
@@ -120,6 +120,28 @@ class PicoClientTest(unittest.TestCase):
         for style_name in ("default", "disk", "horizontal_disk"):
             arguments = create_argument_parser().parse_args(["--lcd-style", style_name])
             self.assertEqual(arguments.lcd_style, style_name)
+
+    def test_qbittorrent_collection_is_disabled_by_default(self):
+        """确认未显式开启时不会要求或连接 qBittorrent。"""
+        arguments = create_argument_parser().parse_args([])
+        self.assertFalse(arguments.qbittorrent_enabled)
+        validate_arguments(arguments)
+
+    def test_qbittorrent_enabled_requires_connection_parameters(self):
+        """确认开启采集后地址、账号和密码均为必填项。"""
+        arguments = create_argument_parser().parse_args(["--qbittorrent-enabled"])
+        with self.assertRaises(SystemExit):
+            validate_arguments(arguments)
+
+    def test_qbittorrent_enabled_accepts_complete_configuration(self):
+        """确认完整 qBittorrent 连接配置能够通过参数校验。"""
+        arguments = create_argument_parser().parse_args([
+            "--qbittorrent-enabled",
+            "--qbittorrent-address", "http://127.0.0.1:8080",
+            "--qbittorrent-username", "admin",
+            "--qbittorrent-password", "password",
+        ])
+        validate_arguments(arguments)
 
     def test_disk_health_display_test_arguments(self):
         """验证可指定从一开始的磁盘序号和健康测试等级。"""

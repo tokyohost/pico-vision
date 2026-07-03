@@ -13,12 +13,14 @@ import psutil
 import serial
 
 from pico_client import PicoJsonClient
+from qbittorrent_monitor import QbittorrentMonitor
 from system_monitor import SystemInformationCollector
 
 
 LOGGER = logging.getLogger("pico-monitor")
 BUILTIN_LCD_STYLES = (
-    "default", "disk", "horizontal_disk", "horizontal_disk4x", "horizontal_disk6x",
+    "default", "disk", "horizontal_disk", "horizontal_disk4x",
+    "horizontal_disk4x_qb", "horizontal_disk6x",
 )
 
 
@@ -39,7 +41,15 @@ def create_argument_parser():
     parser.add_argument("--reconnect-interval", type=float, default=float(os.getenv("PICO_MONITOR_RECONNECT_INTERVAL", "3.0")), help="设备断线后的重连间隔，单位为秒")
     parser.add_argument("--screen-rotation", type=int, choices=(0, 180), default=int(os.getenv("PICO_MONITOR_SCREEN_ROTATION", "0")), help="Pico 屏幕旋转角度，可选 0 或 180")
     parser.add_argument("--network-unit", choices=("MB", "Mbps"), default=os.getenv("PICO_MONITOR_NETWORK_UNIT", "MB"), help="网络速率模式：MB 自动使用 B/KB/MB/GB，Mbps 自动使用 bps/Kbps/Mbps/Gbps")
-    parser.add_argument("--lcd-style", choices=BUILTIN_LCD_STYLES, default=os.getenv("PICO_MONITOR_LCD_STYLE", "horizontal_disk4x"), help="Pico LCD 内置界面样式")
+    parser.add_argument("--lcd-style", choices=BUILTIN_LCD_STYLES, default=os.getenv("PICO_MONITOR_LCD_STYLE", "horizontal_disk4x_qb"), help="Pico LCD 内置界面样式")
+    qbittorrent_group = parser.add_mutually_exclusive_group()
+    qbittorrent_group.add_argument("--qbittorrent-enabled", dest="qbittorrent_enabled", action="store_true", help="开启 qBittorrent 指标采集")
+    qbittorrent_group.add_argument("--no-qbittorrent", dest="qbittorrent_enabled", action="store_false", help="关闭 qBittorrent 指标采集")
+    parser.set_defaults(qbittorrent_enabled=environment_flag("PICO_MONITOR_QBITTORRENT_ENABLED"))
+    parser.add_argument("--qbittorrent-address", default=os.getenv("PICO_MONITOR_QBITTORRENT_ADDRESS", "http://113.20.8.174:48080"), help="qBittorrent Web UI 地址")
+    parser.add_argument("--qbittorrent-username", default=os.getenv("PICO_MONITOR_QBITTORRENT_USERNAME", "admin"), help="qBittorrent Web UI 账号")
+    parser.add_argument("--qbittorrent-password", default=os.getenv("PICO_MONITOR_QBITTORRENT_PASSWORD", "Iloveyou520.."), help="qBittorrent Web UI 密码")
+    parser.add_argument("--qbittorrent-interval", type=float, default=float(os.getenv("PICO_MONITOR_QBITTORRENT_INTERVAL", "2.0")), help="qBittorrent 指标采集间隔，单位为秒")
     parser.add_argument("--dev", action="store_true", default=environment_flag("PICO_MONITOR_DEV"), help="开发模式：未发现 Pico 时仍打印待发送的 JSON 协议行")
     parser.add_argument("--disk-health-test-index", type=int, default=int(os.getenv("PICO_MONITOR_DISK_HEALTH_TEST_INDEX", "0")), help="磁盘健康显示测试：指定从 1 开始的磁盘序号，0 表示关闭")
     parser.add_argument("--disk-health-test-level", type=int, choices=range(6), default=int(os.getenv("PICO_MONITOR_DISK_HEALTH_TEST_LEVEL", "3")), help="磁盘健康显示测试等级，范围为 0 至 5，默认 3")
@@ -55,6 +65,22 @@ class MonitorService:
         """根据命令行配置创建采集器、串口客户端和停止事件。"""
         self.arguments = arguments
         self.collector = SystemInformationCollector(arguments.ping_target)
+        self.qbittorrent_monitor = None
+        if arguments.qbittorrent_enabled:
+            LOGGER.info(
+                "qBittorrent 采集配置：启用=是，地址=%s，账号=%s，密码=%s，采集间隔=%.1f 秒",
+                arguments.qbittorrent_address,
+                arguments.qbittorrent_username,
+                "已配置" if arguments.qbittorrent_password else "未配置",
+                arguments.qbittorrent_interval,
+            )
+            self.qbittorrent_monitor = QbittorrentMonitor(
+                arguments.qbittorrent_address,
+                arguments.qbittorrent_username,
+                arguments.qbittorrent_password,
+                arguments.qbittorrent_interval,
+            )
+            self.qbittorrent_monitor.start()
         self.client = PicoJsonClient(arguments.port)
         self.stopping = threading.Event()
 
@@ -114,6 +140,8 @@ class MonitorService:
     def _collect_snapshot(self):
         """采集系统指标并补充 Pico 显示配置。"""
         snapshot = self.collector.collect()
+        if self.qbittorrent_monitor is not None:
+            snapshot["qbittorrent"] = self.qbittorrent_monitor.snapshot()
         self._apply_disk_health_test(snapshot)
         snapshot["display"] = {
             "rotation": self.arguments.screen_rotation,
@@ -156,11 +184,26 @@ def configure_logging():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 
+def validate_arguments(arguments):
+    """校验通用间隔以及启用 qBittorrent 后的必填连接参数。"""
+    if arguments.interval <= 0 or arguments.reconnect_interval <= 0 or arguments.qbittorrent_interval <= 0:
+        raise SystemExit("采集间隔和重连间隔必须大于 0")
+    if not arguments.qbittorrent_enabled:
+        return
+    required = (
+        ("--qbittorrent-address", arguments.qbittorrent_address),
+        ("--qbittorrent-username", arguments.qbittorrent_username),
+        ("--qbittorrent-password", arguments.qbittorrent_password),
+    )
+    missing = [name for name, value in required if not str(value or "").strip()]
+    if missing:
+        raise SystemExit("开启 qBittorrent 采集后必须配置：" + "、".join(missing))
+
+
 def main():
     """校验参数并按当前平台启动后台工作进程或 Windows 托盘。"""
     arguments = create_argument_parser().parse_args()
-    if arguments.interval <= 0 or arguments.reconnect_interval <= 0:
-        raise SystemExit("--interval 和 --reconnect-interval 必须大于 0")
+    validate_arguments(arguments)
     if sys.platform == "win32" and getattr(sys, "frozen", False) and not arguments.worker:
         from windows_tray import WindowsTrayApplication
 

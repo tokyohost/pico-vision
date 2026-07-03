@@ -37,6 +37,7 @@ install_application() {
     install -d -m 0755 "$INSTALL_ROOT"
     install -m 0644 "$script_directory/pico_monitor.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/pico_client.py" "$INSTALL_ROOT/"
+    install -m 0644 "$script_directory/qbittorrent_monitor.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/system_monitor.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/requirements.txt" "$INSTALL_ROOT/"
     python3 -m venv "$INSTALL_ROOT/venv"
