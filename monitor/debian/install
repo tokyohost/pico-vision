@@ -1,6 +1,7 @@
 pico_monitor.py usr/lib/pico-monitor
 pico_client.py usr/lib/pico-monitor
 pico_upgrade.py usr/lib/pico-monitor
+monitor_update.py usr/lib/pico-monitor
 build_info.py usr/lib/pico-monitor
 qbittorrent_monitor.py usr/lib/pico-monitor
 system_monitor.py usr/lib/pico-monitor

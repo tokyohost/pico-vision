@@ -108,6 +108,19 @@ sudo systemctl restart pico-monitor
 
 运行配置位于 `/etc/pico-monitor.conf`。服务默认以 `root` 运行，从而读取硬件传感器并访问 USB 串口；如果发行版已配置 `dialout` 权限，可按安全要求调整服务用户。
 
+### 自动更新 Linux DEB
+
+通过 DEB 安装后，可停止后台服务并从 GitHub 最新 Release 自动下载、校验和安装当前架构的软件包：
+
+```bash
+sudo systemctl stop pico-monitor
+sudo pico-monitor --update
+sudo systemctl start pico-monitor
+pico-monitor --version
+```
+
+`--update` 会调用 GitHub Release API，按 `dpkg --print-architecture` 自动选择 `amd64`、`arm64`、`armhf` 或 `i386` 软件包，并优先使用 Release 中的 `SHA256SUMS-linux-deb.txt` 校验下载内容，最后通过 `apt-get install` 完成更新。该命令仅支持 Linux 发布构建，必须使用 root 权限运行；本地 `development` 版本不会执行自动更新。
+
 ## Pico 固件要求
 
 先将 `pico-project/picoRP2040` 下的 MicroPython 程序部署到 Pico。主机端会发送 `PING:PICO_LCD?` 完成设备识别，再发送 `JSON:` 加单行 JSON；固件应返回 `ACK:JSON`。

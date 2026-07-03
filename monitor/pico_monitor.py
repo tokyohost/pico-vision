@@ -15,6 +15,7 @@ import serial
 from pico_client import PicoJsonClient
 from pico_upgrade import PicoFirmwareUpgrader, PicoUpgradeDownloader, PicoUpgradePackage
 from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
+from monitor_update import LinuxDebUpdater
 from qbittorrent_monitor import QbittorrentMonitor
 from system_monitor import SystemInformationCollector
 
@@ -92,6 +93,7 @@ def create_argument_parser():
     parser.add_argument("--upgrade-pico", action="store_true", help="下载当前 Monitor 版本的 Pico 升级包并执行升级")
     parser.add_argument("--upgrade-url", default=os.getenv("PICO_MONITOR_UPGRADE_URL") or None, help="覆盖 Pico 升级包下载地址")
     parser.add_argument("--upgrade-sha256", default=os.getenv("PICO_MONITOR_UPGRADE_SHA256") or None, help="可选的升级包 SHA-256 摘要")
+    parser.add_argument("--update", action="store_true", help="从 GitHub 最新 Release 下载并安装当前架构的 Linux DEB")
     return parser
 
 
@@ -278,6 +280,9 @@ def main():
         return WindowsTrayApplication([*sys.argv[1:], "--worker"]).run()
     configure_logging()
     log_monitor_version()
+    if arguments.update:
+        LinuxDebUpdater(GITHUB_REPOSITORY, MONITOR_VERSION).update()
+        return 0
     service = MonitorService(arguments)
     signal.signal(signal.SIGINT, service.stop)
     if hasattr(signal, "SIGTERM"):
