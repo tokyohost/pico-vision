@@ -49,6 +49,14 @@ jobs:
       - name: 安装运行及打包依赖
         run: python -m pip install -r requirements.txt -r requirements-build.txt
 
+      - name: 写入发布版本信息
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $content = "`"`"`"保存构建时写入的 Monitor 版本及 GitHub 仓库信息。`"`"`"`nMONITOR_VERSION = `"$version`"`nGITHUB_REPOSITORY = `"$env:GITHUB_REPOSITORY`"`n"
+          [IO.File]::WriteAllText((Join-Path $PWD "build_info.py"), $content, [Text.UTF8Encoding]::new($false))
+
       - name: 执行单元测试
         run: python -m unittest discover -s tests -v
 

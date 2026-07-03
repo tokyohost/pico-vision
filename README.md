@@ -20,6 +20,7 @@
 - `main.py`：应用入口和协作式主循环。
 - `ledController.py`：WS2812 非阻塞状态机。
 - `protocol.py`：USB 握手及 JSON 增量接收状态机。
+- `upgrade_manager.py`：串口升级会话、临时写入、SHA-256 校验、安装和自动重启。
 - `data_receiver.py`：最新 JSON 快照缓存。
 - `lcd.py`：ST7789 初始化和区域写屏。
 - `canvas.py`：带条带裁剪的 RGB565 绘图。

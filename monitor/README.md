@@ -13,6 +13,7 @@
 ## 主要功能
 
 - 自动发现并握手识别 Pico LCD，也可固定串口。
+- 下载当前 Monitor 版本对应的 Pico 升级包，经 SHA-256 校验后通过串口升级固件。
 - 磁盘汇总统计所有有效本地分区，并发送每个磁盘的设备、挂载点、容量、占用率和可用温度。
 - Linux 支持通过 RAPL 能耗计数器发送实时功耗；不支持的平台明确发送空值。
 - 设备拔插、休眠唤醒或通信失败后自动重连。
@@ -54,6 +55,9 @@ python pico_monitor.py
 --disk-health-test-level 3  指定测试 health 等级 0 至 5，默认 3
 --dev                       开发模式；未发现 Pico 后停止重试并持续打印 JSON
 --once                      成功发送一次后退出
+--upgrade-pico              下载当前 Monitor 版本升级包并升级 Pico
+--upgrade-url URL           开发版或私有发布使用的升级包地址
+--upgrade-sha256 HASH       可选的升级包下载摘要校验值
 ```
 
 开发模式也可通过环境变量 `PICO_MONITOR_DEV=1` 开启。首次串口扫描未找到 Pico 后，程序不再重试 COM 口，而是按照 `--interval` 周期持续采集，并以 `[DEV][Monitor -> Pico][JSON]` 标识打印完整 `JSON:` 协议行，方便在没有硬件时调试采集数据。
@@ -107,6 +111,10 @@ sudo systemctl restart pico-monitor
 
 先将 `pico-project/picoRP2040` 下的 MicroPython 程序部署到 Pico。主机端会发送 `PING:PICO_LCD?` 完成设备识别，再发送 `JSON:` 加单行 JSON；固件应返回 `ACK:JSON`。
 
+## Pico 在线升级
+
+发布版 Monitor 可执行 `pico-monitor --upgrade-pico`，程序会下载同版本 GitHub Release 中的 `pico-upgrade-v<版本>.zip`。开发版使用 `python pico_monitor.py --upgrade-pico --upgrade-url <地址>`。升级时 Monitor 与 Pico 会持续打印下载、传输、安装百分比；Pico 对每个文件核对长度和 SHA-256，全部通过后替换内部文件并自动软重启。传输或校验失败时只删除临时区，不安装未通过校验的文件。
+
 ## GitHub Actions 自动发布
 
 `pico-project/.github/workflows` 提供 Windows EXE 与 Linux DEB 两套工作流。手动运行工作流时只生成 Actions Artifact；推送 `v` 开头的标签时会自动创建或更新 GitHub Release，并上传以下产物：
@@ -118,6 +126,7 @@ sudo systemctl restart pico-monitor
 - `pico-monitor_<版本>_armhf.deb`：ARM 32 位硬浮点设备
 - `pico-monitor_<版本>_i386.deb`：Intel/AMD 32 位电脑
 - `pico-monitor-<版本>-linux.tar.gz`：Fedora、RHEL、openSUSE、Arch 等 systemd 发行版通用安装包
+- `pico-upgrade-v<版本>.zip` 与 `.sha256`：Pico 串口升级包及下载摘要
 
 发布示例：
 

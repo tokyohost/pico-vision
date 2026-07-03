@@ -49,6 +49,7 @@ jobs:
           debian_version="${version//-/\~}"
           echo "Git 标签 ${GITHUB_REF_NAME} 对应 Debian 版本 ${debian_version}"
           sed -i "1s|([^)]*)|(${debian_version})|" debian/changelog
+          printf '%s\n' '"""保存构建时写入的 Monitor 版本及 GitHub 仓库信息。"""' "MONITOR_VERSION = \"${version}\"" "GITHUB_REPOSITORY = \"${GITHUB_REPOSITORY}\"" > build_info.py
 
       - name: 构建并检查 DEB 软件包
         env:
@@ -84,8 +85,9 @@ jobs:
           version="${GITHUB_REF_NAME:-manual}"
           version="${version#v}"
           package_name="pico-monitor-${version}-linux"
+          printf '%s\n' '"""保存构建时写入的 Monitor 版本及 GitHub 仓库信息。"""' "MONITOR_VERSION = \"${version}\"" "GITHUB_REPOSITORY = \"${GITHUB_REPOSITORY}\"" > build_info.py
           mkdir -p "release-assets/${package_name}/packaging" "release-assets/${package_name}/debian"
-          cp pico_monitor.py pico_client.py system_monitor.py requirements.txt install-linux.sh "release-assets/${package_name}/"
+          cp pico_monitor.py pico_client.py pico_upgrade.py build_info.py system_monitor.py qbittorrent_monitor.py requirements.txt install-linux.sh "release-assets/${package_name}/"
           cp packaging/pico-monitor-generic packaging/pico-monitor-generic.service "release-assets/${package_name}/packaging/"
           cp debian/pico-monitor.conf "release-assets/${package_name}/debian/"
           chmod 0755 "release-assets/${package_name}/install-linux.sh" "release-assets/${package_name}/packaging/pico-monitor-generic"

@@ -1,0 +1,49 @@
+name: 构建 Pico 升级包
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 升级包版本
+        required: false
+        default: manual
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 构建并校验 Pico 升级包
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出项目代码
+        uses: actions/checkout@v6
+      - name: 设置 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: 生成 Pico 升级包
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then version="${{ inputs.version }}"; fi
+          mkdir -p release-assets
+          python tools/package_pico_upgrade.py --source picoRP2040 --output "release-assets/pico-upgrade-v${version}.zip" --version "${version}"
+          (cd release-assets && sha256sum --check "pico-upgrade-v${version}.zip.sha256")
+      - name: 上传 Pico 升级包
+        uses: actions/upload-artifact@v7
+        with:
+          name: pico-upgrade
+          path: release-assets/pico-upgrade-*
+          if-no-files-found: error
+      - name: 发布 Pico 升级包
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes --title "${GITHUB_REF_NAME}"; fi
+          gh release upload "${GITHUB_REF_NAME}" release-assets/pico-upgrade-* --clobber

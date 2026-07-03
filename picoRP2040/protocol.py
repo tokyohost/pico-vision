@@ -18,10 +18,12 @@ from config import (
     JSON_PREFIX,
     LCD_DRIVER,
     MAX_JSON_SIZE,
+    MAX_UPGRADE_LINE_SIZE,
     PING_TEXT,
     PIXEL_FORMAT,
     SERIAL_READ_CHUNK_SIZE,
     SERIAL_READ_BUDGET,
+    UPGRADE_PREFIX,
     WIDTH,
 )
 
@@ -29,7 +31,7 @@ from config import (
 class JsonProtocol:
     """增量接收 ASCII 行，避免二进制控制字节触发 MicroPython 中断。"""
 
-    def __init__(self):
+    def __init__(self, upgrade_manager=None):
         """初始化标准输入输出、轮询器和行缓冲区。"""
         self._input = sys.stdin
         self._output = getattr(sys.stdout, "buffer", sys.stdout)
@@ -38,6 +40,7 @@ class JsonProtocol:
         # sys.stdin.buffer 虽可读取，却不会正确报告 POLLIN 可读事件。
         self._poller.register(self._input, select.POLLIN)
         self._buffer = bytearray()
+        self._upgrade_manager = upgrade_manager
 
     def write(self, data):
         """向 USB 串口写入响应并尽可能立即刷新。"""
@@ -66,7 +69,8 @@ class JsonProtocol:
                 chunk = chunk.encode("ascii")
             self._buffer.extend(chunk)
             read_count += len(chunk)
-            if len(self._buffer) > MAX_JSON_SIZE + len(JSON_PREFIX) + 1:
+            maximum_size = max(MAX_JSON_SIZE + len(JSON_PREFIX) + 1, MAX_UPGRADE_LINE_SIZE)
+            if len(self._buffer) > maximum_size:
                 self._buffer = bytearray()
                 self.write(b"ERR:BAD_JSON_SIZE\n")
                 return None
@@ -87,6 +91,12 @@ class JsonProtocol:
             self._consume(newline + 1)
             if line == PING_TEXT:
                 self._write_pong()
+                continue
+            if line.startswith(UPGRADE_PREFIX):
+                if self._upgrade_manager is None:
+                    self.write(b"ERR:UPGRADE_UNAVAILABLE\n")
+                else:
+                    self._upgrade_manager.handle(line[len(UPGRADE_PREFIX):])
                 continue
             if not line.startswith(JSON_PREFIX):
                 continue

@@ -13,6 +13,8 @@ import psutil
 import serial
 
 from pico_client import PicoJsonClient
+from pico_upgrade import PicoFirmwareUpgrader, PicoUpgradeDownloader, PicoUpgradePackage
+from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
 from qbittorrent_monitor import QbittorrentMonitor
 from system_monitor import SystemInformationCollector
 
@@ -55,6 +57,9 @@ def create_argument_parser():
     parser.add_argument("--disk-health-test-level", type=int, choices=range(6), default=int(os.getenv("PICO_MONITOR_DISK_HEALTH_TEST_LEVEL", "3")), help="磁盘健康显示测试等级，范围为 0 至 5，默认 3")
     parser.add_argument("--once", action="store_true", help="仅成功发送一次数据")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--upgrade-pico", action="store_true", help="下载当前 Monitor 版本的 Pico 升级包并执行升级")
+    parser.add_argument("--upgrade-url", default=os.getenv("PICO_MONITOR_UPGRADE_URL") or None, help="覆盖 Pico 升级包下载地址")
+    parser.add_argument("--upgrade-sha256", default=os.getenv("PICO_MONITOR_UPGRADE_SHA256") or None, help="可选的升级包 SHA-256 摘要")
     return parser
 
 
@@ -106,6 +111,8 @@ class MonitorService:
                             return self._run_development_loop()
                         raise
                     LOGGER.info("Pico LCD 已连接：%s", self.client.port_name)
+                if self.arguments.upgrade_pico:
+                    return self._upgrade_pico()
                 started = time.monotonic()
                 snapshot = self._collect_snapshot()
                 collection_elapsed = time.monotonic() - started
@@ -125,6 +132,30 @@ class MonitorService:
                 self.stopping.wait(self.arguments.reconnect_interval)
         LOGGER.info("监控服务已停止")
         return 0
+
+    def _upgrade_pico(self):
+        """下载当前 Monitor 版本升级包，完成串口升级后退出。"""
+        url = self.arguments.upgrade_url
+        if not url:
+            if not GITHUB_REPOSITORY or MONITOR_VERSION == "development":
+                raise RuntimeError("开发版本必须通过 --upgrade-url 指定 Pico 升级包")
+            url = "https://github.com/{}/releases/download/v{}/pico-upgrade-v{}.zip".format(
+                GITHUB_REPOSITORY, MONITOR_VERSION, MONITOR_VERSION
+            )
+        archive_path = PicoUpgradeDownloader.download(url, self.arguments.upgrade_sha256)
+        package = None
+        try:
+            package = PicoUpgradePackage(archive_path)
+            LOGGER.info("[升级校验] 版本=%s，文件数=%d", package.version, len(package.files))
+            PicoFirmwareUpgrader(self.client).upgrade(package)
+            return 0
+        finally:
+            if package is not None:
+                package.close()
+            try:
+                os.remove(archive_path)
+            except OSError:
+                pass
 
     def _run_development_loop(self):
         """未发现 Pico 时停止串口重试，并按采集周期持续打印 JSON。"""

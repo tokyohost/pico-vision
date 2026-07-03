@@ -104,7 +104,10 @@ def main():
     """优先建立诊断通道，再启动硬件应用。"""
     protocol = None
     try:
+        from upgrade_manager import UpgradeManager
+
         protocol = JsonProtocol()
+        protocol._upgrade_manager = UpgradeManager(protocol.write)
         Application(protocol).run()
     except Exception as error:
         message = "FATAL:{}:{}\n".format(type(error).__name__, error)
