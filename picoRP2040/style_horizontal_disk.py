@@ -285,20 +285,28 @@ class HorizontalDiskStyle:
 
     def _history(
         self, canvas, x, y, width, height, values, color,
-        percentage=False, filled=False,
+        percentage=False, filled=False, color_by_value=False,
     ):
-        """绘制含点阵背景的历史趋势折线或实心面积图。"""
+        """绘制历史趋势图，并可按照每个采样值保留独立的状态颜色。"""
         for grid_x in range(x, x + width, 12):
             for grid_y in range(y, y + height, 7):
                 canvas.pixel(grid_x, grid_y, GRAY)
         if not values or len(values) < 2:
             return
         maximum = 100 if percentage else max(1, max(self._number(item) for item in values))
-        previous = None
+        points = []
         for index, value in enumerate(values):
             point_x = x + int(index * (width - 1) / (len(values) - 1))
-            ratio = max(0, min(1, self._number(value) / maximum))
+            numeric_value = self._number(value)
+            ratio = max(0, min(1, numeric_value / maximum))
             point_y = y + height - 1 - int(ratio * (height - 1))
+            points.append((point_x, point_y, numeric_value))
+        if color_by_value:
+            self._draw_value_colored_history(canvas, y, height, points, filled)
+            return
+        previous = points[0]
+        for point in points[1:]:
+            point_x, point_y = point[0], point[1]
             if previous is not None:
                 if filled:
                     span = max(1, point_x - previous[0])
@@ -311,7 +319,28 @@ class HorizontalDiskStyle:
                             fill_x, fill_y, fill_x, y + height - 1, color
                         )
                 canvas.line(previous[0], previous[1], point_x, point_y, color)
-            previous = (point_x, point_y)
+            previous = point
+
+    def _draw_value_colored_history(self, canvas, y, height, points, filled):
+        """按插值后的历史采样值逐列绘制颜色条带，使峰值颜色留在历史图中。"""
+        bottom = y + height - 1
+        previous = points[0]
+        for point in points[1:]:
+            span = max(1, point[0] - previous[0])
+            for draw_x in range(previous[0], point[0] + 1):
+                offset = draw_x - previous[0]
+                draw_y = previous[1] + int(
+                    (point[1] - previous[1]) * offset / span
+                )
+                value = previous[2] + (
+                    (point[2] - previous[2]) * offset / span
+                )
+                sample_color = self._usage_color(value)
+                if filled:
+                    canvas.line(draw_x, draw_y, draw_x, bottom, sample_color)
+                else:
+                    canvas.pixel(draw_x, draw_y, sample_color)
+            previous = point
 
     def _draw_cpu(self, canvas, snapshot):
         """绘制左上角 CPU 百分比、温度与趋势。"""
@@ -334,7 +363,7 @@ class HorizontalDiskStyle:
         self._history(
             canvas, 8, 31, 88, 35,
             cpu.get("history", ()), usage_color,
-            percentage=True, filled=True,
+            percentage=True, filled=True, color_by_value=True,
         )
 
     def _draw_memory(self, canvas, snapshot):
