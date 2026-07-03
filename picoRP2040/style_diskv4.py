@@ -50,6 +50,73 @@ class DiskV4Style:
             ("disk_row_4", 75, 200, 243, 38),
         ]
 
+    @classmethod
+    def select_dirty_regions(cls, previous, current):
+        """根据快照差异选择需要重绘的面板，并持续刷新健康告警行。"""
+        regions = cls.create_dirty_regions()
+        region_map = {region[0]: region for region in regions}
+        selected = []
+        previous_header = (
+            previous.get("timestamp"), previous.get("uptime_seconds"),
+            previous.get("network", {}).get("ip"),
+        )
+        current_header = (
+            current.get("timestamp"), current.get("uptime_seconds"),
+            current.get("network", {}).get("ip"),
+        )
+        if previous_header != current_header:
+            selected.append(region_map["header"])
+        if previous.get("cpu") != current.get("cpu"):
+            selected.append(region_map["cpu"])
+        previous_memory = previous.get("memory", {})
+        current_memory = current.get("memory", {})
+        memory_keys = ("percent", "used_bytes", "total_bytes")
+        if tuple(previous_memory.get(key) for key in memory_keys) != tuple(
+            current_memory.get(key) for key in memory_keys
+        ):
+            selected.append(region_map["memory"])
+        previous_network = previous.get("network", {})
+        current_network = current.get("network", {})
+        network_keys = ("upload_bps", "download_bps", "ping_ms")
+        if tuple(previous_network.get(key) for key in network_keys) != tuple(
+            current_network.get(key) for key in network_keys
+        ):
+            selected.append(region_map["network"])
+        if previous.get("gpu") != current.get("gpu"):
+            selected.append(region_map["gpu"])
+        previous_disk = previous.get("disk", {})
+        current_disk = current.get("disk", {})
+        disk_keys = ("percent", "used_bytes", "total_bytes")
+        if tuple(previous_disk.get(key) for key in disk_keys) != tuple(
+            current_disk.get(key) for key in disk_keys
+        ):
+            selected.append(region_map["summary"])
+        previous_disks = previous.get("physical_disks") or previous.get("disks", ())
+        current_disks = current.get("physical_disks") or current.get("disks", ())
+        for row in range(5):
+            start = row * 3
+            current_row = current_disks[start:start + 3]
+            has_health_alarm = any(
+                cls._number(disk.get("health")) >= 3
+                for disk in current_row
+            )
+            previous_signature = tuple(
+                cls._disk_signature(disk)
+                for disk in previous_disks[start:start + 3]
+            )
+            current_signature = tuple(
+                cls._disk_signature(disk) for disk in current_row
+            )
+            if previous_signature != current_signature or has_health_alarm:
+                selected.append(region_map["disk_row_{}".format(row)])
+        return selected
+
+    @staticmethod
+    def _disk_signature(disk):
+        """返回磁盘卡片实际显示字段组成的轻量差异签名。"""
+        keys = ("name", "percent", "health", "used_bytes", "total_bytes")
+        return tuple(disk.get(key) for key in keys)
+
     @staticmethod
     def _number(value, default=0):
         """安全地把快照字段转换为浮点数。"""
@@ -168,6 +235,9 @@ class DiskV4Style:
             point_y = y + height - 1 - int(ratio * (height - 1))
             points.append((point_x, point_y))
         bottom = y + height - 1
+        polygon = [(x, bottom)] + points + [(x + width - 1, bottom)]
+        if canvas.fill_polygon(polygon, color):
+            return
         previous = points[0]
         for point in points[1:]:
             span = max(1, point[0] - previous[0])

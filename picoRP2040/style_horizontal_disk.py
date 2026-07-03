@@ -441,16 +441,31 @@ class HorizontalDiskStyle:
         canvas.text(280, 7, "{}%".format(percent), usage_color, 2)
         self._bar(canvas, 112, 33, 198, 8, percent, usage_color)
 
+    def _draw_empty_disk(self, canvas, x, y, width, height, index):
+        """绘制保留磁盘编号和装饰槽线的低对比度空位卡片。"""
+        self._frame(canvas, x, y, width, height, DARK)
+        canvas.text(x + 4, y + 4, "D{}".format(index), GRAY, 1)
+        empty_text = "EMPTY"
+        canvas.text(
+            x + (width - canvas.text_width(empty_text)) // 2,
+            y + 19, empty_text, GRAY, 1,
+        )
+        canvas.fill_rect(x + 10, y + height - 8, width - 20, 2, DARK)
+
     def _draw_disk_cards(self, canvas, snapshot, selected_row=None):
         """按三列网格绘制指定行或全部物理磁盘卡片。"""
         # 优先使用主机端明确提供的物理磁盘统计，并兼容旧版 disks 字段。
         disks = snapshot.get("physical_disks") or snapshot.get("disks", ())
         disks = disks[:9]
-        for index, disk in enumerate(disks):
+        for index in range(9):
             column, row = index % 3, index // 3
             if selected_row is not None and row != selected_row:
                 continue
             x, y = 106 + column * 71, 49 + row * 52
+            if index >= len(disks):
+                self._draw_empty_disk(canvas, x, y, 68, 48, index)
+                continue
+            disk = disks[index]
             percent = int(self._number(disk.get("percent")))
             usage_color = self._disk_usage_color(percent)
             frame_color, name_color, all_red, show_warning = self._health_display(
