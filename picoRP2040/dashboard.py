@@ -104,6 +104,9 @@ class DashboardRenderer:
     def request_render(self, snapshot, force=False):
         """登记快照，并按差异刷新或强制刷新动态区域。"""
         next_snapshot = snapshot or {}
+        begin_frame = getattr(self._style, "begin_frame", None)
+        if callable(begin_frame):
+            begin_frame()
         if self._initialized:
             self._next_y = self._height
             selector = getattr(self._style, "select_dirty_regions", None)

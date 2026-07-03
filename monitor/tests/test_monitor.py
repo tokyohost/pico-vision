@@ -121,6 +121,39 @@ class PicoClientTest(unittest.TestCase):
             arguments = create_argument_parser().parse_args(["--lcd-style", style_name])
             self.assertEqual(arguments.lcd_style, style_name)
 
+    def test_disk_health_display_test_arguments(self):
+        """验证可指定从一开始的磁盘序号和健康测试等级。"""
+        arguments = create_argument_parser().parse_args([
+            "--disk-health-test-index", "2",
+            "--disk-health-test-level", "5",
+        ])
+
+        self.assertEqual(arguments.disk_health_test_index, 2)
+        self.assertEqual(arguments.disk_health_test_level, 5)
+
+    def test_disk_health_display_test_defaults_to_level_three(self):
+        """验证启用磁盘健康显示测试时默认使用三级告警。"""
+        arguments = create_argument_parser().parse_args([
+            "--disk-health-test-index", "1",
+        ])
+
+        self.assertEqual(arguments.disk_health_test_level, 3)
+
+    def test_apply_disk_health_display_test_to_selected_disk(self):
+        """验证健康显示测试只覆盖用户指定的物理磁盘。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(
+            disk_health_test_index=2,
+            disk_health_test_level=4,
+        )
+        disks = [{"name": "DISK0", "health": 1}, {"name": "DISK1", "health": 1}]
+        snapshot = {"physical_disks": [dict(item) for item in disks], "disks": disks}
+
+        service._apply_disk_health_test(snapshot)
+
+        self.assertEqual([item["health"] for item in snapshot["physical_disks"]], [1, 4])
+        self.assertEqual([item["health"] for item in snapshot["disks"]], [1, 4])
+
 
 class SystemCollectorTest(unittest.TestCase):
     """验证系统采集器输出 Pico 仪表盘需要的字段。"""

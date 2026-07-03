@@ -87,3 +87,19 @@ SMART JSON 为空、格式错误、命令不存在、执行超时、权限不足
 ```
 
 `health` 只表示 SMART 健康等级，不等同于磁盘空间占用率或温度等级。上层界面应按状态表独立显示颜色和告警效果。
+
+## LCD 告警显示测试
+
+开发或硬件联调时可覆盖指定磁盘的 `health`，磁盘序号从 `1` 开始：
+
+```powershell
+python pico_monitor.py --dev --disk-health-test-index 2 --disk-health-test-level 5
+```
+
+省略 `--disk-health-test-level` 时默认使用 `3`；将 `--disk-health-test-index` 设为 `0` 可关闭测试。也可分别通过环境变量 `PICO_MONITOR_DISK_HEALTH_TEST_INDEX` 和 `PICO_MONITOR_DISK_HEALTH_TEST_LEVEL` 配置。
+
+`horizontal_disk` 和 `horizontal_disk6x` 样式按帧显示告警：
+
+- `health=3`：磁盘边框和名称在灰色、黄色之间逐帧切换。
+- `health=4`：磁盘边框和名称在黄色、红色之间逐帧切换。
+- `health=5`：一帧显示红色边框和 `WARN` 标识，下一帧将磁盘卡片内全部字符及图形显示为红色，随后循环闪烁。

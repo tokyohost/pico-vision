@@ -39,6 +39,8 @@ def create_argument_parser():
     parser.add_argument("--network-unit", choices=("MB", "Mbps"), default=os.getenv("PICO_MONITOR_NETWORK_UNIT", "MB"), help="网络速率模式：MB 自动使用 B/KB/MB/GB，Mbps 自动使用 bps/Kbps/Mbps/Gbps")
     parser.add_argument("--lcd-style", choices=BUILTIN_LCD_STYLES, default=os.getenv("PICO_MONITOR_LCD_STYLE", "horizontal_disk6x"), help="Pico LCD 内置界面样式")
     parser.add_argument("--dev", action="store_true", default=environment_flag("PICO_MONITOR_DEV"), help="开发模式：未发现 Pico 时仍打印待发送的 JSON 协议行")
+    parser.add_argument("--disk-health-test-index", type=int, default=int(os.getenv("PICO_MONITOR_DISK_HEALTH_TEST_INDEX", "0")), help="磁盘健康显示测试：指定从 1 开始的磁盘序号，0 表示关闭")
+    parser.add_argument("--disk-health-test-level", type=int, choices=range(6), default=int(os.getenv("PICO_MONITOR_DISK_HEALTH_TEST_LEVEL", "3")), help="磁盘健康显示测试等级，范围为 0 至 5，默认 3")
     parser.add_argument("--once", action="store_true", help="仅成功发送一次数据")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     return parser
@@ -110,12 +112,30 @@ class MonitorService:
     def _collect_snapshot(self):
         """采集系统指标并补充 Pico 显示配置。"""
         snapshot = self.collector.collect()
+        self._apply_disk_health_test(snapshot)
         snapshot["display"] = {
             "rotation": self.arguments.screen_rotation,
             "network_unit": self.arguments.network_unit,
             "style": self.arguments.lcd_style,
         }
         return snapshot
+
+    def _apply_disk_health_test(self, snapshot):
+        """按命令行指定的磁盘序号覆盖健康等级，用于验证 LCD 告警效果。"""
+        disk_index = int(getattr(self.arguments, "disk_health_test_index", 0) or 0)
+        if disk_index <= 0:
+            return
+        health = int(getattr(self.arguments, "disk_health_test_level", 3))
+        physical_disks = snapshot.get("physical_disks") or snapshot.get("disks", ())
+        if disk_index > len(physical_disks):
+            LOGGER.warning("磁盘健康测试序号超出范围：index=%d，磁盘数量=%d", disk_index, len(physical_disks))
+            return
+        selected = physical_disks[disk_index - 1]
+        selected["health"] = health
+        selected_name = selected.get("name")
+        for disk in snapshot.get("disks", ()):
+            if disk is selected or (selected_name and disk.get("name") == selected_name):
+                disk["health"] = health
 
     def _print_development_snapshot(self):
         """打印当前采集结果对应的完整 JSON 协议行。"""

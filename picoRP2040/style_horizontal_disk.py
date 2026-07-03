@@ -1,6 +1,6 @@
 """实现以磁盘统计为重点的横向 LCD 仪表盘样式。"""
 
-from config import BLACK, BLUE, DARK, GRAY, GREEN, PURPLE, WHITE, YELLOW
+from config import BLACK, BLUE, DARK, GRAY, GREEN, PURPLE, RED, WHITE, YELLOW
 from style_plugins import register_style
 
 
@@ -19,6 +19,14 @@ class HorizontalDiskStyle:
     height = 240
     landscape = True
     font_name = "screen_2inch"
+
+    def __init__(self):
+        """初始化磁盘健康告警的逐帧闪烁相位。"""
+        self._health_blink_phase = False
+
+    def begin_frame(self):
+        """在新显示帧开始时切换一次磁盘健康告警相位。"""
+        self._health_blink_phase = not self._health_blink_phase
 
     @staticmethod
     def create_dirty_regions():
@@ -60,7 +68,9 @@ class HorizontalDiskStyle:
         current_disks = current.get("physical_disks") or current.get("disks", ())
         for row in range(3):
             start = row * 3
-            if previous_disks[start:start + 3] != current_disks[start:start + 3]:
+            current_row = current_disks[start:start + 3]
+            has_health_alarm = any(cls._number(disk.get("health")) >= 3 for disk in current_row)
+            if previous_disks[start:start + 3] != current_row or has_health_alarm:
                 selected.append(region_map["disk_row_{}".format(row)])
         previous_footer = (
             previous.get("timestamp"), previous.get("uptime_seconds"),
@@ -101,6 +111,19 @@ class HorizontalDiskStyle:
         if value < 90:
             return ELEMENT_WARNING
         return ELEMENT_DANGER
+
+    def _health_display(self, health, usage_color):
+        """根据磁盘健康等级和当前帧相位返回告警绘制参数。"""
+        level = int(self._number(health))
+        if level >= 5:
+            return RED, RED, self._health_blink_phase, not self._health_blink_phase
+        if level >= 4:
+            color = RED if self._health_blink_phase else YELLOW
+            return color, color, False, False
+        if level >= 3:
+            color = YELLOW if self._health_blink_phase else GRAY
+            return color, color, False, False
+        return usage_color, usage_color, False, False
 
     @classmethod
     def _ping_color(cls, ping_ms):
@@ -387,23 +410,28 @@ class HorizontalDiskStyle:
             x, y = 106 + column * 71, 49 + row * 52
             percent = int(self._number(disk.get("percent")))
             usage_color = self._disk_usage_color(percent)
-            self._frame(canvas, x, y, 68, 48, usage_color)
+            frame_color, name_color, all_red, show_warning = self._health_display(
+                disk.get("health", 0), usage_color
+            )
+            self._frame(canvas, x, y, 68, 48, frame_color)
             name = self._format_disk_name(
                 disk.get("name", "DISK{}".format(index))
             )
+            if show_warning:
+                name = "WARN"
             temperature = disk.get("temperature_c")
             temperature_text = "--℃" if temperature is None else "{}℃".format(int(self._number(temperature)))
-            canvas.text(x + 4, y + 4, name, usage_color, 1)
+            canvas.text(x + 4, y + 4, name, RED if all_red else name_color, 1)
             canvas.text(
                 x + 64 - canvas.text_width(temperature_text), y + 4, temperature_text,
-                self._temperature_color(temperature), 1,
+                RED if all_red else self._temperature_color(temperature), 1,
             )
             capacity = self._format_disk_capacity(
                 disk.get("used_bytes"), disk.get("total_bytes")
             )
-            canvas.text(x + 3, y + 18, capacity[:8], WHITE, 1)
-            canvas.text(x + 4, y + 32, "{}%".format(percent), usage_color, 1)
-            self._bar(canvas, x + 38, y + 34, 25, 8, percent, usage_color)
+            canvas.text(x + 3, y + 18, capacity[:8], RED if all_red else WHITE, 1)
+            canvas.text(x + 4, y + 32, "{}%".format(percent), RED if all_red else usage_color, 1)
+            self._bar(canvas, x + 38, y + 34, 25, 8, percent, RED if all_red else usage_color)
 
     def _draw_footer(self, canvas, snapshot):
         """绘制横屏底部的时间、运行时长和功耗。"""
