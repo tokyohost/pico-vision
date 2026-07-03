@@ -557,36 +557,92 @@ class HorizontalDisk4xQbStyle:
             )
 
     def _draw_network_details(self, canvas, snapshot):
-        """在原 IP 和 GPU 区域绘制紧凑的 qBittorrent 仪表盘。"""
+        """分栏绘制 qBittorrent 连接、传输趋势及累计统计。"""
         qbittorrent = snapshot.get("qbittorrent") or {}
-        online = bool(qbittorrent.get("online"))
-        status_color = ELEMENT_SUCCESS if online else ELEMENT_DANGER
-        status_text = "ON" if online else "OFF"
+        enabled = bool(qbittorrent.get("enabled"))
+        connection_status = str(
+            qbittorrent.get("connection_status") or "disconnected"
+        ).lower()
+        if not enabled:
+            status_text = "OFF"
+            status_color = GRAY
+        elif connection_status == "connected" or (
+            qbittorrent.get("online") and "connection_status" not in qbittorrent
+        ):
+            status_text = "ONLINE"
+            status_color = ELEMENT_SUCCESS
+        elif connection_status == "firewalled":
+            status_text = "FIREWALLED"
+            status_color = ELEMENT_WARNING
+        else:
+            status_text = "DISCONNECTED"
+            status_color = ELEMENT_DANGER
         unit = snapshot.get("display", {}).get("network_unit", "MB")
-        counts = qbittorrent.get("torrents") or {}
         statistics = qbittorrent.get("user_statistics") or {}
+        torrents = qbittorrent.get("torrents") or {}
         self._frame(canvas, 106, 153, 212, 56, status_color)
-        canvas.line(211, 154, 211, 207, BLUE)
-        canvas.text(110, 157, "QB", status_color, 1)
-        canvas.text(130, 157, status_text, status_color, 1)
-        peers_text = "P{}".format(int(self._number(statistics.get("connected_users"))))
-        canvas.text(207 - canvas.text_width(peers_text), 157, peers_text, WHITE, 1)
-        canvas.text(110, 169, "UP", BLUE, 1)
-        canvas.text(130, 169, self._format_rate(qbittorrent.get("upload_bps"), unit), WHITE, 1)
-        canvas.text(110, 181, "DN", GREEN, 1)
-        canvas.text(130, 181, self._format_rate(qbittorrent.get("download_bps"), unit), WHITE, 1)
-        canvas.text(110, 193, "FREE", YELLOW, 1)
-        canvas.text(146, 193, self._format_bytes(qbittorrent.get("free_space_bytes")), WHITE, 1)
+        canvas.line(211, 154, 211, 207, GRAY)
+        canvas.text(110, 157, status_text, status_color, 1)
+        users_text = "USER {}".format(
+            int(self._number(statistics.get("connected_users")))
+        )
+        canvas.text(110, 168, users_text, WHITE, 1)
 
-        canvas.text(216, 157, "A{}".format(int(self._number(counts.get("all")))), WHITE, 1)
-        canvas.text(264, 157, "D{}".format(int(self._number(counts.get("downloading")))), GREEN, 1)
-        canvas.text(216, 169, "S{}".format(int(self._number(counts.get("seeding")))), BLUE, 1)
-        canvas.text(264, 169, "OK{}".format(int(self._number(counts.get("completed")))), ELEMENT_SUCCESS, 1)
-        canvas.text(216, 181, "AC{}".format(int(self._number(counts.get("active")))), ELEMENT_WARNING, 1)
-        canvas.text(264, 181, "ID{}".format(int(self._number(counts.get("inactive")))), GRAY, 1)
-        canvas.text(216, 193, "P{}".format(int(self._number(counts.get("paused")))), YELLOW, 1)
-        error_count = int(self._number(counts.get("errored")))
-        canvas.text(264, 193, "E{}".format(error_count), ELEMENT_DANGER if error_count else GRAY, 1)
+        canvas.text(110, 180, "UP", BLUE, 1)
+        canvas.text(
+            130, 180,
+            self._format_rate(qbittorrent.get("upload_bps"), unit),
+            WHITE, 1,
+        )
+        self._history(
+            canvas, 174, 179, 33, 9,
+            qbittorrent.get("upload_history", ()), BLUE, filled=True,
+        )
+
+        canvas.text(110, 193, "DN", GREEN, 1)
+        canvas.text(
+            130, 193,
+            self._format_rate(qbittorrent.get("download_bps"), unit),
+            WHITE, 1,
+        )
+        self._history(
+            canvas, 174, 192, 33, 9,
+            qbittorrent.get("download_history", ()), GREEN, filled=True,
+        )
+
+        canvas.text(
+            216, 157,
+            "ALL {}".format(int(self._number(torrents.get("all")))),
+            WHITE, 1,
+        )
+        seed_text = "SEED {}".format(
+            int(self._number(torrents.get("seeding")))
+        )
+        canvas.text(
+            313 - canvas.text_width(seed_text), 157,
+            seed_text, BLUE, 1,
+        )
+        canvas.text(
+            216, 169,
+            "ACTIVE {}".format(int(self._number(torrents.get("active")))),
+            ELEMENT_WARNING, 1,
+        )
+        canvas.text(216, 181, "ALL UP", BLUE, 1)
+        alltime_upload = self._format_bytes(
+            statistics.get("alltime_uploaded_bytes")
+        )
+        canvas.text(
+            313 - canvas.text_width(alltime_upload), 181,
+            alltime_upload, WHITE, 1,
+        )
+        canvas.text(216, 193, "ALL DN", GREEN, 1)
+        alltime_download = self._format_bytes(
+            statistics.get("alltime_downloaded_bytes")
+        )
+        canvas.text(
+            313 - canvas.text_width(alltime_download), 193,
+            alltime_download, WHITE, 1,
+        )
 
     def _draw_footer(self, canvas, snapshot):
         """绘制横屏底部的时间、运行时长和功耗。"""

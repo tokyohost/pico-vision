@@ -27,6 +27,7 @@ class QbittorrentMonitorTests(unittest.TestCase):
                 "free_space_on_disk": 16384,
             },
             {
+                "connection_status": "connected",
                 "alltime_ul": 100000,
                 "alltime_dl": 200000,
                 "global_ratio": "0.5",
@@ -40,6 +41,7 @@ class QbittorrentMonitorTests(unittest.TestCase):
         self.assertEqual(snapshot["uploaded_bytes"], 4096)
         self.assertEqual(snapshot["downloaded_bytes"], 8192)
         self.assertEqual(snapshot["free_space_bytes"], 16384)
+        self.assertEqual(snapshot["connection_status"], "connected")
         self.assertEqual(snapshot["upload_history"][-1], 1024)
         self.assertEqual(snapshot["download_history"][-1], 2048)
         statistics = snapshot["user_statistics"]

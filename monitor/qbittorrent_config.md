@@ -46,6 +46,7 @@ sudo journalctl -u pico-monitor -f
 | --- | --- | --- |
 | `enabled` | qBittorrent 采集已启用 | 布尔值 |
 | `online` | 最近一次 API 采集是否成功 | 布尔值 |
+| `connection_status` | qBittorrent 连接状态 | `connected`、`firewalled` 或 `disconnected` |
 | `error` | 最近一次采集错误，成功时为空 | 文本 |
 | `upload_bps` | 当前上传速度 | 字节/秒 |
 | `download_bps` | 当前下载速度 | 字节/秒 |

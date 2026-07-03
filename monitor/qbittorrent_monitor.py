@@ -130,6 +130,7 @@ class QbittorrentMonitor:
         """创建尚未成功连接时使用的完整指标结构。"""
         return {
             "enabled": True, "online": False, "error": None,
+            "connection_status": "disconnected",
             "upload_bps": 0, "download_bps": 0,
             "upload_history": [], "download_history": [],
             "uploaded_bytes": 0, "downloaded_bytes": 0,
@@ -195,6 +196,9 @@ class QbittorrentMonitor:
         self.download_history.append(download_bps)
         return {
             "enabled": True, "online": True, "error": None,
+            "connection_status": str(
+                server_state.get("connection_status") or "disconnected"
+            ).lower(),
             "upload_bps": upload_bps, "download_bps": download_bps,
             "upload_history": list(self.upload_history),
             "download_history": list(self.download_history),

@@ -1,5 +1,7 @@
 """提供 LCD 界面样式插件的注册、创建与动态加载能力。"""
 
+import gc
+
 
 _STYLE_FACTORIES = {}
 
@@ -50,5 +52,9 @@ def _normalize_name(name):
 
 
 def _load_style_module(name):
-    """按照 style_<名称> 约定动态导入样式模块。"""
+    """回收碎片内存后，按照命名约定动态导入样式模块。"""
+    # 大型样式源码在首次导入时需要连续编译内存，LCD 初始化后先整理堆。
+    gc.collect()
     __import__("style_" + name)
+    # 及时释放导入期间产生的临时解析对象，为条带画布保留连续空间。
+    gc.collect()
