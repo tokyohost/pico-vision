@@ -221,7 +221,7 @@ class SystemInformationCollector:
             connection.close()
 
     def _network_rates(self):
-        """根据相邻系统网络计数器计算每秒上传和下载字节数。"""
+        """计算实时上传下载速率，并返回系统累计发送与接收字节数。"""
         current, now = psutil.net_io_counters(), time.monotonic()
         upload = download = 0.0
         if self.last_network is not None:
@@ -229,7 +229,7 @@ class SystemInformationCollector:
             upload = max(0.0, (current.bytes_sent - self.last_network.bytes_sent) / elapsed)
             download = max(0.0, (current.bytes_recv - self.last_network.bytes_recv) / elapsed)
         self.last_network, self.last_network_time = current, now
-        return round(upload), round(download)
+        return round(upload), round(download), int(current.bytes_sent), int(current.bytes_recv)
 
     @staticmethod
     def _normalize_temperature(value):
@@ -638,4 +638,4 @@ class SystemInformationCollector:
         if power["watts"] is not None:
             self.power_history.append(power["watts"])
         power["history"] = list(self.power_history)
-        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total}, "disks": disks, "physical_disks": physical_disks, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": self._local_ip()}}
+        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total}, "disks": disks, "physical_disks": physical_disks, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "transmit_bytes": network[2], "receive_bytes": network[3], "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": self._local_ip()}}

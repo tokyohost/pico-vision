@@ -135,6 +135,7 @@ class SystemCollectorTest(unittest.TestCase):
         self.assertEqual(snapshot["version"], 1)
         self.assertTrue({"cpu", "memory", "disk", "disks", "physical_disks", "power", "network"}.issubset(snapshot))
         self.assertTrue({"watts", "source", "scope", "history"}.issubset(snapshot["power"]))
+        self.assertTrue({"receive_bytes", "transmit_bytes"}.issubset(snapshot["network"]))
         self.assertNotIn("history", snapshot["disk"])
 
     def test_physical_disk_statistics_contains_temperature(self):

@@ -6,6 +6,8 @@
 
 磁盘明细通过 JSON 顶层 `disks` 数组发送。同一物理盘的多个分区会合并，字段包括 `name`、`devices`、`mountpoints`、`filesystems`、`used_bytes`、`total_bytes`、`percent` 和 `temperature_c`。同时，面向 Pico 显示的物理磁盘统计通过顶层 `physical_disks` 数组发送，重点提供每块物理盘的 `temperature_c`，并携带容量和占用率；无法读取温度时该字段为 `null`。Linux 可安装 `smartmontools` 作为 hwmon 之外的温度读取后备来源。
 
+网络统计通过 `network.receive_bytes` 提供已下载总流量，通过 `network.transmit_bytes` 提供已上传总流量，单位均为字节。
+
 ## 主要功能
 
 - 自动发现并握手识别 Pico LCD，也可固定串口。
