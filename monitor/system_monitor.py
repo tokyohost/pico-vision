@@ -148,7 +148,7 @@ class SystemInformationCollector:
 
     def __init__(self, ping_target):
         """初始化历史序列、网络计数基线和异步延迟监控器。"""
-        self.histories = {name: deque([0] * HISTORY_LENGTH, maxlen=HISTORY_LENGTH) for name in ("cpu", "memory", "disk", "upload", "download")}
+        self.histories = {name: deque([0] * HISTORY_LENGTH, maxlen=HISTORY_LENGTH) for name in ("cpu", "memory", "upload", "download")}
         self.power_history = deque(maxlen=HISTORY_LENGTH)
         self.last_network = self.last_network_time = None
         self.ping_monitor = PingMonitor(ping_target)
@@ -633,9 +633,9 @@ class SystemInformationCollector:
         network = self._network_rates()
         power = self.power_monitor.snapshot()
         ping, online = self.ping_monitor.snapshot()
-        for name, value in (("cpu", cpu), ("memory", memory.percent), ("disk", disk_percent), ("upload", network[0]), ("download", network[1])):
+        for name, value in (("cpu", cpu), ("memory", memory.percent), ("upload", network[0]), ("download", network[1])):
             self.histories[name].append(round(value, 1))
         if power["watts"] is not None:
             self.power_history.append(power["watts"])
         power["history"] = list(self.power_history)
-        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total, "history": list(self.histories["disk"])}, "disks": disks, "physical_disks": physical_disks, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": self._local_ip()}}
+        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total}, "disks": disks, "physical_disks": physical_disks, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": self._local_ip()}}

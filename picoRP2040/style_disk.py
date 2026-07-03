@@ -154,7 +154,7 @@ class DiskStyle:
         elif key == "cpu":
             cpu = snapshot.get("cpu", {})
             temperature = cpu.get("temperature_c")
-            detail = "--C" if temperature is None else "{}C".format(int(self._number(temperature)))
+            detail = "--℃" if temperature is None else "{}℃".format(int(self._number(temperature)))
             self._draw_metric_card(canvas, 8, "CPU", cpu, GREEN, detail)
         elif key == "memory":
             memory = snapshot.get("memory", {})
@@ -178,7 +178,7 @@ class DiskStyle:
             cpu = snapshot.get("cpu", {})
             memory = snapshot.get("memory", {})
             temperature = cpu.get("temperature_c")
-            cpu_detail = "--C" if temperature is None else "{}C".format(int(self._number(temperature)))
+            cpu_detail = "--℃" if temperature is None else "{}℃".format(int(self._number(temperature)))
             self._draw_frame(canvas, 2, 78, 116, 67, GREEN)
             self._draw_frame(canvas, 122, 78, 116, 67, PURPLE)
             self._draw_metric_card(canvas, 8, "CPU", cpu, GREEN, cpu_detail)

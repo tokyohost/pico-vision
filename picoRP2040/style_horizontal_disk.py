@@ -263,7 +263,7 @@ class HorizontalDiskStyle:
         percent = int(self._number(cpu.get("percent")))
         usage_color = self._usage_color(percent)
         temperature = cpu.get("temperature_c")
-        temperature_text = "--C" if temperature is None else "{}C".format(int(self._number(temperature)))
+        temperature_text = "--℃" if temperature is None else "{}℃".format(int(self._number(temperature)))
         self._frame(canvas, 2, 2, 100, 69, GREEN)
         canvas.text(8, 7, "CPU", GREEN, 1)
         canvas.text(
@@ -357,10 +357,10 @@ class HorizontalDiskStyle:
             self._frame(canvas, x, y, 68, 48, usage_color)
             name = str(disk.get("name", "DISK{}".format(index)))[:5]
             temperature = disk.get("temperature_c")
-            temperature_text = "--C" if temperature is None else "{}C".format(int(self._number(temperature)))
+            temperature_text = "--℃" if temperature is None else "{}℃".format(int(self._number(temperature)))
             canvas.text(x + 4, y + 4, name, usage_color, 1)
             canvas.text(
-                x + 43, y + 4, temperature_text,
+                x + 64 - canvas.text_width(temperature_text), y + 4, temperature_text,
                 self._temperature_color(temperature), 1,
             )
             capacity = self._format_disk_capacity(

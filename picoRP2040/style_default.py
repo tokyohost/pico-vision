@@ -140,7 +140,7 @@ class DefaultStyle:
         if name == "cpu":
             data, y, color = cpu, 43, BLUE
             temperature = data.get("temperature_c")
-            detail = "TEMP " + ("--C" if temperature is None else "{}C".format(int(self._number(temperature))))
+            detail = "TEMP " + ("--℃" if temperature is None else "{}℃".format(int(self._number(temperature))))
         elif name == "memory":
             data, y, color = memory, 100, GREEN
             detail = self._format_bytes(data.get("used_bytes")) + "/" + self._format_bytes(data.get("total_bytes"))
@@ -170,7 +170,7 @@ class DefaultStyle:
             canvas.line(0, 34, WIDTH - 1, 34, GRAY)
         if self._visible(canvas, 43, 88):
             temperature = cpu.get("temperature_c")
-            text = "--C" if temperature is None else "{}C".format(int(self._number(temperature)))
+            text = "--℃" if temperature is None else "{}℃".format(int(self._number(temperature)))
             self._draw_metric(canvas, 43, "CPU", cpu, BLUE, "TEMP " + text)
         if self._visible(canvas, 100, 145):
             detail = self._format_bytes(memory.get("used_bytes")) + "/" + self._format_bytes(memory.get("total_bytes"))

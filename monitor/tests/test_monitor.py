@@ -135,6 +135,7 @@ class SystemCollectorTest(unittest.TestCase):
         self.assertEqual(snapshot["version"], 1)
         self.assertTrue({"cpu", "memory", "disk", "disks", "physical_disks", "power", "network"}.issubset(snapshot))
         self.assertTrue({"watts", "source", "scope", "history"}.issubset(snapshot["power"]))
+        self.assertNotIn("history", snapshot["disk"])
 
     def test_physical_disk_statistics_contains_temperature(self):
         """验证发送给 Pico 的物理磁盘统计包含温度和容量指标。"""

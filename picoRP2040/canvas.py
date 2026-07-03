@@ -163,12 +163,13 @@ class Canvas:
                 y0 += step_y
 
     def text(self, x, y, value, color, scale=1):
-        """使用内置 5×7 点阵字体绘制 ASCII 文本。"""
+        """使用内置点阵字体绘制文本，并按实际字形宽度推进光标。"""
         value = str(value)
         if (
             self._framebuffer is not None
             and scale == 1
             and self._font_name == "native"
+            and all(ord(character) < 128 for character in value)
         ):
             self._framebuffer.text(
                 value,
@@ -194,7 +195,18 @@ class Canvas:
                             y + row_index * scale,
                             scale, scale, color,
                         )
-            cursor_x += 8 if scale == 1 and self._font_name != "native" else 6 * scale
+            cursor_x += self._character_advance(character, scale)
+
+    def text_width(self, value, scale=1):
+        """根据当前字体的实际字形宽度计算文本占用像素宽度。"""
+        return sum(self._character_advance(character, scale) for character in str(value))
+
+    def _character_advance(self, character, scale=1):
+        """返回单个字符的水平步进，宽字形会自动扩展间距。"""
+        columns = self._font.get(character, self._font["?"])
+        if scale == 1 and self._font_name != "native":
+            return max(8, len(columns) + 1)
+        return max(6, len(columns) + 1) * scale
 
     def _blit_font_text(self, x, y, value, color):
         """按照原生字符间距绘制当前样式选择的点阵字体。"""
@@ -202,13 +214,14 @@ class Canvas:
         transparent = self._native_color(BLACK)
         for character in value:
             glyph = self._get_scaled_glyph(character, color, 1)
+            offset = 1 if self._font_name != "native" else 0
             self._framebuffer.blit(
                 glyph,
-                cursor_x + 1 - self.origin_x,
+                cursor_x + offset - self.origin_x,
                 y - self.origin_y,
                 transparent,
             )
-            cursor_x += 8
+            cursor_x += self._character_advance(character, 1)
 
     def _blit_scaled_text(self, x, y, value, color, scale):
         """使用缓存字形快速绘制放大文本。"""
@@ -222,7 +235,7 @@ class Canvas:
                 y - self.origin_y,
                 transparent,
             )
-            cursor_x += 6 * scale
+            cursor_x += self._character_advance(character, scale)
 
     def _get_scaled_glyph(self, character, color, scale):
         """获取或创建指定字符的原生放大字形缓存。"""
@@ -230,7 +243,8 @@ class Canvas:
         glyph = self._glyph_cache.get(key)
         if glyph is not None:
             return glyph
-        width = 6 * scale
+        columns = self._font.get(character, self._font["?"])
+        width = max(6, len(columns)) * scale
         height = 7 * scale
         glyph_buffer = bytearray(width * height * 2)
         glyph = framebuf.FrameBuffer(
@@ -240,7 +254,6 @@ class Canvas:
             framebuf.RGB565,
         )
         glyph.fill(self._native_color(BLACK))
-        columns = self._font.get(character, self._font["?"])
         native_color = self._native_color(color)
         for column_index, bits in enumerate(columns):
             for row_index in range(7):
