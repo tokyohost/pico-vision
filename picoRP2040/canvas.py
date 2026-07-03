@@ -2,7 +2,7 @@
 
 from config import BLACK
 from font_5x7 import FONT_5X7
-from font_screen_2inch import FONT_SCREEN_2INCH
+from font_screen_2inch import FONT_SCREEN_2INCH, FONT_SCREEN_2INCH_COMPACT
 
 try:
     import framebuf
@@ -34,6 +34,7 @@ class Canvas:
         fonts = {
             "native": FONT_5X7,
             "screen_2inch": FONT_SCREEN_2INCH,
+            "screen_2inch_compact": FONT_SCREEN_2INCH_COMPACT,
         }
         if normalized_name not in fonts:
             raise ValueError("未知点阵字体：{}".format(normalized_name))
@@ -204,6 +205,8 @@ class Canvas:
     def _character_advance(self, character, scale=1):
         """返回单个字符的水平步进，宽字形会自动扩展间距。"""
         columns = self._font.get(character, self._font["?"])
+        if self._font_name == "screen_2inch_compact":
+            return (len(columns) + 1) * scale
         if scale == 1 and self._font_name != "native":
             return max(8, len(columns) + 1)
         return max(6, len(columns) + 1) * scale
@@ -214,7 +217,7 @@ class Canvas:
         transparent = self._native_color(BLACK)
         for character in value:
             glyph = self._get_scaled_glyph(character, color, 1)
-            offset = 1 if self._font_name != "native" else 0
+            offset = 1 if self._font_name == "screen_2inch" else 0
             self._framebuffer.blit(
                 glyph,
                 cursor_x + offset - self.origin_x,

@@ -37,8 +37,8 @@ python pico_monitor.py
 --screen-rotation 180       将 Pico 屏幕旋转一百八十度
 --network-unit MB           按 B/s、KB/s、MB/s、GB/s 自动选择单位
 --network-unit Mbps         按 bps、Kbps、Mbps、Gbps 自动选择单位
---lcd-style default|disk|horizontal_disk
-                            切换 Pico 固件内置 LCD 样式，horizontal_disk 为横向磁盘统计仪表盘
+--lcd-style default|disk|horizontal_disk|horizontal_disk6x
+                            切换 Pico 固件内置 LCD 样式，horizontal_disk6x 为双列六磁盘实时读写仪表盘
 --dev                       开发模式；未发现 Pico 后停止重试并持续打印 JSON
 --once                      成功发送一次后退出
 ```

@@ -11,14 +11,14 @@ ELEMENT_DANGER = 0xF36D
 NETWORK_RATE_MAX_CHARS = 8
 
 
-class HorizontalDiskStyle:
-    """封装三百二十乘二百四十横向磁盘统计仪表盘的绘制规则。"""
+class HorizontalDisk6xStyle:
+    """封装每行双磁盘、最多显示六块磁盘的横向仪表盘绘制规则。"""
 
-    name = "horizontal_disk"
+    name = "horizontal_disk6x"
     width = 320
     height = 240
     landscape = True
-    font_name = "screen_2inch"
+    font_name = "screen_2inch_compact"
 
     @staticmethod
     def create_dirty_regions():
@@ -59,8 +59,8 @@ class HorizontalDiskStyle:
         previous_disks = previous.get("physical_disks") or previous.get("disks", ())
         current_disks = current.get("physical_disks") or current.get("disks", ())
         for row in range(3):
-            start = row * 3
-            if previous_disks[start:start + 3] != current_disks[start:start + 3]:
+            start = row * 2
+            if previous_disks[start:start + 2] != current_disks[start:start + 2]:
                 selected.append(region_map["disk_row_{}".format(row)])
         previous_footer = (
             previous.get("timestamp"), previous.get("uptime_seconds"),
@@ -230,6 +230,23 @@ class HorizontalDiskStyle:
             return (">" + "9" * max(0, available - 1) + units[index])[:NETWORK_RATE_MAX_CHARS]
 
     @classmethod
+    def _format_disk_rate(cls, value):
+        """把磁盘每秒字节数压缩为适合卡片显示的短速率文本。"""
+        amount = max(0, cls._number(value))
+        units = ("B", "K", "M", "G", "T")
+        unit_index = 0
+        while amount >= 1000 and unit_index < len(units) - 1:
+            amount /= 1000
+            unit_index += 1
+        if amount >= 100:
+            number = str(int(round(amount)))
+        elif amount >= 10:
+            number = "{:.1f}".format(amount).rstrip("0").rstrip(".")
+        else:
+            number = "{:.1f}".format(amount)
+        return (number + units[unit_index])[:5]
+
+    @classmethod
     def _format_uptime(cls, seconds):
         """把运行秒数格式化为天数与时分秒文本。"""
         total_seconds = max(0, int(cls._number(seconds)))
@@ -344,7 +361,7 @@ class HorizontalDiskStyle:
             96 - len(ping_text) * 8, 132,
             ping_text, self._ping_color(ping), 1,
         )
-        canvas.text(8, 143, "↑U", WHITE, 1)
+        canvas.text(8, 143, "↑UP", WHITE, 1)
         canvas.text(
             32, 143,
             self._format_rate(network.get("upload_bps"), unit), BLUE, 1,
@@ -353,7 +370,7 @@ class HorizontalDiskStyle:
             canvas, 8, 152, 88, 19,
             network.get("upload_history", ()), BLUE, filled=True,
         )
-        canvas.text(8, 174, "↓D", WHITE, 1)
+        canvas.text(8, 174, "↓DN", WHITE, 1)
         canvas.text(
             32, 174,
             self._format_rate(network.get("download_bps"), unit), GREEN, 1,
@@ -376,34 +393,49 @@ class HorizontalDiskStyle:
         self._bar(canvas, 112, 33, 198, 8, percent, usage_color)
 
     def _draw_disk_cards(self, canvas, snapshot, selected_row=None):
-        """按三列网格绘制指定行或全部物理磁盘卡片。"""
+        """按每行两张卡片绘制最多六块物理磁盘及其实时读写趋势。"""
         # 优先使用主机端明确提供的物理磁盘统计，并兼容旧版 disks 字段。
         disks = snapshot.get("physical_disks") or snapshot.get("disks", ())
-        disks = disks[:9]
+        disks = disks[:6]
         for index, disk in enumerate(disks):
-            column, row = index % 3, index // 3
+            column, row = index % 2, index // 2
             if selected_row is not None and row != selected_row:
                 continue
-            x, y = 106 + column * 71, 49 + row * 52
+            x, y = 106 + column * 106, 49 + row * 52
             percent = int(self._number(disk.get("percent")))
             usage_color = self._disk_usage_color(percent)
-            self._frame(canvas, x, y, 68, 48, usage_color)
+            self._frame(canvas, x, y, 102, 48, usage_color)
             name = self._format_disk_name(
                 disk.get("name", "DISK{}".format(index))
             )
             temperature = disk.get("temperature_c")
             temperature_text = "--℃" if temperature is None else "{}℃".format(int(self._number(temperature)))
-            canvas.text(x + 4, y + 4, name, usage_color, 1)
+            canvas.text(x + 3, y + 4, name, usage_color, 1)
             canvas.text(
-                x + 64 - canvas.text_width(temperature_text), y + 4, temperature_text,
+                x + 99 - canvas.text_width(temperature_text), y + 4, temperature_text,
                 self._temperature_color(temperature), 1,
             )
             capacity = self._format_disk_capacity(
                 disk.get("used_bytes"), disk.get("total_bytes")
             )
-            canvas.text(x + 3, y + 18, capacity[:8], WHITE, 1)
-            canvas.text(x + 4, y + 32, "{}%".format(percent), usage_color, 1)
-            self._bar(canvas, x + 38, y + 34, 25, 8, percent, usage_color)
+            canvas.text(x + 3, y + 15, capacity[:8], WHITE, 1)
+            percent_text = "{}%".format(percent)
+            canvas.text(
+                x + 99 - canvas.text_width(percent_text), y + 15,
+                percent_text, usage_color, 1,
+            )
+            read_text = "R" + self._format_disk_rate(disk.get("read_bps"))
+            write_text = "W" + self._format_disk_rate(disk.get("write_bps"))
+            canvas.text(x + 3, y + 27, read_text, GREEN, 1)
+            canvas.text(x + 3, y + 38, write_text, YELLOW, 1)
+            self._history(
+                canvas, x + 42, y + 27, 57, 8,
+                disk.get("read_history", ()), GREEN, filled=True,
+            )
+            self._history(
+                canvas, x + 42, y + 38, 57, 7,
+                disk.get("write_history", ()), YELLOW, filled=True,
+            )
 
     def _draw_footer(self, canvas, snapshot):
         """绘制横屏底部的时间、运行时长和功耗。"""
@@ -458,9 +490,9 @@ class HorizontalDiskStyle:
             self._draw_footer(canvas, snapshot)
 
 
-def create_horizontal_disk_style():
-    """创建横向磁盘统计 LCD 仪表盘样式插件。"""
-    return HorizontalDiskStyle()
+def create_horizontal_disk6x_style():
+    """创建每行双磁盘、最多六块磁盘的横向 LCD 样式插件。"""
+    return HorizontalDisk6xStyle()
 
 
-register_style(HorizontalDiskStyle.name, create_horizontal_disk_style)
+register_style(HorizontalDisk6xStyle.name, create_horizontal_disk6x_style)
