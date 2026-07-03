@@ -1,6 +1,7 @@
 """提供 LCD 界面样式插件的注册、创建与动态加载能力。"""
 
 import gc
+import sys
 
 
 _STYLE_FACTORIES = {}
@@ -37,6 +38,14 @@ def normalize_style_name(name):
 def available_styles():
     """返回当前已经注册的样式名称元组。"""
     return tuple(sorted(_STYLE_FACTORIES))
+
+
+def release_style(name):
+    """释放已停用样式的工厂和模块，使其占用的堆内存可被回收。"""
+    normalized_name = _normalize_name(name)
+    _STYLE_FACTORIES.pop(normalized_name, None)
+    sys.modules.pop("style_" + normalized_name, None)
+    gc.collect()
 
 
 def _normalize_name(name):

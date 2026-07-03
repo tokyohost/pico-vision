@@ -87,8 +87,20 @@ class JsonProtocol:
             newline = self._buffer.find(b"\n")
             if newline < 0:
                 break
-            line = bytes(self._buffer[:newline]).strip()
+            # memoryview 避免 bytearray 切片先复制一次整包数据，降低解析峰值内存。
+            line_view = memoryview(self._buffer)[:newline]
+            line = bytes(line_view)
+            del line_view
             self._consume(newline + 1)
+            if line.startswith(JSON_PREFIX):
+                payload = line[len(JSON_PREFIX):]
+                try:
+                    latest = json.loads(payload.decode("utf-8"))
+                    self.write(b"ACK:JSON\n")
+                except (ValueError, UnicodeError):
+                    self.write(b"ERR:BAD_JSON\n")
+                continue
+            line = line.strip()
             if line == PING_TEXT:
                 self._write_pong()
                 continue
@@ -98,14 +110,6 @@ class JsonProtocol:
                 else:
                     self._upgrade_manager.handle(line[len(UPGRADE_PREFIX):])
                 continue
-            if not line.startswith(JSON_PREFIX):
-                continue
-            payload = line[len(JSON_PREFIX):]
-            try:
-                latest = json.loads(payload.decode("utf-8"))
-                self.write(b"ACK:JSON\n")
-            except (ValueError, UnicodeError):
-                self.write(b"ERR:BAD_JSON\n")
         return latest
 
     def _consume(self, count):

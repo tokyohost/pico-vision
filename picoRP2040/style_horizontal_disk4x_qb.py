@@ -191,39 +191,6 @@ class HorizontalDisk4xQbStyle:
             )
         return result[:8]
 
-    @staticmethod
-    def _format_disk_name(value, max_chars=4):
-        """压缩过长磁盘名称，并优先保留可识别的磁盘类型和编号。"""
-        name = str(value or "DISK").strip().upper()
-        if len(name) <= max_chars:
-            return name
-        compact_prefixes = (
-            ("PHYSICALDRIVE", "D"),
-            ("DISK", "D"),
-            ("NVME", "N"),
-            ("SATA", "S"),
-        )
-        for source_prefix, display_prefix in compact_prefixes:
-            if not name.startswith(source_prefix):
-                continue
-            remainder = name[len(source_prefix):].lstrip()
-            digits = ""
-            for character in remainder:
-                if not character.isdigit():
-                    break
-                digits += character
-            if digits:
-                return (display_prefix + digits)[:max_chars]
-        suffix = ""
-        index = len(name)
-        while index > 0 and name[index - 1].isdigit():
-            index -= 1
-        if index < len(name):
-            suffix = name[index:]
-        if suffix and len(suffix) < max_chars:
-            return name[:max_chars - len(suffix)] + suffix
-        return name[:max_chars]
-
     @classmethod
     def _format_rate(cls, value, unit):
         """按监控端配置生成不超过八个字符的网络速率。"""
@@ -522,9 +489,9 @@ class HorizontalDisk4xQbStyle:
                 disk.get("health", 0), usage_color
             )
             self._frame(canvas, x, y, 102, 48, frame_color)
-            name = self._format_disk_name(
-                disk.get("name", "DISK{}".format(index))
-            )
+            name = str(
+                disk.get("name") or "DISK{}".format(index)
+            ).strip().upper()
             if show_warning:
                 name = "WARN"
             temperature = disk.get("temperature_c")
@@ -615,32 +582,32 @@ class HorizontalDisk4xQbStyle:
             "ALL {}".format(int(self._number(torrents.get("all")))),
             WHITE, 1,
         )
-        seed_text = "SEED {}".format(
-            int(self._number(torrents.get("seeding")))
+        canvas.text(
+            216, 167,
+            "SEEDING {}".format(
+                int(self._number(torrents.get("seeding")))
+            ),
+            BLUE, 1,
         )
         canvas.text(
-            313 - canvas.text_width(seed_text), 157,
-            seed_text, BLUE, 1,
-        )
-        canvas.text(
-            216, 169,
+            216, 177,
             "ACTIVE {}".format(int(self._number(torrents.get("active")))),
             ELEMENT_WARNING, 1,
         )
-        canvas.text(216, 181, "ALL UP", BLUE, 1)
+        canvas.text(216, 187, "ALL UP", BLUE, 1)
         alltime_upload = self._format_bytes(
             statistics.get("alltime_uploaded_bytes")
         )
         canvas.text(
-            313 - canvas.text_width(alltime_upload), 181,
+            313 - canvas.text_width(alltime_upload), 187,
             alltime_upload, WHITE, 1,
         )
-        canvas.text(216, 193, "ALL DN", GREEN, 1)
+        canvas.text(216, 197, "ALL DN", GREEN, 1)
         alltime_download = self._format_bytes(
             statistics.get("alltime_downloaded_bytes")
         )
         canvas.text(
-            313 - canvas.text_width(alltime_download), 193,
+            313 - canvas.text_width(alltime_download), 197,
             alltime_download, WHITE, 1,
         )
 

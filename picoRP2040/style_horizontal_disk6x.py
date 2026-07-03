@@ -189,39 +189,6 @@ class HorizontalDisk6xStyle:
             )
         return result[:8]
 
-    @staticmethod
-    def _format_disk_name(value, max_chars=4):
-        """压缩过长磁盘名称，并优先保留可识别的磁盘类型和编号。"""
-        name = str(value or "DISK").strip().upper()
-        if len(name) <= max_chars:
-            return name
-        compact_prefixes = (
-            ("PHYSICALDRIVE", "D"),
-            ("DISK", "D"),
-            ("NVME", "N"),
-            ("SATA", "S"),
-        )
-        for source_prefix, display_prefix in compact_prefixes:
-            if not name.startswith(source_prefix):
-                continue
-            remainder = name[len(source_prefix):].lstrip()
-            digits = ""
-            for character in remainder:
-                if not character.isdigit():
-                    break
-                digits += character
-            if digits:
-                return (display_prefix + digits)[:max_chars]
-        suffix = ""
-        index = len(name)
-        while index > 0 and name[index - 1].isdigit():
-            index -= 1
-        if index < len(name):
-            suffix = name[index:]
-        if suffix and len(suffix) < max_chars:
-            return name[:max_chars - len(suffix)] + suffix
-        return name[:max_chars]
-
     @classmethod
     def _format_rate(cls, value, unit):
         """按监控端配置生成不超过八个字符的网络速率。"""
@@ -503,9 +470,9 @@ class HorizontalDisk6xStyle:
                 disk.get("health", 0), usage_color
             )
             self._frame(canvas, x, y, 102, 48, frame_color)
-            name = self._format_disk_name(
-                disk.get("name", "DISK{}".format(index))
-            )
+            name = str(
+                disk.get("name") or "DISK{}".format(index)
+            ).strip().upper()
             if show_warning:
                 name = "WARN"
             temperature = disk.get("temperature_c")

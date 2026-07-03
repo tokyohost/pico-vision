@@ -172,7 +172,10 @@ class QbittorrentMonitor:
             state_lower = state.lower()
             progress = float(torrent.get("progress") or 0)
             downloading = state in ("downloading", "metaDL", "forcedDL")
-            seeding = state in ("uploading", "forcedUP")
+            # qBittorrent 的“做种”包含正在上传、等待连接、排队及强制上传。
+            seeding = state in (
+                "uploading", "stalledUP", "queuedUP", "forcedUP"
+            )
             paused = state in ("pausedDL", "pausedUP", "stoppedDL", "stoppedUP")
             active = int(torrent.get("dlspeed") or 0) > 0 or int(torrent.get("upspeed") or 0) > 0
             counts["downloading"] += int(downloading)

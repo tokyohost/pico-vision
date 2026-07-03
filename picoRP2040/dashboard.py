@@ -5,7 +5,7 @@ import time
 
 from canvas import Canvas
 from config import HEIGHT, LCD_STRIP_HEIGHT, LCD_STYLE, WIDTH
-from style_plugins import create_style, normalize_style_name
+from style_plugins import create_style, normalize_style_name, release_style
 
 
 class DashboardRenderer:
@@ -38,11 +38,16 @@ class DashboardRenderer:
         normalized_name = normalize_style_name(style_name)
         if normalized_name == self._style_name:
             return False
+        self.canvas.clear_glyph_cache()
+        gc.collect()
+        previous_style_name = self._style_name
         style = create_style(normalized_name)
         self._style = style
         self._style_name = style.name
         self._apply_style_geometry()
         self._initialized = False
+        release_style(previous_style_name)
+        gc.collect()
         return True
 
     def _apply_style_geometry(self):
@@ -164,6 +169,8 @@ class DashboardRenderer:
             self._last_render_ms = time.ticks_diff(time.ticks_ms(), self._render_started)
             self._render_started = None
             self._completion_pending = False
+            # 一帧绘制会产生较多短命对象，及时整理堆以便接收下一包 JSON。
+            gc.collect()
         return completed
 
     def update_pending(self, max_regions=8):

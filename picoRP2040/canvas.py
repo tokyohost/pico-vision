@@ -12,6 +12,10 @@ except ImportError:
     framebuf = None
 
 
+# RP2040 堆空间有限，限制字形缓存数量以避免切换样式后长期占用内存。
+MAX_GLYPH_CACHE_SIZE = 32
+
+
 class Canvas:
     """在小型条带缓冲区中绘图，坐标仍使用完整屏幕坐标。"""
 
@@ -45,6 +49,10 @@ class Canvas:
             self._glyph_cache.clear()
         self._font_name = normalized_name
         self._font = fonts[normalized_name]
+
+    def clear_glyph_cache(self):
+        """清空动态字形缓存，释放样式切换遗留的帧缓冲区。"""
+        self._glyph_cache.clear()
 
     def set_origin(self, origin_y):
         """设置当前条带在完整屏幕中的纵向起点。"""
@@ -281,6 +289,8 @@ class Canvas:
         glyph = self._glyph_cache.get(key)
         if glyph is not None:
             return glyph
+        if len(self._glyph_cache) >= MAX_GLYPH_CACHE_SIZE:
+            self._glyph_cache.clear()
         columns = self._font.get(character, self._font["?"])
         width = max(6, len(columns)) * scale
         height = 7 * scale

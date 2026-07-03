@@ -59,17 +59,18 @@ class QbittorrentMonitorTests(unittest.TestCase):
             {"state": "pausedUP", "progress": 1},
             {"state": "stoppedDL", "progress": 0.2},
             {"state": "stalledUP", "progress": 1},
+            {"state": "queuedUP", "progress": 1},
             {"state": "checkingDL", "progress": 0.6},
             {"state": "error", "progress": 0.1},
         ])
-        self.assertEqual(counts["all"], 7)
+        self.assertEqual(counts["all"], 8)
         self.assertEqual(counts["downloading"], 1)
-        self.assertEqual(counts["seeding"], 1)
-        self.assertEqual(counts["completed"], 3)
+        self.assertEqual(counts["seeding"], 3)
+        self.assertEqual(counts["completed"], 4)
         self.assertEqual(counts["paused"], 2)
-        self.assertEqual(counts["resumed"], 5)
+        self.assertEqual(counts["resumed"], 6)
         self.assertEqual(counts["active"], 2)
-        self.assertEqual(counts["inactive"], 5)
+        self.assertEqual(counts["inactive"], 6)
         self.assertEqual(counts["paused_uploading"], 1)
         self.assertEqual(counts["stalled_uploading"], 1)
         self.assertEqual(counts["checking"], 1)
