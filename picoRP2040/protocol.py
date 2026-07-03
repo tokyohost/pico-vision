@@ -48,10 +48,12 @@ class JsonProtocol:
     def __init__(self, upgrade_manager=None):
         """初始化标准输入输出、轮询器和行缓冲区。"""
         self._input = sys.stdin
+        self._reader = getattr(sys.stdin, "buffer", sys.stdin)
         self._output = getattr(sys.stdout, "buffer", sys.stdout)
         self._poller = select.poll()
         # RP2 的 USB REPL 在 sys.stdin 上实现流轮询接口；部分固件的
-        # sys.stdin.buffer 虽可读取，却不会正确报告 POLLIN 可读事件。
+        # sys.stdin.buffer 虽可非阻塞读取，却不会正确报告 POLLIN 可读事件。
+        # 因此轮询文本流、读取二进制流，兼顾 Linux CDC 与 Windows 串口行为。
         self._poller.register(self._input, select.POLLIN)
         self._buffer = bytearray()
         self._upgrade_manager = upgrade_manager
@@ -76,7 +78,7 @@ class JsonProtocol:
                 SERIAL_READ_CHUNK_SIZE,
                 SERIAL_READ_BUDGET - read_count,
             )
-            chunk = self._input.read(read_size)
+            chunk = self._reader.read(read_size)
             if not chunk:
                 break
             if isinstance(chunk, str):
