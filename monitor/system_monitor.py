@@ -1,6 +1,7 @@
 """通过操作系统接口采集系统硬件和网络运行指标。"""
 
 import datetime as dt
+import ctypes
 import json
 import logging
 import os
@@ -153,113 +154,250 @@ class PowerMonitor:
         }
 
 
-class GpuMonitor:
-    """在后台采集可用 GPU 的总体使用率，避免阻塞主监控循环。"""
+class _NvmlUtilization(ctypes.Structure):
+    """描述 NVML 返回的 GPU 核心与显存控制器使用率。"""
 
-    def __init__(self, interval=15.0, unavailable_interval=300.0):
-        """初始化正常采样周期、无设备退避周期、结果版本和线程锁。"""
+    _fields_ = [("gpu", ctypes.c_uint), ("memory", ctypes.c_uint)]
+
+
+class _NvmlGpuBackend:
+    """通过进程内常驻 NVML 接口采集 NVIDIA GPU 使用率。"""
+
+    def __init__(self):
+        """加载 NVML 动态库、初始化接口并缓存全部设备句柄。"""
+        self.library = self._load_library()
+        self._configure_functions()
+        if self.library.nvmlInit_v2() != 0:
+            raise OSError("NVML 初始化失败")
+        count = ctypes.c_uint()
+        if self.library.nvmlDeviceGetCount_v2(ctypes.byref(count)) != 0:
+            self.close()
+            raise OSError("NVML 无法枚举 GPU")
+        self.devices = []
+        for index in range(count.value):
+            handle = ctypes.c_void_p()
+            if self.library.nvmlDeviceGetHandleByIndex_v2(index, ctypes.byref(handle)) == 0:
+                self.devices.append(handle)
+        if not self.devices:
+            self.close()
+            raise OSError("未发现 NVIDIA GPU")
+
+    @staticmethod
+    def _load_library():
+        """按操作系统常见安装位置加载 NVML 动态库。"""
+        candidates = ["nvml.dll"] if platform.system() == "Windows" else ["libnvidia-ml.so.1", "libnvidia-ml.so"]
+        if platform.system() == "Windows":
+            system_root = os.environ.get("SystemRoot", r"C:\Windows")
+            program_files = os.environ.get("ProgramW6432", r"C:\Program Files")
+            candidates = [
+                os.path.join(system_root, "System32", "nvml.dll"),
+                os.path.join(program_files, "NVIDIA Corporation", "NVSMI", "nvml.dll"),
+                *candidates,
+            ]
+        last_error = None
+        for candidate in candidates:
+            try:
+                loader = ctypes.WinDLL if platform.system() == "Windows" else ctypes.CDLL
+                return loader(candidate)
+            except OSError as error:
+                last_error = error
+        raise OSError("未找到 NVML 动态库") from last_error
+
+    def _configure_functions(self):
+        """声明当前使用的 NVML 函数参数与返回类型。"""
+        self.library.nvmlInit_v2.restype = ctypes.c_int
+        self.library.nvmlShutdown.restype = ctypes.c_int
+        self.library.nvmlDeviceGetCount_v2.argtypes = [ctypes.POINTER(ctypes.c_uint)]
+        self.library.nvmlDeviceGetCount_v2.restype = ctypes.c_int
+        self.library.nvmlDeviceGetHandleByIndex_v2.argtypes = [ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p)]
+        self.library.nvmlDeviceGetHandleByIndex_v2.restype = ctypes.c_int
+        self.library.nvmlDeviceGetUtilizationRates.argtypes = [ctypes.c_void_p, ctypes.POINTER(_NvmlUtilization)]
+        self.library.nvmlDeviceGetUtilizationRates.restype = ctypes.c_int
+
+    def sample(self):
+        """返回全部 NVIDIA GPU 中最高的核心使用率。"""
+        values = []
+        for device in self.devices:
+            utilization = _NvmlUtilization()
+            if self.library.nvmlDeviceGetUtilizationRates(device, ctypes.byref(utilization)) == 0:
+                values.append(utilization.gpu)
+        return max(values) if values else None
+
+    def close(self):
+        """关闭已经初始化的 NVML 会话。"""
+        library = getattr(self, "library", None)
+        if library is not None:
+            try:
+                library.nvmlShutdown()
+            except (AttributeError, OSError):
+                pass
+
+
+class _PdhFormattedValueUnion(ctypes.Union):
+    """保存 Windows PDH 格式化计数器的联合值。"""
+
+    _fields_ = [("double_value", ctypes.c_double), ("large_value", ctypes.c_longlong)]
+
+
+class _PdhFormattedValue(ctypes.Structure):
+    """描述 Windows PDH 格式化计数器值及状态。"""
+
+    _anonymous_ = ("value",)
+    _fields_ = [("status", ctypes.c_ulong), ("value", _PdhFormattedValueUnion)]
+
+
+class _PdhFormattedItem(ctypes.Structure):
+    """描述 Windows PDH 通配符实例名称及其格式化值。"""
+
+    _fields_ = [("name", ctypes.c_wchar_p), ("value", _PdhFormattedValue)]
+
+
+class _WindowsPdhGpuBackend:
+    """通过常驻 Windows PDH 查询采集任意厂商 GPU 使用率。"""
+
+    _PDH_MORE_DATA = 0x800007D2
+    _PDH_DOUBLE = 0x00000200
+
+    def __init__(self):
+        """打开 PDH 查询并添加语言无关的 GPU Engine 通配符计数器。"""
+        if platform.system() != "Windows":
+            raise OSError("PDH 仅支持 Windows")
+        self.library = ctypes.WinDLL("pdh.dll")
+        self.query = ctypes.c_void_p()
+        self.counter = ctypes.c_void_p()
+        self._configure_functions()
+        if self.library.PdhOpenQueryW(None, 0, ctypes.byref(self.query)) != 0:
+            raise OSError("PDH 查询初始化失败")
+        path = r"\GPU Engine(*engtype_3D)\Utilization Percentage"
+        if self.library.PdhAddEnglishCounterW(self.query, path, 0, ctypes.byref(self.counter)) != 0:
+            self.close()
+            raise OSError("GPU Engine 计数器不可用")
+        self.library.PdhCollectQueryData(self.query)
+
+    def _configure_functions(self):
+        """声明当前使用的 PDH 函数参数与返回类型。"""
+        self.library.PdhOpenQueryW.argtypes = [ctypes.c_wchar_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_void_p)]
+        self.library.PdhOpenQueryW.restype = ctypes.c_ulong
+        self.library.PdhAddEnglishCounterW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_void_p)]
+        self.library.PdhAddEnglishCounterW.restype = ctypes.c_ulong
+        self.library.PdhCollectQueryData.argtypes = [ctypes.c_void_p]
+        self.library.PdhCollectQueryData.restype = ctypes.c_ulong
+        self.library.PdhGetFormattedCounterArrayW.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong), ctypes.POINTER(ctypes.c_ulong), ctypes.c_void_p]
+        self.library.PdhGetFormattedCounterArrayW.restype = ctypes.c_ulong
+        self.library.PdhCloseQuery.argtypes = [ctypes.c_void_p]
+        self.library.PdhCloseQuery.restype = ctypes.c_ulong
+
+    def sample(self):
+        """采集一次 PDH 数据并返回所有 3D 引擎中的最高使用率。"""
+        if self.library.PdhCollectQueryData(self.query) != 0:
+            return None
+        buffer_size = ctypes.c_ulong()
+        item_count = ctypes.c_ulong()
+        status = self.library.PdhGetFormattedCounterArrayW(
+            self.counter, self._PDH_DOUBLE,
+            ctypes.byref(buffer_size), ctypes.byref(item_count), None,
+        )
+        if status != self._PDH_MORE_DATA or buffer_size.value == 0:
+            return None
+        buffer = ctypes.create_string_buffer(buffer_size.value)
+        status = self.library.PdhGetFormattedCounterArrayW(
+            self.counter, self._PDH_DOUBLE,
+            ctypes.byref(buffer_size), ctypes.byref(item_count), buffer,
+        )
+        if status != 0 or item_count.value == 0:
+            return None
+        items = ctypes.cast(buffer, ctypes.POINTER(_PdhFormattedItem))
+        values = [items[index].value.double_value for index in range(item_count.value) if items[index].value.status == 0]
+        return max(values) if values else None
+
+    def close(self):
+        """关闭 PDH 查询句柄。"""
+        query = getattr(self, "query", None)
+        if query and query.value:
+            self.library.PdhCloseQuery(query)
+            self.query = ctypes.c_void_p()
+
+
+class _LinuxSysfsGpuBackend:
+    """通过 Linux DRM sysfs 低开销采集 AMD GPU 使用率。"""
+
+    def __init__(self):
+        """缓存所有可读取的 GPU 忙碌百分比文件路径。"""
+        self.paths = tuple(Path("/sys/class/drm").glob("card*/device/gpu_busy_percent"))
+        if not self.paths:
+            raise OSError("未发现可用 GPU sysfs 指标")
+
+    def sample(self):
+        """返回全部 sysfs GPU 中最高的忙碌百分比。"""
+        values = []
+        for path in self.paths:
+            try:
+                values.append(float(path.read_text(encoding="ascii").strip()))
+            except (OSError, ValueError):
+                continue
+        return max(values) if values else None
+
+    def close(self):
+        """兼容统一后端关闭接口，sysfs 无需释放资源。"""
+
+
+class GpuMonitor:
+    """使用常驻原生接口每秒采集 GPU，主循环仅从内存读取快照。"""
+
+    def __init__(self, interval=1.0, unavailable_interval=300.0):
+        """初始化采样周期、无设备退避周期、结果版本和线程锁。"""
         self.interval = interval
         self.unavailable_interval = unavailable_interval
         self.value = None
         self.version = 0
+        self.backend = None
         self.lock = threading.Lock()
 
     def start(self):
         """启动 GPU 使用率后台采集线程。"""
-        threading.Thread(
-            target=self._run,
-            name="GPU 使用率采集",
-            daemon=True,
-        ).start()
+        threading.Thread(target=self._run, name="GPU 使用率采集", daemon=True).start()
 
     def snapshot(self):
         """返回最近 GPU 使用率及采样版本，主循环仅执行内存读取。"""
         with self.lock:
             return self.value, self.version
 
-    def _run(self):
-        """按固定周期探测 GPU 使用率并发布结果。"""
-        while True:
-            value = self._probe()
-            with self.lock:
-                self.value = value
-                self.version += 1
-            time.sleep(
-                self.interval if value is not None else self.unavailable_interval
-            )
-
-    @classmethod
-    def _probe(cls):
-        """依次通过 NVIDIA、Linux sysfs 和 Windows 性能计数器采集。"""
-        value = cls._probe_nvidia()
-        if value is not None:
-            return value
-        if platform.system() == "Linux":
-            return cls._probe_linux_sysfs()
+    @staticmethod
+    def _create_backend():
+        """依次创建 NVIDIA 专用后端和当前系统的通用低开销后端。"""
+        backend_types = [_NvmlGpuBackend]
         if platform.system() == "Windows":
-            return cls._probe_windows_counter()
+            backend_types.append(_WindowsPdhGpuBackend)
+        elif platform.system() == "Linux":
+            backend_types.append(_LinuxSysfsGpuBackend)
+        for backend_type in backend_types:
+            try:
+                return backend_type()
+            except (AttributeError, OSError):
+                continue
         return None
 
-    @staticmethod
-    def _probe_nvidia():
-        """通过 nvidia-smi 返回全部 NVIDIA GPU 中的最高使用率。"""
-        try:
-            result = subprocess.run(
-                [
-                    "nvidia-smi", "--query-gpu=utilization.gpu",
-                    "--format=csv,noheader,nounits",
-                ],
-                capture_output=True, text=True, errors="replace", timeout=2,
-                check=False,
-                creationflags=GpuMonitor._background_creation_flags(),
-            )
-            values = [
-                float(line.strip())
-                for line in result.stdout.splitlines()
-                if line.strip()
-            ]
-        except (OSError, subprocess.TimeoutExpired, ValueError):
-            return None
-        return round(max(0, min(100, max(values))), 1) if values else None
-
-    @staticmethod
-    def _probe_linux_sysfs():
-        """通过 DRM sysfs 返回 Linux AMD GPU 的最高忙碌百分比。"""
-        values = []
-        for path in Path("/sys/class/drm").glob("card*/device/gpu_busy_percent"):
+    def _run(self):
+        """保持原生后端常驻，并按一秒周期发布 GPU 使用率。"""
+        while True:
+            if self.backend is None:
+                self.backend = self._create_backend()
+                if self.backend is None:
+                    time.sleep(self.unavailable_interval)
+                    continue
+            started = time.monotonic()
             try:
-                values.append(float(path.read_text(encoding="ascii").strip()))
-            except (OSError, ValueError):
-                continue
-        return round(max(0, min(100, max(values))), 1) if values else None
-
-    @staticmethod
-    def _probe_windows_counter():
-        """通过 Windows GPU Engine 性能计数器返回最高 3D 引擎使用率。"""
-        script = (
-            "$values=(Get-Counter '\\GPU Engine(*engtype_3D)\\Utilization Percentage' "
-            "-ErrorAction SilentlyContinue).CounterSamples.CookedValue;"
-            "if($values){($values | Measure-Object -Maximum).Maximum}"
-        )
-        try:
-            result = subprocess.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                capture_output=True, text=True, errors="replace", timeout=8,
-                check=False,
-                creationflags=GpuMonitor._background_creation_flags(),
-            )
-            value = float(result.stdout.strip())
-        except (OSError, subprocess.TimeoutExpired, ValueError):
-            return None
-        return round(max(0, min(100, value)), 1)
-
-    @staticmethod
-    def _background_creation_flags():
-        """返回 Windows 隐藏窗口与低优先级进程标志，其他系统返回零。"""
-        return (
-            getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            | getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
-        )
+                value = self.backend.sample()
+            except (AttributeError, OSError, ValueError):
+                self.backend.close()
+                self.backend = None
+                value = None
+            if value is not None:
+                value = round(max(0, min(100, float(value))), 1)
+                with self.lock:
+                    self.value = value
+                    self.version += 1
+            time.sleep(max(0.05, self.interval - (time.monotonic() - started)))
 
 
 class SystemInformationCollector:
