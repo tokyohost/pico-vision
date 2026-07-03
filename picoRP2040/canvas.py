@@ -1,5 +1,7 @@
 """提供带纵向裁剪的 RGB565 条带绘图能力。"""
 
+from array import array
+
 from config import BLACK
 from font_5x7 import FONT_5X7
 from font_screen_2inch import FONT_SCREEN_2INCH, FONT_SCREEN_2INCH_COMPACT
@@ -162,6 +164,23 @@ class Canvas:
             if doubled <= delta_x:
                 error += delta_x
                 y0 += step_y
+
+    def fill_polygon(self, points, color):
+        """优先调用原生 FrameBuffer 一次性填充多边形，并返回是否成功。"""
+        if self._framebuffer is None or not hasattr(self._framebuffer, "poly"):
+            return False
+        coordinates = array("h")
+        for point_x, point_y in points:
+            coordinates.append(point_x)
+            coordinates.append(point_y)
+        self._framebuffer.poly(
+            -self.origin_x,
+            -self.origin_y,
+            coordinates,
+            self._native_color(color),
+            True,
+        )
+        return True
 
     def text(self, x, y, value, color, scale=1):
         """使用内置点阵字体绘制文本，并按实际字形宽度推进光标。"""

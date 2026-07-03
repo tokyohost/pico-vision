@@ -288,24 +288,68 @@ class HorizontalDisk6xStyle:
         if not values or len(values) < 2:
             return
         maximum = 100 if percentage else max(1, max(self._number(item) for item in values))
-        previous = None
+        points = []
         for index, value in enumerate(values):
             point_x = x + int(index * (width - 1) / (len(values) - 1))
             ratio = max(0, min(1, self._number(value) / maximum))
             point_y = y + height - 1 - int(ratio * (height - 1))
-            if previous is not None:
-                if filled:
-                    span = max(1, point_x - previous[0])
-                    for fill_x in range(previous[0], point_x + 1):
-                        offset = fill_x - previous[0]
-                        fill_y = previous[1] + int(
-                            (point_y - previous[1]) * offset / span
-                        )
-                        canvas.line(
-                            fill_x, fill_y, fill_x, y + height - 1, color
-                        )
-                canvas.line(previous[0], previous[1], point_x, point_y, color)
-            previous = (point_x, point_y)
+            points.append((point_x, point_y))
+        native_filled = False
+        if filled:
+            native_filled = self._fill_history_area(
+                canvas, x, y, width, height, points, color
+            )
+        if native_filled:
+            return
+        previous = points[0]
+        for point in points[1:]:
+            canvas.line(previous[0], previous[1], point[0], point[1], color)
+            previous = point
+
+    @staticmethod
+    def _fill_history_area(canvas, x, y, width, height, points, color):
+        """优先原生填充趋势图，并为旧固件选择调用次数较少的扫描方向。"""
+        bottom = y + height - 1
+        polygon = list(points)
+        polygon.append((points[-1][0], bottom))
+        polygon.append((points[0][0], bottom))
+        if canvas.fill_polygon(polygon, color):
+            return True
+        top_by_x = [bottom] * width
+        previous = points[0]
+        for point in points[1:]:
+            span = max(1, point[0] - previous[0])
+            start = max(x, previous[0])
+            end = min(x + width - 1, point[0])
+            for fill_x in range(start, end + 1):
+                offset = fill_x - previous[0]
+                top_by_x[fill_x - x] = previous[1] + int(
+                    (point[1] - previous[1]) * offset / span
+                )
+            previous = point
+        scanline_runs = []
+        for fill_y in range(y, bottom + 1):
+            run_start = None
+            for offset, top in enumerate(top_by_x):
+                if top <= fill_y:
+                    if run_start is None:
+                        run_start = x + offset
+                elif run_start is not None:
+                    scanline_runs.append(
+                        (run_start, fill_y, x + offset - 1, fill_y)
+                    )
+                    run_start = None
+            if run_start is not None:
+                scanline_runs.append(
+                    (run_start, fill_y, x + width - 1, fill_y)
+                )
+        if len(scanline_runs) < width:
+            for start_x, start_y, end_x, end_y in scanline_runs:
+                canvas.line(start_x, start_y, end_x, end_y, color)
+        else:
+            for offset, top in enumerate(top_by_x):
+                canvas.line(x + offset, top, x + offset, bottom, color)
+        return False
 
     def _draw_cpu(self, canvas, snapshot):
         """绘制左上角 CPU 百分比、温度与趋势。"""
