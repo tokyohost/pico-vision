@@ -489,15 +489,19 @@ class HorizontalDisk6xStyle:
         canvas.text(8, 221, clock, BLUE, 1)
         canvas.line(77, 217, 77, 233, BLUE)
         canvas.text(85, 221, "UPTIME", BLUE, 1)
+        uptime_text = self._format_uptime(snapshot.get("uptime_seconds"))
         canvas.text(
-            141, 221,
-            self._format_uptime(snapshot.get("uptime_seconds")), WHITE, 1,
+            231 - canvas.text_width(uptime_text), 221,
+            uptime_text, WHITE, 1,
         )
         canvas.line(237, 217, 237, 233, BLUE)
         watts = snapshot.get("power", {}).get("watts")
         power_text = "--W" if watts is None else "{:.0f}W".format(self._number(watts))
         canvas.text(245, 221, "PWR", BLUE, 1)
-        canvas.text(277, 221, power_text, YELLOW, 1)
+        canvas.text(
+            312 - canvas.text_width(power_text), 221,
+            power_text, YELLOW, 1,
+        )
 
     def draw_visible(self, canvas, snapshot):
         """绘制与当前条带相交的横屏仪表盘内容。"""
