@@ -463,13 +463,14 @@ class HorizontalDisk6xStyle:
             column, row = index % 2, index // 2
             if selected_row is not None and row != selected_row:
                 continue
-            x, y = 106 + column * 106, 49 + row * 52
+            # 每行两张磁盘卡片共同占满 212 像素，与总体面板和底部组件的右边界对齐。
+            x, y = 106 + column * 108, 49 + row * 52
             percent = int(self._number(disk.get("percent")))
             usage_color = self._disk_usage_color(percent)
             frame_color, name_color, all_red, show_warning = self._health_display(
                 disk.get("health", 0), usage_color
             )
-            self._frame(canvas, x, y, 102, 48, frame_color)
+            self._frame(canvas, x, y, 104, 48, frame_color)
             name = str(
                 disk.get("name") or "DISK{}".format(index)
             ).strip().upper()
@@ -479,7 +480,7 @@ class HorizontalDisk6xStyle:
             temperature_text = "--℃" if temperature is None else "{}℃".format(int(self._number(temperature)))
             canvas.text(x + 3, y + 4, name, RED if all_red else name_color, 1)
             canvas.text(
-                x + 99 - canvas.text_width(temperature_text), y + 4, temperature_text,
+                x + 101 - canvas.text_width(temperature_text), y + 4, temperature_text,
                 RED if all_red else self._temperature_color(temperature), 1,
             )
             capacity = self._format_disk_capacity(
@@ -488,7 +489,7 @@ class HorizontalDisk6xStyle:
             canvas.text(x + 3, y + 15, capacity[:8], RED if all_red else WHITE, 1)
             percent_text = "{}%".format(percent)
             canvas.text(
-                x + 99 - canvas.text_width(percent_text), y + 15,
+                x + 101 - canvas.text_width(percent_text), y + 15,
                 percent_text, RED if all_red else usage_color, 1,
             )
             read_text = "R" + self._format_disk_rate(disk.get("read_bps"))
@@ -496,11 +497,11 @@ class HorizontalDisk6xStyle:
             canvas.text(x + 3, y + 27, read_text, RED if all_red else GREEN, 1)
             canvas.text(x + 3, y + 38, write_text, RED if all_red else YELLOW, 1)
             self._history(
-                canvas, x + 42, y + 27, 57, 8,
+                canvas, x + 42, y + 27, 59, 8,
                 disk.get("read_history", ()), RED if all_red else GREEN, filled=True,
             )
             self._history(
-                canvas, x + 42, y + 38, 57, 7,
+                canvas, x + 42, y + 38, 59, 7,
                 disk.get("write_history", ()), RED if all_red else YELLOW, filled=True,
             )
 
