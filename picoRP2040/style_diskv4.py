@@ -16,10 +16,10 @@ DANGER = 0xF9C7
 CYAN = 0x06DB
 
 
-class DiskV2Style:
+class DiskV4Style:
     """按截图布局绘制顶部状态栏、侧边指标和十五块磁盘卡片。"""
 
-    name = "diskv2"
+    name = "diskv4"
     width = 320
     height = 240
     landscape = True
@@ -158,27 +158,50 @@ class DiskV2Style:
 
     @classmethod
     def _history(cls, canvas, x, y, width, height, values, color):
-        """在侧栏中绘制资源使用率的紧凑历史折线。"""
+        """在侧栏中绘制资源使用率的紧凑实心面积图。"""
         if not values or len(values) < 2:
             return
-        previous = None
+        points = []
         for index, item in enumerate(values):
             point_x = x + int(index * (width - 1) / (len(values) - 1))
             ratio = max(0, min(100, cls._number(item))) / 100
             point_y = y + height - 1 - int(ratio * (height - 1))
-            if previous is not None:
-                canvas.line(previous[0], previous[1], point_x, point_y, color)
-            previous = (point_x, point_y)
+            points.append((point_x, point_y))
+        bottom = y + height - 1
+        previous = points[0]
+        for point in points[1:]:
+            span = max(1, point[0] - previous[0])
+            for draw_x in range(previous[0], point[0] + 1):
+                offset = draw_x - previous[0]
+                draw_y = previous[1] + int(
+                    (point[1] - previous[1]) * offset / span
+                )
+                canvas.line(draw_x, draw_y, draw_x, bottom, color)
+            previous = point
+
+    def _draw_empty_disk(self, canvas, x, y, index):
+        """绘制低对比度的空磁盘槽位占位卡片。"""
+        self._frame(canvas, x, y, 79, 37, DARK)
+        label = "D{}".format(index)
+        canvas.text(x + 4, y + 4, label, GRAY)
+        empty_text = "EMPTY"
+        canvas.text(
+            x + 39 - canvas.text_width(empty_text) // 2,
+            y + 15, empty_text, GRAY,
+        )
+        canvas.fill_rect(x + 12, y + 28, 55, 2, DARK)
 
     def _draw_header(self, canvas, snapshot):
-        """绘制主机名、操作系统、时间和运行时长状态栏。"""
+        """绘制 IP 地址、时间和运行时长状态栏。"""
         self._frame(canvas, 2, 2, 316, 13, DARK)
-        host = str(snapshot.get("host") or "HOST")[:10]
-        platform = str(snapshot.get("platform") or "SYSTEM")[:9]
+        ip_text = "IP " + str(
+            snapshot.get("network", {}).get("ip") or "--"
+        )
+        while ip_text and 8 + canvas.text_width(ip_text) > 137:
+            ip_text = ip_text[:-1]
         timestamp = str(snapshot.get("timestamp") or "")
         clock = timestamp[11:19] if len(timestamp) >= 19 else "--:--:--"
-        canvas.text(8, 5, host, WHITE)
-        canvas.text(65, 5, platform, WHITE)
+        canvas.text(8, 5, ip_text, WHITE)
         canvas.text(145, 5, clock, WHITE)
         uptime = "UP " + self._format_uptime(snapshot.get("uptime_seconds"))
         canvas.text(314 - canvas.text_width(uptime), 5, uptime, WHITE)
@@ -253,11 +276,16 @@ class DiskV2Style:
     def _draw_disks(self, canvas, snapshot, selected_row=None):
         """按照三列五行网格绘制最多十五块物理磁盘。"""
         disks = snapshot.get("physical_disks") or snapshot.get("disks", ())
-        for index, disk in enumerate(disks[:15]):
+        disks = disks[:15]
+        for index in range(15):
             column, row = index % 3, index // 3
             if selected_row is not None and row != selected_row:
                 continue
             x, y = 75 + column * 81, 44 + row * 39
+            if index >= len(disks):
+                self._draw_empty_disk(canvas, x, y, index)
+                continue
+            disk = disks[index]
             percent = self._number(disk.get("percent"))
             color = self._usage_color(percent)
             health = int(self._number(disk.get("health")))
@@ -323,9 +351,9 @@ class DiskV2Style:
             methods[key](canvas, snapshot)
 
 
-def create_diskv2_style():
-    """创建紧凑型多磁盘横屏样式插件。"""
-    return DiskV2Style()
+def create_diskv4_style():
+    """创建带实心趋势图和空磁盘占位卡的紧凑横屏样式插件。"""
+    return DiskV4Style()
 
 
-register_style(DiskV2Style.name, create_diskv2_style)
+register_style(DiskV4Style.name, create_diskv4_style)

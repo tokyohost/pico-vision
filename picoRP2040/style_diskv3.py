@@ -16,10 +16,10 @@ DANGER = 0xF9C7
 CYAN = 0x06DB
 
 
-class DiskV2Style:
+class DiskV3Style:
     """按截图布局绘制顶部状态栏、侧边指标和十五块磁盘卡片。"""
 
-    name = "diskv2"
+    name = "diskv3"
     width = 320
     height = 240
     landscape = True
@@ -171,14 +171,16 @@ class DiskV2Style:
             previous = (point_x, point_y)
 
     def _draw_header(self, canvas, snapshot):
-        """绘制主机名、操作系统、时间和运行时长状态栏。"""
+        """绘制 IP 地址、时间和运行时长状态栏。"""
         self._frame(canvas, 2, 2, 316, 13, DARK)
-        host = str(snapshot.get("host") or "HOST")[:10]
-        platform = str(snapshot.get("platform") or "SYSTEM")[:9]
+        ip_text = "IP " + str(
+            snapshot.get("network", {}).get("ip") or "--"
+        )
+        while ip_text and 8 + canvas.text_width(ip_text) > 137:
+            ip_text = ip_text[:-1]
         timestamp = str(snapshot.get("timestamp") or "")
         clock = timestamp[11:19] if len(timestamp) >= 19 else "--:--:--"
-        canvas.text(8, 5, host, WHITE)
-        canvas.text(65, 5, platform, WHITE)
+        canvas.text(8, 5, ip_text, WHITE)
         canvas.text(145, 5, clock, WHITE)
         uptime = "UP " + self._format_uptime(snapshot.get("uptime_seconds"))
         canvas.text(314 - canvas.text_width(uptime), 5, uptime, WHITE)
@@ -323,9 +325,9 @@ class DiskV2Style:
             methods[key](canvas, snapshot)
 
 
-def create_diskv2_style():
-    """创建紧凑型多磁盘横屏样式插件。"""
-    return DiskV2Style()
+def create_diskv3_style():
+    """创建顶部显示 IP 地址的紧凑型多磁盘横屏样式插件。"""
+    return DiskV3Style()
 
 
-register_style(DiskV2Style.name, create_diskv2_style)
+register_style(DiskV3Style.name, create_diskv3_style)

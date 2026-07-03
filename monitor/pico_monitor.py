@@ -34,7 +34,9 @@ from system_monitor import SystemInformationCollector
 
 LOGGER = logging.getLogger("pico-monitor")
 BUILTIN_LCD_STYLES = (
-    "default", "disk", "diskv2", "horizontal_disk", "horizontal_disk4x",
+    "default", "disk", "diskv2", "diskv3", "diskv4", "horizontal_disk",
+    "horizontal_diskv2",
+    "horizontal_disk4x",
     "horizontal_disk4x_qb", "horizontal_disk6x", "simple",
 )
 
@@ -88,7 +90,7 @@ def create_argument_parser():
     parser.add_argument("--reconnect-interval", type=float, default=float(os.getenv("PICO_MONITOR_RECONNECT_INTERVAL", "3.0")), help="设备断线后的重连间隔，单位为秒")
     parser.add_argument("--screen-rotation", type=int, choices=(0, 180), default=int(os.getenv("PICO_MONITOR_SCREEN_ROTATION", "0")), help="Pico 屏幕旋转角度，可选 0 或 180")
     parser.add_argument("--network-unit", choices=("MB", "Mbps"), default=os.getenv("PICO_MONITOR_NETWORK_UNIT", "MB"), help="网络速率模式：MB 自动使用 B/KB/MB/GB，Mbps 自动使用 bps/Kbps/Mbps/Gbps")
-    parser.add_argument("--lcd-style", choices=BUILTIN_LCD_STYLES, default=os.getenv("PICO_MONITOR_LCD_STYLE", "diskv2"), help="Pico LCD 内置界面样式")
+    parser.add_argument("--lcd-style", choices=BUILTIN_LCD_STYLES, default=os.getenv("PICO_MONITOR_LCD_STYLE", "diskv4"), help="Pico LCD 内置界面样式")
     qbittorrent_group = parser.add_mutually_exclusive_group()
     qbittorrent_group.add_argument("--qbittorrent-enabled", dest="qbittorrent_enabled", action="store_true", help="开启 qBittorrent 指标采集")
     qbittorrent_group.add_argument("--no-qbittorrent", dest="qbittorrent_enabled", action="store_false", help="关闭 qBittorrent 指标采集")
