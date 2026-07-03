@@ -116,6 +116,62 @@ sudo systemctl restart pico-monitor
 
 发布版 Monitor 可执行 `pico-monitor --upgrade-pico`，程序会下载同版本 GitHub Release 中的 `pico-upgrade-v<版本>.zip`。开发版使用 `python pico_monitor.py --upgrade-pico --upgrade-url <地址>`。升级时 Monitor 与 Pico 会持续打印下载、传输、安装百分比；Pico 对每个文件核对长度和 SHA-256，全部通过后替换内部文件并自动软重启。传输或校验失败时只删除临时区，不安装未通过校验的文件。
 
+### 本地主动升级测试
+
+首次测试前，Pico 中必须已经部署包含 `upgrade_manager.py` 的当前固件，否则设备无法识别 `UPGRADE:` 升级命令。
+
+在 `pico-project` 项目根目录生成本地测试升级包：
+
+```powershell
+New-Item -ItemType Directory -Force release-assets
+python tools\package_pico_upgrade.py `
+  --source picoRP2040 `
+  --output release-assets\pico-upgrade-vlocal-test.zip `
+  --version local-test
+```
+
+在第一个 PowerShell 窗口启动本地文件服务，并保持窗口运行：
+
+```powershell
+python -m http.server 8000 --directory release-assets
+```
+
+在第二个 PowerShell 窗口进入 Monitor 目录并主动升级指定串口的 Pico：
+
+```powershell
+cd monitor
+
+python pico_monitor.py `
+  --port COM9 `
+  --upgrade-pico `
+  --upgrade-url http://127.0.0.1:8000/pico-upgrade-vlocal-test.zip
+```
+
+请按实际设备修改 `COM9`。如果需要同时校验升级包下载摘要，可读取生成的 SHA-256 并传给 Monitor：
+
+```powershell
+$hash = (Get-FileHash `
+  ..\release-assets\pico-upgrade-vlocal-test.zip `
+  -Algorithm SHA256).Hash.ToLower()
+
+python pico_monitor.py `
+  --port COM9 `
+  --upgrade-pico `
+  --upgrade-url http://127.0.0.1:8000/pico-upgrade-vlocal-test.zip `
+  --upgrade-sha256 $hash
+```
+
+发布版 Windows EXE 使用相同参数：
+
+```powershell
+.\pico-monitor-windows-x64.exe `
+  --port COM9 `
+  --upgrade-pico `
+  --upgrade-url http://127.0.0.1:8000/pico-upgrade-vlocal-test.zip
+```
+
+升级成功时，日志会依次出现 `ACK:UPGRADE:BEGIN:local-test`、文件传输确认、`PROGRESS:UPGRADE:INSTALL:100` 和 `ACK:UPGRADE:COMPLETE:local-test`，随后 Pico 自动重启。提交安装期间不要断开 USB 或关闭电源。
+
 ## GitHub Actions 自动发布
 
 `pico-project/.github/workflows` 提供 Windows EXE 与 Linux DEB 两套工作流。手动运行工作流时只生成 Actions Artifact；推送 `v` 开头的标签时会自动创建或更新 GitHub Release，并上传以下产物：
