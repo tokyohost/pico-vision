@@ -23,7 +23,7 @@ PICO_SOURCE = Path(__file__).resolve().parents[2] / "picoRP2040"
 if str(PICO_SOURCE) not in sys.path:
     sys.path.insert(0, str(PICO_SOURCE))
 
-from config import GRAY, RED, YELLOW  # noqa: E402
+from config import BLUE, GRAY, RED, YELLOW  # noqa: E402
 from style_horizontal_disk import HorizontalDiskStyle  # noqa: E402
 from style_horizontal_disk4x_qb import HorizontalDisk4xQbStyle  # noqa: E402
 from style_horizontal_disk6x import (  # noqa: E402
@@ -32,6 +32,7 @@ from style_horizontal_disk6x import (  # noqa: E402
     ELEMENT_WARNING,
     HorizontalDisk6xStyle,
 )
+from style_simple import SimpleStyle  # noqa: E402
 
 
 class HistoryCanvas:
@@ -114,6 +115,65 @@ class QbittorrentStyleTest(unittest.TestCase):
 
         self.assertEqual(HorizontalDisk4xQbStyle.name, "horizontal_disk4x_qb")
         self.assertIn("network_details", [region[0] for region in regions])
+
+
+class SimpleStyleTest(unittest.TestCase):
+    """验证简洁样式的磁盘筛选和渐变面积图规则。"""
+
+    def test_unhealthy_disks_are_selected_first_and_limited_to_three(self):
+        """确认健康等级较差的磁盘优先显示且最多显示三块。"""
+        snapshot = {
+            "physical_disks": [
+                {"name": "D0", "health": 1},
+                {"name": "D1", "health": 4},
+                {"name": "D2", "health": 2},
+                {"name": "D3", "health": 5},
+            ]
+        }
+
+        selected = SimpleStyle._selected_disks(snapshot)
+
+        self.assertEqual([disk["name"] for disk in selected], ["D3", "D1", "D2"])
+
+    def test_health_text_uses_element_status_colors(self):
+        """确认六个健康等级使用对应的 Element 状态颜色。"""
+        self.assertEqual(
+            [SimpleStyle._health_text_color(level) for level in range(6)],
+            [GRAY, ELEMENT_SUCCESS, BLUE, ELEMENT_WARNING, ELEMENT_DANGER, RED],
+        )
+
+    def test_gradient_history_uses_multiple_color_levels(self):
+        """确认实心面积图从折线到底部使用多个渐变颜色层级。"""
+        class GradientCanvas:
+            """记录渐变图绘制时使用的像素和线段颜色。"""
+
+            def __init__(self):
+                """初始化颜色记录列表。"""
+                self.colors = []
+                self.pixel_calls = 0
+
+            def pixel(self, x, y, color):
+                """记录单个渐变像素颜色。"""
+                del x, y
+                self.pixel_calls += 1
+                self.colors.append(color)
+
+            def line(self, x1, y1, x2, y2, color):
+                """记录折线颜色。"""
+                del x1, y1, x2, y2
+                self.colors.append(color)
+
+            def fill_rect(self, x, y, width, height, color):
+                """记录渐变色带矩形颜色。"""
+                del x, y, width, height
+                self.colors.append(color)
+
+        canvas = GradientCanvas()
+
+        SimpleStyle()._gradient_history(canvas, 0, 0, 20, 12, [10, 80, 30], BLUE, True)
+
+        self.assertGreater(len(set(canvas.colors)), 3)
+        self.assertEqual(canvas.pixel_calls, 0)
 
 
 if __name__ == "__main__":
