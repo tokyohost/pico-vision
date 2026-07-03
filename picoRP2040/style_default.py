@@ -1,4 +1,18 @@
+#  Copyright (c) 2026 xuehui_li
+#
+#  Licensed under the Custom Non-Commercial Copyleft License.
+#  Commercial use is prohibited without prior written permission.
+#
+#  Any project, software, or derivative work that uses, modifies, links to,
+#  or incorporates this software must make its complete source code publicly
+#  available under the same license.
+#
+#  This software is provided "as is", without warranty of any kind.
+
+
+
 """实现项目原有 LCD 仪表盘的默认样式插件。"""
+
 
 from config import (
     BLACK, BLUE, DARK, GRAY, GREEN, HEIGHT, PURPLE, RED, WHITE, WIDTH,

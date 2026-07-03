@@ -1,4 +1,18 @@
+#  Copyright (c) 2026 xuehui_li
+#
+#  Licensed under the Custom Non-Commercial Copyleft License.
+#  Commercial use is prohibited without prior written permission.
+#
+#  Any project, software, or derivative work that uses, modifies, links to,
+#  or incorporates this software must make its complete source code publicly
+#  available under the same license.
+#
+#  This software is provided "as is", without warranty of any kind.
+
+
+
 """接收、校验并安装 Monitor 通过串口发送的 Pico 升级文件。"""
+
 
 import os
 import time

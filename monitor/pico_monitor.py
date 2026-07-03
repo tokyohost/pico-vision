@@ -1,6 +1,18 @@
 #!/usr/bin/env python3
 """Pico LCD 跨平台系统硬件监控程序入口。"""
 
+
+#  Copyright (c) 2026 xuehui_li
+#
+#  Licensed under the Custom Non-Commercial Copyleft License.
+#  Commercial use is prohibited without prior written permission.
+#
+#  Any project, software, or derivative work that uses, modifies, links to,
+#  or incorporates this software must make its complete source code publicly
+#  available under the same license.
+#
+#  This software is provided "as is", without warranty of any kind.
+
 import argparse
 import logging
 import os

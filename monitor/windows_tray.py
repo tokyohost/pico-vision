@@ -1,4 +1,18 @@
+#  Copyright (c) 2026 xuehui_li
+#
+#  Licensed under the Custom Non-Commercial Copyleft License.
+#  Commercial use is prohibited without prior written permission.
+#
+#  Any project, software, or derivative work that uses, modifies, links to,
+#  or incorporates this software must make its complete source code publicly
+#  available under the same license.
+#
+#  This software is provided "as is", without warranty of any kind.
+
+
+
 """提供 Windows 托盘、自启动、日志查看和后台进程管理。"""
+
 
 import ctypes
 import os
