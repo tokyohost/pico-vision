@@ -151,6 +151,9 @@ class SystemInformationCollector:
         self.histories = {name: deque([0] * HISTORY_LENGTH, maxlen=HISTORY_LENGTH) for name in ("cpu", "memory", "upload", "download")}
         self.power_history = deque(maxlen=HISTORY_LENGTH)
         self.last_network = self.last_network_time = None
+        self.last_disk_io = None
+        self.last_disk_io_time = None
+        self.disk_io_histories = {}
         self.ping_monitor = PingMonitor(ping_target)
         self.power_monitor = PowerMonitor()
         self.disk_temperature_cache = {}
@@ -184,7 +187,7 @@ class SystemInformationCollector:
 
     @staticmethod
     def _physical_disk_statistics(disks):
-        """从磁盘明细生成发送给 Pico 的物理磁盘统计，重点保留温度指标。"""
+        """从磁盘明细生成发送给 Pico 的物理磁盘容量、温度和读写速度统计。"""
         return [
             {
                 "name": disk.get("name", "DISK"),
@@ -194,9 +197,134 @@ class SystemInformationCollector:
                 "total_bytes": int(disk.get("total_bytes", 0)),
                 "percent": float(disk.get("percent", 0)),
                 "temperature_c": disk.get("temperature_c"),
+                "read_bps": int(disk.get("read_bps", 0)),
+                "write_bps": int(disk.get("write_bps", 0)),
+                "read_history": list(disk.get("read_history", ())),
+                "write_history": list(disk.get("write_history", ())),
             }
             for disk in disks
         ]
+
+    @staticmethod
+    def _disk_io_aliases(name):
+        """生成物理磁盘名称的跨平台别名，用于关联系统磁盘读写计数器。"""
+        text = str(name or "").strip()
+        basename = os.path.basename(os.path.realpath(text)).lower()
+        aliases = {text.lower(), basename}
+        linux_name = SystemInformationCollector._linux_physical_disk(basename)
+        if linux_name:
+            aliases.add(linux_name.lower())
+        disk_number = re.match(r"^disk\s*(\d+)(?:\s|$)", text, re.IGNORECASE)
+        physical_drive = re.match(r"^physicaldrive(\d+)$", basename, re.IGNORECASE)
+        if disk_number:
+            aliases.add("physicaldrive" + disk_number.group(1))
+        if physical_drive:
+            aliases.add("disk" + physical_drive.group(1))
+        return aliases
+
+    @staticmethod
+    def _windows_device_number(device):
+        """通过 Windows 设备控制接口查询盘符所属物理磁盘编号，无需管理员权限。"""
+        if platform.system() != "Windows":
+            return None
+        drive_match = re.match(r"^([A-Za-z]):", str(device or ""))
+        if not drive_match:
+            return None
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class StorageDeviceNumber(ctypes.Structure):
+                """描述 Windows 存储设备类型、物理磁盘编号和分区编号。"""
+
+                _fields_ = [
+                    ("device_type", wintypes.DWORD),
+                    ("device_number", wintypes.DWORD),
+                    ("partition_number", wintypes.DWORD),
+                ]
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CreateFileW.restype = wintypes.HANDLE
+            handle = kernel32.CreateFileW(
+                "\\\\.\\" + drive_match.group(1).upper() + ":",
+                0,
+                0x00000001 | 0x00000002,
+                None,
+                3,
+                0,
+                None,
+            )
+            if handle == wintypes.HANDLE(-1).value:
+                return None
+            try:
+                result = StorageDeviceNumber()
+                returned = wintypes.DWORD()
+                succeeded = kernel32.DeviceIoControl(
+                    handle,
+                    0x002D1080,
+                    None,
+                    0,
+                    ctypes.byref(result),
+                    ctypes.sizeof(result),
+                    ctypes.byref(returned),
+                    None,
+                )
+                return int(result.device_number) if succeeded else None
+            finally:
+                kernel32.CloseHandle(handle)
+        except (AttributeError, OSError, TypeError, ValueError):
+            return None
+
+    def _disk_rates(self, disks):
+        """计算每块物理磁盘的实时读写字节速度，并维护固定长度历史序列。"""
+        disks = [dict(disk) for disk in disks]
+        now = time.monotonic()
+        try:
+            counters = psutil.disk_io_counters(perdisk=True) or {}
+        except (AttributeError, OSError, RuntimeError):
+            counters = {}
+        elapsed = now - self.last_disk_io_time if self.last_disk_io_time is not None else 0
+        previous = self.last_disk_io or {}
+        counter_aliases = {
+            alias: counter
+            for counter_name, counter in counters.items()
+            for alias in self._disk_io_aliases(counter_name)
+        }
+        previous_aliases = {
+            alias: counter
+            for counter_name, counter in previous.items()
+            for alias in self._disk_io_aliases(counter_name)
+        }
+        for disk in disks:
+            aliases = self._disk_io_aliases(disk.get("name"))
+            for device in disk.get("devices", ()):
+                aliases.update(self._disk_io_aliases(device))
+                device_number = self._windows_device_number(device)
+                if device_number is not None:
+                    aliases.add("physicaldrive" + str(device_number))
+            current_counter = next((counter_aliases[item] for item in aliases if item in counter_aliases), None)
+            previous_counter = next((previous_aliases[item] for item in aliases if item in previous_aliases), None)
+            read_bps = write_bps = 0
+            if elapsed > 0 and current_counter is not None and previous_counter is not None:
+                read_bps = round(max(0, current_counter.read_bytes - previous_counter.read_bytes) / elapsed)
+                write_bps = round(max(0, current_counter.write_bytes - previous_counter.write_bytes) / elapsed)
+            history_key = str(disk.get("name") or "DISK")
+            histories = self.disk_io_histories.setdefault(
+                history_key,
+                {
+                    "read": deque([0] * HISTORY_LENGTH, maxlen=HISTORY_LENGTH),
+                    "write": deque([0] * HISTORY_LENGTH, maxlen=HISTORY_LENGTH),
+                },
+            )
+            histories["read"].append(read_bps)
+            histories["write"].append(write_bps)
+            disk["read_bps"] = read_bps
+            disk["write_bps"] = write_bps
+            disk["read_history"] = list(histories["read"])
+            disk["write_history"] = list(histories["write"])
+        self.last_disk_io = counters
+        self.last_disk_io_time = now
+        return disks
 
     @staticmethod
     def _cpu_temperature():
@@ -544,6 +672,10 @@ class SystemInformationCollector:
         grouped = {}
         for partition, usage, device, device_key in partitions:
             sensor = temperatures.get(device_key, {})
+            if platform.system() == "Windows" and not sensor:
+                device_number = self._windows_device_number(device)
+                if device_number is not None:
+                    sensor = {"name": "DISK" + str(device_number), "temperature_c": None}
             disk_sensors = sensor.get("physical_disks") or [sensor]
             if platform.system() == "Linux" and not sensor:
                 continue
@@ -627,7 +759,7 @@ class SystemInformationCollector:
     def collect(self):
         """采集一次完整系统状态并更新全部历史趋势序列。"""
         cpu, memory = round(psutil.cpu_percent(interval=None), 1), psutil.virtual_memory()
-        disks = self._latest_disks()
+        disks = self._disk_rates(self._latest_disks())
         physical_disks = self._physical_disk_statistics(disks)
         disk_used, disk_total, disk_percent = self._disk_usage(disks)
         network = self._network_rates()
