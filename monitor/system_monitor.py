@@ -170,6 +170,7 @@ class SystemInformationCollector:
         self.disk_temperature_time = 0.0
         self.disk_health_cache = {}
         self.disk_health_time = 0.0
+        self.disk_hardware_signature = None
         self.disk_snapshot = []
         self.disk_snapshot_lock = threading.Lock()
         self.ping_monitor.start()
@@ -184,6 +185,7 @@ class SystemInformationCollector:
         """在后台低频采集磁盘信息，避免慢盘阻塞主发送循环。"""
         while True:
             try:
+                self._refresh_disk_hardware_state()
                 disks = self._disk_details()
             except (OSError, ValueError, psutil.Error, subprocess.SubprocessError):
                 disks = None
@@ -191,6 +193,38 @@ class SystemInformationCollector:
                 with self.disk_snapshot_lock:
                     self.disk_snapshot = disks
             time.sleep(DISK_COLLECTION_INTERVAL_SECONDS)
+
+    @classmethod
+    def _disk_hardware_signature(cls):
+        """生成物理磁盘、分区和挂载关系的稳定签名，用于识别热插拔变化。"""
+        partitions = []
+        try:
+            for partition in psutil.disk_partitions(all=False):
+                partitions.append((
+                    os.path.normcase(str(partition.device or "")),
+                    os.path.normcase(str(partition.mountpoint or "")),
+                    str(partition.fstype or "").lower(),
+                ))
+        except (OSError, psutil.Error):
+            partitions = []
+        physical_disks = ()
+        if platform.system() == "Linux":
+            physical_disks = cls._list_linux_physical_disks()
+        return tuple(sorted(partitions)), tuple(physical_disks)
+
+    def _refresh_disk_hardware_state(self):
+        """检测磁盘硬件变化，并立即使 SMART、健康度和温度缓存失效。"""
+        signature = self._disk_hardware_signature()
+        previous = getattr(self, "disk_hardware_signature", None)
+        self.disk_hardware_signature = signature
+        if previous is None or previous == signature:
+            return False
+        self.disk_temperature_cache = {}
+        self.disk_temperature_time = 0.0
+        self.disk_health_cache = {}
+        self.disk_health_time = 0.0
+        LOGGER.info("检测到磁盘硬件或挂载关系变化，立即重新采集 SMART 与 health 状态")
+        return True
 
     def _latest_disks(self):
         """返回后台线程最近一次完成的磁盘信息快照。"""

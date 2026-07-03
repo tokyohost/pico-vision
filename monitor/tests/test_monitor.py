@@ -229,6 +229,25 @@ class SystemCollectorTest(unittest.TestCase):
 
         self.assertEqual(read_health.call_count, 2)
 
+    @mock.patch.object(SystemInformationCollector, "_disk_hardware_signature")
+    def test_disk_hardware_change_invalidates_smart_caches(self, hardware_signature):
+        """验证磁盘热插拔后会立即清空 SMART 健康度和温度缓存。"""
+        hardware_signature.side_effect = (((), ("sda",)), ((), ("sda", "sdb")))
+        collector = SystemInformationCollector.__new__(SystemInformationCollector)
+        collector.disk_hardware_signature = None
+        collector.disk_temperature_cache = {"sda": 40.0}
+        collector.disk_temperature_time = 10.0
+        collector.disk_health_cache = {"sda": 1}
+        collector.disk_health_time = 10.0
+
+        self.assertFalse(collector._refresh_disk_hardware_state())
+        self.assertTrue(collector._refresh_disk_hardware_state())
+
+        self.assertEqual(collector.disk_temperature_cache, {})
+        self.assertEqual(collector.disk_temperature_time, 0.0)
+        self.assertEqual(collector.disk_health_cache, {})
+        self.assertEqual(collector.disk_health_time, 0.0)
+
     @mock.patch("system_monitor.time.monotonic", side_effect=(10.0, 12.0))
     @mock.patch("system_monitor.psutil.disk_io_counters")
     @mock.patch.object(SystemInformationCollector, "_windows_device_number", return_value=0)
