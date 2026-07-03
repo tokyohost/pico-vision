@@ -67,6 +67,8 @@ jobs:
           Move-Item -LiteralPath "dist/pico-monitor.exe" -Destination "dist/${{ matrix.asset_name }}"
           & "dist/${{ matrix.asset_name }}" --help
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "dist/${{ matrix.asset_name }}" --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: 上传 EXE 构建产物
         uses: actions/upload-artifact@v7

@@ -55,6 +55,7 @@ python pico_monitor.py
 --disk-health-test-level 3  指定测试 health 等级 0 至 5，默认 3
 --dev                       开发模式；未发现 Pico 后停止重试并持续打印 JSON
 --once                      成功发送一次后退出
+--version                   显示 Monitor 构建版本并退出
 --upgrade-pico              下载当前 Monitor 版本升级包并升级 Pico
 --upgrade-url URL           开发版或私有发布使用的升级包地址
 --upgrade-sha256 HASH       可选的升级包下载摘要校验值

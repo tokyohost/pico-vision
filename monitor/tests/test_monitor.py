@@ -7,7 +7,12 @@ from unittest import mock
 from types import SimpleNamespace
 
 from pico_client import PicoJsonClient
-from pico_monitor import MonitorService, create_argument_parser, validate_arguments
+from pico_monitor import (
+    MonitorService,
+    create_argument_parser,
+    log_monitor_version,
+    validate_arguments,
+)
 from system_monitor import PowerMonitor, SystemInformationCollector
 
 
@@ -80,6 +85,25 @@ class PicoClientTest(unittest.TestCase):
         """确认命令行可以显式开启开发模式。"""
         arguments = create_argument_parser().parse_args(["--dev"])
         self.assertTrue(arguments.dev)
+
+    def test_version_argument_prints_build_version(self):
+        """确认命令行版本参数输出统一构建版本并成功退出。"""
+        with mock.patch("pico_monitor.MONITOR_VERSION", "1.2.3"):
+            with mock.patch("sys.stdout") as output:
+                with self.assertRaises(SystemExit) as exit_context:
+                    create_argument_parser().parse_args(["--version"])
+
+        self.assertEqual(exit_context.exception.code, 0)
+        output.write.assert_called_once_with("pico-monitor 1.2.3\n")
+        output.flush.assert_called_once_with()
+
+    def test_startup_log_contains_build_version(self):
+        """确认服务启动日志包含当前 Monitor 构建版本。"""
+        with mock.patch("pico_monitor.MONITOR_VERSION", "1.2.3"):
+            with self.assertLogs("pico-monitor", level="INFO") as logs:
+                log_monitor_version()
+
+        self.assertIn("Pico Monitor 启动：版本=1.2.3", logs.output[0])
 
     def test_development_mode_stops_reconnecting_without_pico(self):
         """确认开发模式首次连接失败后直接进入 JSON 输出循环。"""

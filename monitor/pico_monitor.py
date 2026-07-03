@@ -26,6 +26,32 @@ BUILTIN_LCD_STYLES = (
 )
 
 
+def _write_version_to_console(version_text):
+    """向当前命令行输出版本，并兼容 Windows 无控制台打包程序。"""
+    output = getattr(sys, "stdout", None)
+    if output is None and sys.platform == "win32" and getattr(sys, "frozen", False):
+        try:
+            import ctypes
+
+            ctypes.windll.kernel32.AttachConsole(-1)
+            output = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+        except (OSError, AttributeError):
+            output = None
+    if output is not None:
+        output.write(version_text + "\n")
+        output.flush()
+
+
+class MonitorVersionAction(argparse.Action):
+    """输出 Monitor 构建版本后立即结束命令行程序。"""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        """打印统一构建版本，并以成功状态退出参数解析。"""
+        del namespace, values, option_string
+        _write_version_to_console("pico-monitor {}".format(MONITOR_VERSION))
+        parser.exit()
+
+
 def environment_flag(name, default=False):
     """读取常见布尔环境变量值，无法识别时使用默认值。"""
     value = os.getenv(name)
@@ -37,6 +63,12 @@ def environment_flag(name, default=False):
 def create_argument_parser():
     """创建监控程序统一命令行参数解析器。"""
     parser = argparse.ArgumentParser(description="Pico LCD 系统硬件监控程序")
+    parser.add_argument(
+        "--version",
+        action=MonitorVersionAction,
+        nargs=0,
+        help="显示 Monitor 版本号并退出",
+    )
     parser.add_argument("--port", default=os.getenv("PICO_MONITOR_PORT") or None, help="固定串口名称，留空时自动发现")
     parser.add_argument("--ping-target", default=os.getenv("PICO_MONITOR_PING_TARGET", "www.baidu.com"), help="网络延迟检测目标")
     parser.add_argument("--interval", type=float, default=float(os.getenv("PICO_MONITOR_INTERVAL", "0.9")), help="采集和发送间隔，单位为秒")
@@ -215,6 +247,11 @@ def configure_logging():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 
+def log_monitor_version():
+    """在服务启动阶段记录当前 Monitor 构建版本。"""
+    LOGGER.info("Pico Monitor 启动：版本=%s", MONITOR_VERSION)
+
+
 def validate_arguments(arguments):
     """校验通用间隔以及启用 qBittorrent 后的必填连接参数。"""
     if arguments.interval <= 0 or arguments.reconnect_interval <= 0 or arguments.qbittorrent_interval <= 0:
@@ -240,6 +277,7 @@ def main():
 
         return WindowsTrayApplication([*sys.argv[1:], "--worker"]).run()
     configure_logging()
+    log_monitor_version()
     service = MonitorService(arguments)
     signal.signal(signal.SIGINT, service.stop)
     if hasattr(signal, "SIGTERM"):
