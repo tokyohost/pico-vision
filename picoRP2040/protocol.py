@@ -56,6 +56,7 @@ class JsonProtocol:
         # 因此轮询文本流、读取二进制流，兼顾 Linux CDC 与 Windows 串口行为。
         self._poller.register(self._input, select.POLLIN)
         self._buffer = bytearray()
+        self._read_buffer = bytearray(SERIAL_READ_CHUNK_SIZE)
         self._upgrade_manager = upgrade_manager
 
     def write(self, data):
@@ -73,18 +74,13 @@ class JsonProtocol:
         """在固定读取预算内接收数据并返回最新完整 JSON 对象。"""
         read_count = 0
         while read_count < SERIAL_READ_BUDGET and self._poller.poll(0):
-            # Monitor 会把协议行补齐为固定块，批量读取不会在尾块等待。
-            read_size = min(
-                SERIAL_READ_CHUNK_SIZE,
-                SERIAL_READ_BUDGET - read_count,
-            )
-            chunk = self._reader.read(read_size)
-            if not chunk:
+            # readinto() 按非阻塞流语义返回当前可用字节数，并复用固定缓冲区，
+            # 避免 read(n) 在 Linux USB CDC 下等待凑满 n 字节及反复分配对象。
+            received = self._reader.readinto(self._read_buffer)
+            if not received:
                 break
-            if isinstance(chunk, str):
-                chunk = chunk.encode("ascii")
-            self._buffer.extend(chunk)
-            read_count += len(chunk)
+            self._buffer.extend(memoryview(self._read_buffer)[:received])
+            read_count += received
             maximum_size = max(MAX_JSON_SIZE + len(JSON_PREFIX) + 1, MAX_UPGRADE_LINE_SIZE)
             if len(self._buffer) > maximum_size:
                 self._buffer = bytearray()
