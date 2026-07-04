@@ -152,7 +152,9 @@ def main():
     try:
         from upgrade_manager import UpgradeManager
 
-        protocol = JsonProtocol()
+        from usb_transport import create_data_cdc
+
+        protocol = JsonProtocol(stream=create_data_cdc())
         protocol._upgrade_manager = UpgradeManager(protocol.write_upgrade_response)
         Application(protocol).run()
     except Exception as error:
@@ -165,6 +167,13 @@ def main():
             sys.print_exception(error)
         except AttributeError:
             pass
+        if isinstance(error, MemoryError):
+            # MemoryError 后堆往往已高度碎片化，继续运行无法恢复。
+            # 先给独立 CDC 留出发送 FATAL 的时间，再硬复位重建堆。
+            time.sleep_ms(300)
+            import machine
+
+            machine.reset()
         while True:
             time.sleep_ms(1000)
             if protocol is not None:

@@ -1,12 +1,14 @@
 # Pico LCD 系统硬件监控程序
 
-本目录提供独立电脑端监控程序，兼容 `pico-project/picoRP2040` 固件的 `JSON:` 行协议。程序通过操作系统内核公开接口采集 CPU、内存、磁盘、网络、运行时间和可用温度传感器数据，经 USB 串口持续发送给 Pico RP2040。
+本目录提供独立电脑端监控程序，使用 PV1 协议经 Pico 的独立 USB CDC 数据接口传输系统快照。内置 USB CDC 仅保留给 MicroPython REPL，不承载监控数据。
 
 本程序不安装自定义内核驱动：Windows 使用系统性能接口和串口驱动，Linux 使用 `/proc`、`/sys` 及系统串口驱动。这样无需驱动签名，也不会绑定特定内核版本。
 
 磁盘明细通过 JSON 顶层 `disks` 数组发送。同一物理盘的多个分区会合并，字段包括 `name`、`devices`、`mountpoints`、`filesystems`、`used_bytes`、`total_bytes`、`percent`、`temperature_c` 和 `health`。同时，面向 Pico 显示的物理磁盘统计通过顶层 `physical_disks` 数组发送，每块物理盘也包含 `health`、温度、容量、占用率、实时读写速度 `read_bps`/`write_bps`，以及固定长度的读写速度历史 `read_history`/`write_history`。程序在启动时检查 SMART，之后每 30 分钟复查；Linux 需要安装 `smartmontools`。`health` 取值为：`0` 未知、`1` 健康、`2` 注意、`3` 警告、`4` 严重、`5` 失败。分级以 smartmontools 总体自检结论为最高优先级，并结合 NVMe Critical Warning、寿命百分比和 ATA 重映射、待映射及不可校正扇区等公开指标；无法读取 SMART、USB 硬盘盒不支持或权限不足时返回 `0`。
 
 网络统计通过 `network.receive_bytes` 提供已下载总流量，通过 `network.transmit_bytes` 提供已上传总流量，单位均为字节。
+
+所有 `history`、`*_history` 字段均以一秒为固定时间格，表示最近 24 秒，不受 `PICO_MONITOR_INTERVAL` 或 qBittorrent 采集间隔影响。同一秒内的多次采集保留峰值，避免折线尖峰被后续低值擦除；跨过多秒时，缺失秒使用上一秒数值补齐。
 
 开启并配置 qBittorrent Web UI 后，程序会在后台通过 Web API 采集 `qbittorrent` 顶层指标，不会阻塞系统指标发送。字段包括实时上传下载速度及历史、会话与历史流量、历史分享率、会话丢弃、连接用户、下载目录剩余空间和种子状态数量。完整配置与字段说明见 [qbittorrent_config.md](qbittorrent_config.md)。
 
@@ -34,7 +36,7 @@ python pico_monitor.py
 
 ```text
 --port COM3                 固定 Windows 串口
---port /dev/ttyACM0         固定 Linux 串口
+--port /dev/ttyACM1         固定 Linux 数据 CDC；建议留空自动发现
 --ping-target 1.1.1.1       指定延迟探测目标，默认 www.baidu.com
 --interval 1.0              指定采集发送间隔
 --reconnect-interval 3.0    指定断线重连间隔
@@ -125,7 +127,7 @@ pico-monitor --version
 
 ## Pico 固件要求
 
-先将 `pico-project/picoRP2040` 下的 MicroPython 程序部署到 Pico。主机端会发送 `PING:PICO_LCD?` 完成设备识别，再发送 `JSON:` 加单行 JSON；固件应返回 `ACK:JSON`。
+先将 `picoRP2040` 完整目录部署到运行 MicroPython 1.23 或更新版本的 Pico。启动后会枚举两个 CDC 串口：内置接口用于 REPL，新增接口用于 PV1。Monitor 会通过 PING/PONG 自动找到数据接口，Debian 配置中应将 `PICO_MONITOR_PORT` 留空。
 
 ## Pico 在线升级
 
@@ -150,10 +152,10 @@ sudo systemctl start pico-monitor
 sudo journalctl -u pico-monitor -n 100 --no-pager
 ```
 
-程序会根据已安装 Monitor 的版本号，从同版本 GitHub Release 下载 `pico-upgrade-v<版本>.zip`。如果机器连接了多个串口设备，或者自动发现没有选中目标 Pico，可查看 `/etc/pico-monitor.conf` 中配置的端口，并在命令中显式指定：
+程序会根据已安装 Monitor 的版本号，从同版本 GitHub Release 下载 `pico-upgrade-v<版本>.zip`。如果必须显式指定端口，应选择能响应 PV1 PONG 的数据 CDC，而不是 REPL CDC：
 
 ```bash
-sudo /usr/bin/pico-monitor --port /dev/ttyACM0 --upgrade-pico
+sudo /usr/bin/pico-monitor --port /dev/ttyACM1 --upgrade-pico
 ```
 
 升级成功时终端会依次显示 `ACK:UPGRADE:BEGIN:<版本>`、文件传输确认、`PROGRESS:UPGRADE:INSTALL:100` 和 `ACK:UPGRADE:COMPLETE:<版本>`。Pico 随后自动重启；重新启动 systemd 服务后，可通过日志确认出现 `PONG:PICO_LCD` 和 `ACK:JSON`。

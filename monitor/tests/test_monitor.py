@@ -43,6 +43,8 @@ class FakeSerial:
         self.port = "TEST"
         self.written = bytearray()
         self.write_calls = 0
+        self.reset_input_calls = 0
+        self.reset_output_calls = 0
 
     def write(self, data):
         """记录主机写入的协议字节。"""
@@ -52,6 +54,12 @@ class FakeSerial:
 
     def flush(self):
         """模拟立即完成串口发送。"""
+
+    def reset_input_buffer(self):
+        self.reset_input_calls += 1
+
+    def reset_output_buffer(self):
+        self.reset_output_calls += 1
 
     def readline(self):
         """返回 Pico JSON 接收确认。"""
@@ -68,6 +76,16 @@ class BadJsonSerial(FakeSerial):
     def readline(self):
         """返回可恢复的 JSON 解析错误。"""
         return build_frame("ERR", b"BAD_JSON")
+
+
+class FatalMemorySerial(FakeSerial):
+    """模拟 Pico 堆内存不足并即将自动重启。"""
+
+    def readline(self):
+        return build_frame(
+            "EVENT",
+            b"FATAL:MemoryError:memory allocation failed, allocating 25601 bytes",
+        )
 
 
 class HandshakeSerial(FakeSerial):
@@ -117,6 +135,14 @@ class PicoClientTest(unittest.TestCase):
         self.assertTrue(client.is_connected)
         self.assertTrue(any("数据帧丢弃" in message for message in logs.output))
 
+    def test_memory_error_event_triggers_immediate_reconnect(self):
+        """Pico 内存不足时不再等待 ACK 超时。"""
+        client = PicoJsonClient()
+        client.serial = FatalMemorySerial()
+
+        with self.assertRaisesRegex(RuntimeError, "正在自动重启"):
+            client.send({"version": 1})
+
     def test_build_packet_for_development_mode(self):
         """确认开发模式打印内容与真实串口 JSON 协议行一致。"""
         packet = PicoJsonClient.build_packet({"host": "开发机"})
@@ -149,7 +175,7 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual(parse_frame(PING_COMMAND), ("PING", b""))
 
     def test_handshake_sends_only_pv1_ping(self):
-        """握手只发送一条 PV1 PING。"""
+        """独立 CDC 握手只发送一条 PV1 PING。"""
         device = HandshakeSerial([
             build_frame("PONG", json.dumps({
                 "board_model": "rp2040_typec",

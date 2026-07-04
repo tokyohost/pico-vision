@@ -26,6 +26,8 @@ import subprocess
 import threading
 import time
 from collections import deque
+
+from history import update_per_second
 from pathlib import Path
 
 import psutil
@@ -422,6 +424,7 @@ class SystemInformationCollector:
         self.histories = {name: deque([0] * HISTORY_LENGTH, maxlen=HISTORY_LENGTH) for name in ("cpu", "memory", "upload", "download")}
         self.gpu_history = deque(maxlen=HISTORY_LENGTH)
         self.power_history = deque(maxlen=HISTORY_LENGTH)
+        self.history_states = {}
         self.last_network = self.last_network_time = None
         self.last_network_interface = None
         self.last_disk_io = None
@@ -627,10 +630,12 @@ class SystemInformationCollector:
                 {
                     "read": deque([0] * HISTORY_LENGTH, maxlen=HISTORY_LENGTH),
                     "write": deque([0] * HISTORY_LENGTH, maxlen=HISTORY_LENGTH),
+                    "read_state": {},
+                    "write_state": {},
                 },
             )
-            histories["read"].append(read_bps)
-            histories["write"].append(write_bps)
+            update_per_second(histories["read"], read_bps, histories["read_state"], now)
+            update_per_second(histories["write"], write_bps, histories["write_state"], now)
             disk["read_bps"] = read_bps
             disk["write_bps"] = write_bps
             disk["read_history"] = list(histories["read"])
@@ -1263,12 +1268,28 @@ class SystemInformationCollector:
         power = self.power_monitor.snapshot()
         gpu_percent, gpu_version = self.gpu_monitor.snapshot()
         ping, online = self.ping_monitor.snapshot()
+        history_now = time.monotonic()
         for name, value in (("cpu", cpu), ("memory", memory.percent), ("upload", network[0]), ("download", network[1])):
-            self.histories[name].append(round(value, 1))
+            update_per_second(
+                self.histories[name],
+                round(value, 1),
+                self.history_states.setdefault(name, {}),
+                history_now,
+            )
         if power["watts"] is not None:
-            self.power_history.append(power["watts"])
+            update_per_second(
+                self.power_history,
+                power["watts"],
+                self.history_states.setdefault("power", {}),
+                history_now,
+            )
         if gpu_percent is not None and gpu_version != self.last_gpu_version:
-            self.gpu_history.append(gpu_percent)
+            update_per_second(
+                self.gpu_history,
+                gpu_percent,
+                self.history_states.setdefault("gpu", {}),
+                history_now,
+            )
         self.last_gpu_version = gpu_version
         power["history"] = list(self.power_history)
         return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total}, "disks": disks, "physical_disks": physical_disks, "gpu": {"percent": gpu_percent, "history": list(self.gpu_history)} if gpu_percent is not None else None, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "transmit_bytes": network[2], "receive_bytes": network[3], "link_speed_mbps": self._network_link_speed(local_ip), "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": local_ip}}

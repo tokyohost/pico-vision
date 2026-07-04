@@ -24,7 +24,7 @@ import time
 import psutil
 import serial
 
-from pico_client import PicoJsonClient
+from pico_client import PicoJsonClient, PicoRestartingError
 from pico_upgrade import PicoFirmwareUpgrader, PicoUpgradeDownloader, PicoUpgradePackage
 from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
 from monitor_update import LinuxDebUpdater
@@ -86,7 +86,7 @@ def create_argument_parser():
     )
     parser.add_argument("--port", default=os.getenv("PICO_MONITOR_PORT") or None, help="固定串口名称，留空时自动发现")
     parser.add_argument("--ping-target", default=os.getenv("PICO_MONITOR_PING_TARGET", "www.baidu.com"), help="网络延迟检测目标")
-    parser.add_argument("--interval", type=float, default=float(os.getenv("PICO_MONITOR_INTERVAL", "0.9")), help="采集和发送间隔，单位为秒")
+    parser.add_argument("--interval", type=float, default=float(os.getenv("PICO_MONITOR_INTERVAL", "0.5")), help="采集和发送间隔，单位为秒")
     parser.add_argument("--reconnect-interval", type=float, default=float(os.getenv("PICO_MONITOR_RECONNECT_INTERVAL", "3.0")), help="设备断线后的重连间隔，单位为秒")
     parser.add_argument("--screen-rotation", type=int, choices=(0, 180), default=int(os.getenv("PICO_MONITOR_SCREEN_ROTATION", "0")), help="Pico 屏幕旋转角度，可选 0 或 180")
     parser.add_argument("--network-unit", choices=("MB", "Mbps"), default=os.getenv("PICO_MONITOR_NETWORK_UNIT", "MB"), help="网络速率模式：MB 自动使用 B/KB/MB/GB，Mbps 自动使用 bps/Kbps/Mbps/Gbps")
@@ -179,6 +179,9 @@ class MonitorService:
             except (OSError, RuntimeError, serial.SerialException) as error:
                 LOGGER.warning("监控通信异常：%s；等待 USB 端口插入", error)
                 self.client.close()
+                if isinstance(error, PicoRestartingError):
+                    self.stopping.wait(self.arguments.reconnect_interval)
+                    continue
                 if not self._wait_for_usb_addition(ports_before_probe):
                     break
                 LOGGER.info(

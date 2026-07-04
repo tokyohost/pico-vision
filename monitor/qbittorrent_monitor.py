@@ -22,6 +22,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import deque
+
+from history import update_per_second
 from http.cookiejar import CookieJar
 
 
@@ -135,6 +137,7 @@ class QbittorrentMonitor:
         self.interval = max(0.5, float(interval))
         self.upload_history = deque([0] * QBITTORRENT_HISTORY_LENGTH, maxlen=QBITTORRENT_HISTORY_LENGTH)
         self.download_history = deque([0] * QBITTORRENT_HISTORY_LENGTH, maxlen=QBITTORRENT_HISTORY_LENGTH)
+        self.history_states = {"upload": {}, "download": {}}
         self.lock = threading.Lock()
         self.value = self._empty_snapshot()
         self.started = False
@@ -209,8 +212,9 @@ class QbittorrentMonitor:
         """将 API 原始数据转换为稳定的监控协议字段。"""
         upload_bps = max(0, int(transfer.get("up_info_speed") or 0))
         download_bps = max(0, int(transfer.get("dl_info_speed") or 0))
-        self.upload_history.append(upload_bps)
-        self.download_history.append(download_bps)
+        now = time.monotonic()
+        update_per_second(self.upload_history, upload_bps, self.history_states["upload"], now)
+        update_per_second(self.download_history, download_bps, self.history_states["download"], now)
         return {
             "enabled": True, "online": True, "error": None,
             "connection_status": str(

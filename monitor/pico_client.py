@@ -92,6 +92,10 @@ SERIAL_WRITE_CHUNK_SIZE = 512
 LOGGER = logging.getLogger("pico-monitor.serial")
 
 
+class PicoRestartingError(RuntimeError):
+    """Pico reported a fatal condition and is restarting itself."""
+
+
 class PicoJsonClient:
     """封装 Pico LCD 自动发现、握手、数据发送和连接清理。"""
 
@@ -115,7 +119,17 @@ class PicoJsonClient:
 
     def connect(self):
         """连接固定串口，或枚举所有串口并通过协议握手识别设备。"""
-        candidates = [self.configured_port] if self.configured_port else [item.device for item in list_ports.comports()]
+        if self.configured_port:
+            candidates = [self.configured_port]
+        else:
+            # 复合 USB 设备中自定义数据 CDC 的接口序号高于内置
+            # REPL CDC；优先探测高序号接口，仍以 PONG 作为最终判据。
+            ports = list(list_ports.comports())
+            ports.sort(
+                key=lambda item: (item.location or "", item.device),
+                reverse=True,
+            )
+            candidates = [item.device for item in ports]
         LOGGER.info("[串口发现] 候选端口：%s", ", ".join(candidates) if candidates else "无")
         errors = []
         for port in candidates:
@@ -123,6 +137,7 @@ class PicoJsonClient:
                 LOGGER.info("[串口打开] 正在打开 %s，波特率 115200", port)
                 device = serial.Serial(port, 115200, timeout=0.3, write_timeout=10)
                 time.sleep(1.0)
+                device.reset_input_buffer()
                 device.reset_output_buffer()
                 if self._handshake(device):
                     self.serial = device
@@ -161,12 +176,13 @@ class PicoJsonClient:
                 PING_COMMAND,
                 PING_COMMAND.hex(" "),
             )
+            wire_ping = PING_COMMAND
             written = 0
-            while written < len(PING_COMMAND):
-                count = device.write(PING_COMMAND[written:])
+            while written < len(wire_ping):
+                count = device.write(wire_ping[written:])
                 if not count:
                     raise serial.SerialTimeoutException(
-                        f"握手包仅发送 {written}/{len(PING_COMMAND)} 字节"
+                        f"握手包仅发送 {written}/{len(wire_ping)} 字节"
                     )
                 written += count
             device.flush()
@@ -175,7 +191,7 @@ class PicoJsonClient:
                 device.port,
                 attempt,
                 written,
-                len(PING_COMMAND),
+                len(wire_ping),
             )
             deadline = time.monotonic() + 1.2
             while time.monotonic() < deadline:
@@ -300,6 +316,8 @@ class PicoJsonClient:
                     self.port_name,
                 )
                 return
+            if frame and frame[0] == "EVENT" and frame[1].startswith(b"FATAL:MemoryError:"):
+                raise PicoRestartingError("Pico 内存不足，设备正在自动重启")
             if frame and frame[0] == "ERR":
                 raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
         LOGGER.error("[交互超时][%s] 5 秒内未收到 ACK:JSON", self.port_name)
