@@ -16,6 +16,7 @@
 
 import sys
 import time
+from array import array
 
 try:
     import uselect as select
@@ -42,6 +43,20 @@ from config import (
 )
 
 
+def _build_crc16_byte_table():
+    """生成仅占约 512 字节的 CRC-16/CCITT 字节查找表。"""
+    table = []
+    for value in range(256):
+        crc = value << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+        table.append(crc)
+    return array("H", table)
+
+
+CRC16_BYTE_TABLE = _build_crc16_byte_table()
+
+
 class JsonProtocol:
     """增量接收 ASCII 行，避免二进制控制字节触发 MicroPython 中断。"""
 
@@ -56,8 +71,10 @@ class JsonProtocol:
         # 因此轮询文本流、读取二进制流，兼顾 Linux CDC 与 Windows 串口行为。
         self._poller.register(self._input, select.POLLIN)
         self._buffer = bytearray()
-        self._read_buffer = bytearray(1)
+        self._read_buffer = bytearray(64)
         self._last_byte_ms = None
+        self._frame_started_ms = None
+        self._frame_read_calls = 0
         self._upgrade_manager = upgrade_manager
 
     def _write_raw(self, data):
@@ -80,14 +97,19 @@ class JsonProtocol:
         self._expire_partial_frame()
         read_count = 0
         while read_count < SERIAL_READ_BUDGET and self._poller.poll(0):
-            # poll() 只保证至少一个字节可读；读取一个字节可避免 USB CDC
-            # 的短写入令 readinto(64) 永久等待。
-            received = self._reader.readinto(self._read_buffer)
+            # 未同步时逐字节寻找 PV1 魔数；同步后，Monitor 保证每帧按 64
+            # 字节传输块补齐，因此可以安全批量读取，避免数千次单字节轮询。
+            read_size = 1
+            if self._buffer.startswith(b"PV1:"):
+                read_size = min(64 - len(self._buffer) % 64, SERIAL_READ_BUDGET - read_count)
+            received = self._reader.readinto(memoryview(self._read_buffer)[:read_size])
             if not received:
                 break
-            self._buffer.append(self._read_buffer[0])
+            self._buffer.extend(memoryview(self._read_buffer)[:received])
             self._last_byte_ms = self._ticks_ms()
             read_count += received
+            self._frame_read_calls += 1
+            self._synchronize_magic()
             maximum_size = max(MAX_JSON_SIZE + 64, MAX_UPGRADE_LINE_SIZE + 64)
             if len(self._buffer) > maximum_size:
                 self._buffer = bytearray()
@@ -111,6 +133,11 @@ class JsonProtocol:
             line_view = memoryview(self._buffer)[:newline]
             line = bytes(line_view)
             del line_view
+            receive_finished_ms = self._ticks_ms()
+            receive_elapsed_ms = self._elapsed_ms(
+                receive_finished_ms, self._frame_started_ms
+            )
+            frame_read_calls = self._frame_read_calls
             self._consume(newline + 1)
             # 串口可能先被 ModemManager 等程序写入无换行的探测字节；扫描魔数，
             # 从同一行中的首个 PV1 帧重新同步，而不是连合法帧一起丢弃。
@@ -118,7 +145,11 @@ class JsonProtocol:
             if frame_start >= 0:
                 line = line[frame_start:]
                 try:
+                    parse_started_ms = self._ticks_ms()
                     message_type, payload = self._parse_frame(line)
+                    parse_elapsed_ms = self._elapsed_ms(
+                        self._ticks_ms(), parse_started_ms
+                    )
                 except ValueError as error:
                     self._write_frame("ERR", str(error).encode("ascii"))
                     continue
@@ -126,7 +157,22 @@ class JsonProtocol:
                     self._write_pong()
                 elif message_type == "JSON":
                     try:
+                        json_started_ms = self._ticks_ms()
                         latest = json.loads(payload.decode("utf-8"))
+                        json_elapsed_ms = self._elapsed_ms(
+                            self._ticks_ms(), json_started_ms
+                        )
+                        timing = (
+                            "PROTOCOL_TIMING:TYPE=JSON:BYTES={}:READS={}:"
+                            "RX={}MS:FRAME_PARSE={}MS:JSON={}MS"
+                        ).format(
+                            len(line),
+                            frame_read_calls,
+                            receive_elapsed_ms,
+                            parse_elapsed_ms,
+                            json_elapsed_ms,
+                        )
+                        self._write_frame("EVENT", timing.encode("ascii"))
                         self._write_frame("ACK", b"JSON")
                     except (ValueError, UnicodeError):
                         self._write_frame("ERR", b"BAD_JSON")
@@ -145,6 +191,8 @@ class JsonProtocol:
         if count >= len(self._buffer):
             self._buffer = bytearray()
             self._last_byte_ms = None
+            self._frame_started_ms = None
+            self._frame_read_calls = 0
         else:
             self._buffer = bytearray(self._buffer[count:])
 
@@ -168,12 +216,10 @@ class JsonProtocol:
 
     @staticmethod
     def _crc16(data):
-        """计算 CRC-16/CCITT-FALSE。"""
+        """使用字节查表计算 CRC-16/CCITT-FALSE。"""
         crc = 0xFFFF
         for value in data:
-            crc ^= value << 8
-            for _ in range(8):
-                crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+            crc = ((crc << 8) & 0xFFFF) ^ CRC16_BYTE_TABLE[((crc >> 8) ^ value) & 0xFF]
         return crc
 
     @classmethod
@@ -215,6 +261,13 @@ class JsonProtocol:
         ticks_ms = getattr(time, "ticks_ms", None)
         return ticks_ms() if ticks_ms else int(time.monotonic() * 1000)
 
+    @staticmethod
+    def _elapsed_ms(now, started):
+        if started is None:
+            return 0
+        ticks_diff = getattr(time, "ticks_diff", None)
+        return ticks_diff(now, started) if ticks_diff else now - started
+
     def _expire_partial_frame(self):
         """丢弃超过一秒没有新字节的半包，恢复协议同步。"""
         if not self._buffer or self._last_byte_ms is None:
@@ -225,4 +278,18 @@ class JsonProtocol:
         if idle_ms >= 1000:
             self._buffer = bytearray()
             self._last_byte_ms = None
+            self._frame_started_ms = None
+            self._frame_read_calls = 0
             self._write_frame("ERR", b"FRAME_TIMEOUT")
+
+    def _synchronize_magic(self):
+        """丢弃魔数之前的串口探测垃圾，并保留可能的魔数前缀。"""
+        start = self._buffer.find(b"PV1:")
+        if start > 0:
+            self._buffer = bytearray(self._buffer[start:])
+            self._frame_started_ms = self._ticks_ms()
+            self._frame_read_calls = 1
+        elif start == 0 and self._frame_started_ms is None:
+            self._frame_started_ms = self._ticks_ms()
+        elif start < 0 and len(self._buffer) > 3:
+            self._buffer = bytearray(self._buffer[-3:])

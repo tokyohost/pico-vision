@@ -125,7 +125,9 @@ class Application:
                 self._next_render = time.ticks_add(
                     now, RENDER_INTERVAL_MS
                 )
-            if self._renderer.update_pending():
+            # 每绘制一个区域就返回主循环轮询 USB，避免连续绘制多个区域期间
+            # 主机串口写入因 Pico 不消费数据而阻塞数百毫秒。
+            if self._renderer.update_pending(max_regions=1):
                 canvas_us, lcd_us, region_count = self._renderer.last_profile()
                 memory_used, memory_total = memory_usage()
                 response = (

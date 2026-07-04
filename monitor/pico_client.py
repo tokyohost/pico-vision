@@ -17,6 +17,7 @@
 import json
 import logging
 import time
+from array import array
 
 import serial
 from serial.tools import list_ports
@@ -24,15 +25,28 @@ from serial.tools import list_ports
 
 FRAME_MAGIC = b"PV1"
 FRAME_MAX_PAYLOAD = 16 * 1024
+TRANSPORT_BLOCK_SIZE = 64
+
+
+def _build_crc16_byte_table():
+    """生成 CRC-16/CCITT 的字节查找表。"""
+    table = []
+    for value in range(256):
+        crc = value << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+        table.append(crc)
+    return array("H", table)
+
+
+CRC16_BYTE_TABLE = _build_crc16_byte_table()
 
 
 def crc16_ccitt(data):
-    """计算协议帧使用的 CRC-16/CCITT-FALSE。"""
+    """使用字节查表计算 CRC-16/CCITT-FALSE。"""
     crc = 0xFFFF
     for value in data:
-        crc ^= value << 8
-        for _ in range(8):
-            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+        crc = ((crc << 8) & 0xFFFF) ^ CRC16_BYTE_TABLE[((crc >> 8) ^ value) & 0xFF]
     return crc
 
 
@@ -42,7 +56,8 @@ def build_frame(message_type, payload=b""):
     payload = bytes(payload)
     checksum = crc16_ccitt(kind + b":" + payload)
     line = b":".join((FRAME_MAGIC, kind, str(len(payload)).encode("ascii"), f"{checksum:04X}".encode("ascii"), payload))
-    return line + b"\n"
+    padding = -(len(line) + 1) % TRANSPORT_BLOCK_SIZE
+    return line + b" " * padding + b"\n"
 
 
 def parse_frame(line):
@@ -62,7 +77,7 @@ def parse_frame(line):
     if length < 0 or length > FRAME_MAX_PAYLOAD or len(remainder) < length:
         raise ValueError("BAD_FRAME_LENGTH")
     payload, trailer = remainder[:length], remainder[length:]
-    if trailer:
+    if trailer.strip(b" "):
         raise ValueError("BAD_FRAME_TRAILER")
     if crc16_ccitt(kind + b":" + payload) != expected_crc:
         raise ValueError("BAD_FRAME_CRC")
@@ -193,8 +208,14 @@ class PicoJsonClient:
     @staticmethod
     def build_packet(snapshot):
         """把 JSON 编码为带长度与 CRC 的 PV1 数据帧。"""
+        wire_snapshot = snapshot
+        if snapshot.get("physical_disks") is not None and "disks" in snapshot:
+            # physical_disks 已包含 Pico 样式所需的磁盘指标；避免在线路上再发送
+            # 内容高度重复的逻辑 disks 列表，但不修改采集器持有的原始快照。
+            wire_snapshot = dict(snapshot)
+            wire_snapshot.pop("disks", None)
         payload = json.dumps(
-            snapshot,
+            wire_snapshot,
             ensure_ascii=True,
             separators=(",", ":"),
         ).encode("utf-8")
@@ -204,23 +225,46 @@ class PicoJsonClient:
         """分块发送单行 JSON 数据，并等待 Pico 返回接收确认。"""
         if not self.is_connected:
             raise RuntimeError("Pico 串口尚未连接")
+        build_started = time.monotonic()
         packet = memoryview(self.build_packet(snapshot))
+        build_elapsed_ms = (time.monotonic() - build_started) * 1000
         LOGGER.info("[Monitor -> Pico][%s][JSON][%d 字节] %s", self.port_name, len(packet), bytes(packet).decode("utf-8", errors="replace").rstrip())
         send_started = time.monotonic()
         chunk_count = 0
+        write_elapsed_ms = 0.0
+        slowest_write_ms = 0.0
         for position in range(0, len(packet), SERIAL_WRITE_CHUNK_SIZE):
-            self.serial.write(
-                packet[position:position + SERIAL_WRITE_CHUNK_SIZE]
-            )
+            chunk = packet[position:position + SERIAL_WRITE_CHUNK_SIZE]
+            write_started = time.monotonic()
+            written = self.serial.write(chunk)
+            chunk_elapsed_ms = (time.monotonic() - write_started) * 1000
+            write_elapsed_ms += chunk_elapsed_ms
+            slowest_write_ms = max(slowest_write_ms, chunk_elapsed_ms)
             chunk_count += 1
+            LOGGER.info(
+                "[协议耗时][%s][主机写入 %d/%d] 请求=%d 字节，实际=%s 字节，耗时=%.1f ms",
+                self.port_name,
+                chunk_count,
+                (len(packet) + SERIAL_WRITE_CHUNK_SIZE - 1) // SERIAL_WRITE_CHUNK_SIZE,
+                len(chunk),
+                written,
+                chunk_elapsed_ms,
+            )
+        flush_started = time.monotonic()
         self.serial.flush()
+        flush_elapsed_ms = (time.monotonic() - flush_started) * 1000
         send_elapsed_ms = (time.monotonic() - send_started) * 1000
         LOGGER.info(
-            "[Monitor -> Pico][%s][发送完成] 共 %d 个数据块，耗时 %.1f ms",
+            "[协议耗时][%s][主机汇总] 构帧=%.1f ms，write合计=%.1f ms，最慢write=%.1f ms，flush=%.1f ms，发送阶段=%.1f ms，共%d块",
             self.port_name,
-            chunk_count,
+            build_elapsed_ms,
+            write_elapsed_ms,
+            slowest_write_ms,
+            flush_elapsed_ms,
             send_elapsed_ms,
+            chunk_count,
         )
+        ack_wait_started = time.monotonic()
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             response = self.serial.readline().strip()
@@ -231,7 +275,14 @@ class PicoJsonClient:
             except ValueError as error:
                 raise RuntimeError(f"Pico 返回损坏协议帧：{error}") from error
             if frame == ("ACK", b"JSON"):
-                LOGGER.info("[交互完成][%s] Pico 已确认本次 JSON", self.port_name)
+                ack_wait_ms = (time.monotonic() - ack_wait_started) * 1000
+                total_ms = (time.monotonic() - build_started) * 1000
+                LOGGER.info(
+                    "[协议耗时][%s][交互完成] ACK等待=%.1f ms，构帧到ACK总计=%.1f ms",
+                    self.port_name,
+                    ack_wait_ms,
+                    total_ms,
+                )
                 return
             if frame == ("ERR", b"BAD_JSON"):
                 LOGGER.warning(

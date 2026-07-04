@@ -125,6 +125,19 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual(message_type, "JSON")
         self.assertIn(b'"host"', payload)
 
+    def test_wire_packet_omits_duplicate_logical_disks(self):
+        """已有物理磁盘列表时不重复发送逻辑磁盘列表。"""
+        snapshot = {
+            "disks": [{"name": "logical"}],
+            "physical_disks": [{"name": "physical"}],
+        }
+
+        _, payload = parse_frame(PicoJsonClient.build_packet(snapshot))
+        decoded = json.loads(payload)
+        self.assertNotIn("disks", decoded)
+        self.assertEqual(decoded["physical_disks"], snapshot["physical_disks"])
+        self.assertIn("disks", snapshot)
+
     def test_ping_uses_pv1_frame(self):
         """握手使用带长度与 CRC 的 PV1 帧。"""
         self.assertTrue(PING_COMMAND.startswith(b"PV1:PING:"))
