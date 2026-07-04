@@ -19,7 +19,6 @@ import logging
 import time
 import zlib
 import base64
-import os
 from array import array
 
 import serial
@@ -89,8 +88,7 @@ def parse_frame(line):
 
 
 PING_COMMAND = build_frame("PING")
-SERIAL_WRITE_CHUNK_SIZE = 511
-LINUX_CDC_SETTLE_SECONDS = 0.002
+SERIAL_WRITE_CHUNK_SIZE = 512
 LOGGER = logging.getLogger("pico-monitor.serial")
 
 
@@ -117,16 +115,7 @@ class PicoJsonClient:
 
     def connect(self):
         """连接固定串口，或枚举所有串口并通过协议握手识别设备。"""
-        if self.configured_port:
-            candidates = [self.configured_port]
-        else:
-            candidates = [
-                item.device
-                for item in list_ports.comports()
-                if os.name != "posix"
-                or item.vid is not None
-                or item.device.startswith(("/dev/ttyACM", "/dev/ttyUSB"))
-            ]
+        candidates = [self.configured_port] if self.configured_port else [item.device for item in list_ports.comports()]
         LOGGER.info("[串口发现] 候选端口：%s", ", ".join(candidates) if candidates else "无")
         errors = []
         for port in candidates:
@@ -134,19 +123,7 @@ class PicoJsonClient:
                 LOGGER.info("[串口打开] 正在打开 %s，波特率 115200", port)
                 device = serial.Serial(port, 115200, timeout=0.3, write_timeout=10)
                 time.sleep(1.0)
-                device.reset_input_buffer()
                 device.reset_output_buffer()
-                if os.name == "posix":
-                    # 用完整无害块结束 Pico 端可能由先前短写入留下的半包，随后
-                    # 等待协议的 1 秒半包超时完成状态复位。
-                    device.write(b"\n" * (TRANSPORT_BLOCK_SIZE - 1))
-                    device.flush()
-                    time.sleep(LINUX_CDC_SETTLE_SECONDS)
-                    device.write(b"\n")
-                    device.flush()
-                    time.sleep(1.05)
-                    device.reset_input_buffer()
-                    LOGGER.info("[串口同步] %s 已清理主机缓冲并刷新 Pico 半包状态", port)
                 if self._handshake(device):
                     self.serial = device
                     LOGGER.info(
@@ -186,19 +163,12 @@ class PicoJsonClient:
             )
             written = 0
             while written < len(PING_COMMAND):
-                remaining = len(PING_COMMAND) - written
-                chunk_size = min(SERIAL_WRITE_CHUNK_SIZE, remaining)
-                if chunk_size % TRANSPORT_BLOCK_SIZE == 0:
-                    chunk_size -= 1
-                count = device.write(PING_COMMAND[written:written + chunk_size])
+                count = device.write(PING_COMMAND[written:])
                 if not count:
                     raise serial.SerialTimeoutException(
                         f"握手包仅发送 {written}/{len(PING_COMMAND)} 字节"
                     )
                 written += count
-                if os.name == "posix":
-                    device.flush()
-                    time.sleep(LINUX_CDC_SETTLE_SECONDS)
             device.flush()
             LOGGER.info(
                 "[Monitor -> Pico][%s][握手 %d/3][实际发送 %d/%d 字节]",
@@ -239,47 +209,31 @@ class PicoJsonClient:
         }
 
     @staticmethod
-    def build_json_payload(snapshot):
-        """生成实际在线路上传输的紧凑 JSON。"""
+    def build_packet(snapshot):
+        """把 JSON 编码为带长度与 CRC 的 PV1 数据帧。"""
         wire_snapshot = snapshot
         if snapshot.get("physical_disks") is not None and "disks" in snapshot:
             # physical_disks 已包含 Pico 样式所需的磁盘指标；避免在线路上再发送
             # 内容高度重复的逻辑 disks 列表，但不修改采集器持有的原始快照。
             wire_snapshot = dict(snapshot)
             wire_snapshot.pop("disks", None)
-        return json.dumps(
+        payload = json.dumps(
             wire_snapshot,
             ensure_ascii=True,
             separators=(",", ":"),
         ).encode("utf-8")
-
-    @staticmethod
-    def build_packet_from_json(payload):
-        """压缩 JSON 并封装为 JSONZ 帧。"""
         # 使用 512 字节 zlib 窗口，避免 RP2040 解压时申请默认的 32KB 连续堆。
         compressor = zlib.compressobj(level=6, wbits=ZLIB_WINDOW_BITS)
         compressed = compressor.compress(payload) + compressor.flush()
         return build_frame("JSONZ", base64.b64encode(compressed))
-
-    @classmethod
-    def build_packet(cls, snapshot):
-        """把快照编码为带长度与 CRC 的 PV1 JSONZ 帧。"""
-        return cls.build_packet_from_json(cls.build_json_payload(snapshot))
 
     def send(self, snapshot):
         """分块发送单行 JSON 数据，并等待 Pico 返回接收确认。"""
         if not self.is_connected:
             raise RuntimeError("Pico 串口尚未连接")
         build_started = time.monotonic()
-        json_payload = self.build_json_payload(snapshot)
-        packet = memoryview(self.build_packet_from_json(json_payload))
+        packet = memoryview(self.build_packet(snapshot))
         build_elapsed_ms = (time.monotonic() - build_started) * 1000
-        LOGGER.info(
-            "[Monitor -> Pico][%s][JSON原文][%d 字节] %s",
-            self.port_name,
-            len(json_payload),
-            json_payload.decode("utf-8", errors="replace"),
-        )
         LOGGER.info(
             "[Monitor -> Pico][%s][JSONZ][压缩帧 %d 字节]",
             self.port_name,
@@ -289,36 +243,23 @@ class PicoJsonClient:
         chunk_count = 0
         write_elapsed_ms = 0.0
         slowest_write_ms = 0.0
-        full_chunks, final_chunk = divmod(len(packet), SERIAL_WRITE_CHUNK_SIZE)
-        expected_chunks = full_chunks + bool(final_chunk)
-        if final_chunk and final_chunk % TRANSPORT_BLOCK_SIZE == 0:
-            expected_chunks += 1
-        position = 0
-        while position < len(packet):
-            remaining = len(packet) - position
-            chunk_size = min(SERIAL_WRITE_CHUNK_SIZE, remaining)
-            if chunk_size % TRANSPORT_BLOCK_SIZE == 0:
-                chunk_size -= 1
-            chunk = packet[position:position + chunk_size]
+        for position in range(0, len(packet), SERIAL_WRITE_CHUNK_SIZE):
+            chunk = packet[position:position + SERIAL_WRITE_CHUNK_SIZE]
             write_started = time.monotonic()
             written = self.serial.write(chunk)
             chunk_elapsed_ms = (time.monotonic() - write_started) * 1000
             write_elapsed_ms += chunk_elapsed_ms
             slowest_write_ms = max(slowest_write_ms, chunk_elapsed_ms)
             chunk_count += 1
-            position += written
             LOGGER.info(
                 "[协议耗时][%s][主机写入 %d/%d] 请求=%d 字节，实际=%s 字节，耗时=%.1f ms",
                 self.port_name,
                 chunk_count,
-                expected_chunks,
+                (len(packet) + SERIAL_WRITE_CHUNK_SIZE - 1) // SERIAL_WRITE_CHUNK_SIZE,
                 len(chunk),
                 written,
                 chunk_elapsed_ms,
             )
-            if os.name == "posix":
-                self.serial.flush()
-                time.sleep(LINUX_CDC_SETTLE_SECONDS)
         flush_started = time.monotonic()
         self.serial.flush()
         flush_elapsed_ms = (time.monotonic() - flush_started) * 1000
