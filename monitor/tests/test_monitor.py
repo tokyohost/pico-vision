@@ -68,6 +68,19 @@ class BadJsonSerial(FakeSerial):
         return b"ERR:BAD_JSON\n"
 
 
+class HandshakeSerial(FakeSerial):
+    """按顺序返回预置的 Pico 握手响应。"""
+
+    def __init__(self, responses):
+        super().__init__()
+        self.responses = list(responses)
+
+    def readline(self):
+        if self.responses:
+            return self.responses.pop(0)
+        return b""
+
+
 class PicoClientTest(unittest.TestCase):
     """验证 Pico 客户端生成兼容固件的 JSON 数据包。"""
 
@@ -133,6 +146,30 @@ class PicoClientTest(unittest.TestCase):
             "screen_color_profile": None,
             "firmware_version": None,
         })
+
+    @mock.patch("pico_client.time.monotonic")
+    def test_handshake_rejects_boot_messages_without_pong(self, monotonic):
+        """BOOT 和屏幕 ACK 不能被误判为设备握手成功。"""
+        clock = iter(index * 0.4 for index in range(100))
+        monotonic.side_effect = lambda: next(clock)
+        device = HandshakeSerial([
+            b"BOOT:PICO_LCD_READY\n",
+            b"ACK:LCD_FRAME:-1:TOTAL=276MS\n",
+        ])
+
+        self.assertFalse(PicoJsonClient()._handshake(device))
+
+    def test_handshake_accepts_only_pong_and_parses_information(self):
+        """收到真实 PONG 后才完成握手并记录硬件信息。"""
+        device = HandshakeSerial([
+            b"PONG:PICO_LCD:ST7789:240x320:RGB565:"
+            b"BOARD=rp2040_typec:SCREEN=st7789_2_4inch:"
+            b"VERSION=1.2.3:JSON\n",
+        ])
+        client = PicoJsonClient()
+
+        self.assertTrue(client._handshake(device))
+        self.assertEqual(client.board_model, "rp2040_typec")
 
     def test_pico_info_argument(self):
         """确认命令行可以选择仅查询 Pico 设备信息。"""
@@ -232,8 +269,8 @@ class PicoClientTest(unittest.TestCase):
         service.client.connect.assert_called_once_with()
         service._run_development_loop.assert_called_once_with()
 
-    def test_connection_failure_waits_for_usb_change_before_retry(self):
-        """确认首次探测失败后仅在 USB 端口变化后延迟重试。"""
+    def test_connection_failure_waits_for_usb_addition_before_retry(self):
+        """确认首次探测失败后仅在 USB 端口增加后延迟重试。"""
         service = MonitorService.__new__(MonitorService)
         service.arguments = SimpleNamespace(
             port=None,
@@ -263,6 +300,21 @@ class PicoClientTest(unittest.TestCase):
         service.client.connect.assert_called_once_with()
         service.stopping.wait.assert_any_call(0.5)
         service.stopping.wait.assert_any_call(3.0)
+
+    def test_usb_removal_does_not_trigger_probe(self):
+        """拔出串口只更新基线，直到后续插入新端口才返回。"""
+        service = MonitorService.__new__(MonitorService)
+        service.stopping = mock.Mock()
+        service.stopping.is_set.side_effect = [False, False, False]
+        service.client = mock.Mock()
+        service.client.available_ports.side_effect = [
+            frozenset({"COM1"}),
+            frozenset({"COM1"}),
+            frozenset({"COM1", "COM4"}),
+        ]
+
+        self.assertTrue(service._wait_for_usb_addition({"COM1", "COM4"}))
+        self.assertEqual(service.stopping.wait.call_count, 2)
 
     def test_ping_and_network_unit_arguments(self):
         """确认 Ping 默认地址和网络速率单位可以独立配置。"""

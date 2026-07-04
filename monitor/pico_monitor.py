@@ -177,23 +177,26 @@ class MonitorService:
                 remaining = self.arguments.interval - (time.monotonic() - started)
                 self.stopping.wait(max(0.0, remaining))
             except (OSError, RuntimeError, serial.SerialException) as error:
-                LOGGER.warning("监控通信异常：%s；等待 USB 端口变化", error)
+                LOGGER.warning("监控通信异常：%s；等待 USB 端口插入", error)
                 self.client.close()
-                if not self._wait_for_usb_change(ports_before_probe):
+                if not self._wait_for_usb_addition(ports_before_probe):
                     break
                 LOGGER.info(
-                    "USB 端口已变化，%.1f 秒后重新探测 Pico LCD",
+                    "USB 端口已增加，%.1f 秒后重新探测 Pico LCD",
                     self.arguments.reconnect_interval,
                 )
                 self.stopping.wait(self.arguments.reconnect_interval)
         LOGGER.info("监控服务已停止")
         return 0
 
-    def _wait_for_usb_change(self, previous_ports):
-        """等待系统串口集合变化，期间不发起 Pico 握手。"""
+    def _wait_for_usb_addition(self, previous_ports):
+        """等待新串口插入，拔出时只更新基线而不发起 Pico 握手。"""
+        baseline = frozenset(previous_ports)
         while not self.stopping.is_set():
-            if self.client.available_ports() != previous_ports:
+            current_ports = self.client.available_ports()
+            if current_ports - baseline:
                 return True
+            baseline = current_ports
             self.stopping.wait(0.5)
         return False
 
