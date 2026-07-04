@@ -130,6 +130,16 @@ class PicoClientTest(unittest.TestCase):
         self.assertTrue(PING_COMMAND.startswith(b"PING:PICO_LCD?"))
         self.assertTrue(PING_COMMAND.endswith(b"\n"))
 
+    def test_handshake_splits_ping_at_usb_packet_boundary(self):
+        """握手按 63+1 写入，兼容 Linux CDC 与固件的六十四字节读取。"""
+        device = HandshakeSerial([
+            b"PONG:PICO_LCD:ST7789:240x320:RGB565:JSON\n",
+        ])
+
+        self.assertTrue(PicoJsonClient()._handshake(device))
+        self.assertEqual(device.write_calls, 2)
+        self.assertEqual(device.written, PING_COMMAND)
+
     def test_parse_pico_hardware_and_firmware_information(self):
         """确认 Monitor 能从新版握手读取板型、屏幕方案和固件版本。"""
         client = PicoJsonClient()

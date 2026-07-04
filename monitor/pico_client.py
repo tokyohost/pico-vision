@@ -95,9 +95,36 @@ class PicoJsonClient:
         self.screen_color_profile = None
         self.firmware_version = None
         for attempt in range(1, 4):
-            LOGGER.info("[Monitor -> Pico][%s][握手 %d/3] %s", device.port, attempt, PING_COMMAND.decode("ascii").strip())
-            device.write(PING_COMMAND)
-            device.flush()
+            LOGGER.info(
+                "[Monitor -> Pico][%s][握手 %d/3][计划 %d 字节，分块 63+1] repr=%r hex=%s",
+                device.port,
+                attempt,
+                len(PING_COMMAND),
+                PING_COMMAND,
+                PING_COMMAND.hex(" "),
+            )
+            written = 0
+            # Linux CDC 对恰好等于 64 字节端点上限的单次写入可能不产生短包/ZLP。
+            # 分成 63+1 两次 USB 写入，固件仍会为 readinto(64) 收齐完整逻辑块，
+            # 同时 Linux 与 Windows 都能明确看到传输结束边界。
+            for chunk in (PING_COMMAND[:-1], PING_COMMAND[-1:]):
+                chunk_written = 0
+                while chunk_written < len(chunk):
+                    count = device.write(chunk[chunk_written:])
+                    if not count:
+                        raise serial.SerialTimeoutException(
+                            f"握手包仅发送 {written}/{len(PING_COMMAND)} 字节"
+                        )
+                    chunk_written += count
+                    written += count
+                device.flush()
+            LOGGER.info(
+                "[Monitor -> Pico][%s][握手 %d/3][实际发送 %d/%d 字节]",
+                device.port,
+                attempt,
+                written,
+                len(PING_COMMAND),
+            )
             deadline = time.monotonic() + 1.2
             while time.monotonic() < deadline:
                 message = device.readline().decode("utf-8", errors="replace").strip()
