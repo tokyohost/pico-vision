@@ -22,14 +22,54 @@ import serial
 from serial.tools import list_ports
 
 
-SERIAL_PROTOCOL_BLOCK_SIZE = 64
-# 已发布固件使用 readinto(64) 接收串口数据；短包会在 Windows USB CDC
-# 上让固件等待剩余字节，因此握手也必须填满一个完整协议块。
-PING_COMMAND = b"PING:PICO_LCD?".ljust(
-    SERIAL_PROTOCOL_BLOCK_SIZE - 1, b" "
-) + b"\n"
-JSON_ACK = b"ACK:JSON"
-BAD_JSON_ERROR = b"ERR:BAD_JSON"
+FRAME_MAGIC = b"PV1"
+FRAME_MAX_PAYLOAD = 16 * 1024
+
+
+def crc16_ccitt(data):
+    """计算协议帧使用的 CRC-16/CCITT-FALSE。"""
+    crc = 0xFFFF
+    for value in data:
+        crc ^= value << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+    return crc
+
+
+def build_frame(message_type, payload=b""):
+    """构建 PV1:type:length:crc:payload 帧。"""
+    kind = message_type.encode("ascii") if isinstance(message_type, str) else bytes(message_type)
+    payload = bytes(payload)
+    checksum = crc16_ccitt(kind + b":" + payload)
+    line = b":".join((FRAME_MAGIC, kind, str(len(payload)).encode("ascii"), f"{checksum:04X}".encode("ascii"), payload))
+    return line + b"\n"
+
+
+def parse_frame(line):
+    """校验并解析一条 PV1 帧；非 PV1 行返回 None。"""
+    line = bytes(line).rstrip(b"\r\n")
+    if not line.startswith(FRAME_MAGIC + b":"):
+        return None
+    parts = line.split(b":", 4)
+    if len(parts) != 5:
+        raise ValueError("BAD_FRAME_HEADER")
+    _, kind, length_text, checksum_text, remainder = parts
+    try:
+        length = int(length_text)
+        expected_crc = int(checksum_text, 16)
+    except ValueError as error:
+        raise ValueError("BAD_FRAME_HEADER") from error
+    if length < 0 or length > FRAME_MAX_PAYLOAD or len(remainder) < length:
+        raise ValueError("BAD_FRAME_LENGTH")
+    payload, trailer = remainder[:length], remainder[length:]
+    if trailer:
+        raise ValueError("BAD_FRAME_TRAILER")
+    if crc16_ccitt(kind + b":" + payload) != expected_crc:
+        raise ValueError("BAD_FRAME_CRC")
+    return kind.decode("ascii"), payload
+
+
+PING_COMMAND = build_frame("PING")
 SERIAL_WRITE_CHUNK_SIZE = 512
 LOGGER = logging.getLogger("pico-monitor.serial")
 
@@ -96,7 +136,7 @@ class PicoJsonClient:
         self.firmware_version = None
         for attempt in range(1, 4):
             LOGGER.info(
-                "[Monitor -> Pico][%s][握手 %d/3][计划 %d 字节，分块 63+1] repr=%r hex=%s",
+                "[Monitor -> Pico][%s][握手 %d/3][PV1 %d 字节] repr=%r hex=%s",
                 device.port,
                 attempt,
                 len(PING_COMMAND),
@@ -104,20 +144,14 @@ class PicoJsonClient:
                 PING_COMMAND.hex(" "),
             )
             written = 0
-            # Linux CDC 对恰好等于 64 字节端点上限的单次写入可能不产生短包/ZLP。
-            # 分成 63+1 两次 USB 写入，固件仍会为 readinto(64) 收齐完整逻辑块，
-            # 同时 Linux 与 Windows 都能明确看到传输结束边界。
-            for chunk in (PING_COMMAND[:-1], PING_COMMAND[-1:]):
-                chunk_written = 0
-                while chunk_written < len(chunk):
-                    count = device.write(chunk[chunk_written:])
-                    if not count:
-                        raise serial.SerialTimeoutException(
-                            f"握手包仅发送 {written}/{len(PING_COMMAND)} 字节"
-                        )
-                    chunk_written += count
-                    written += count
-                device.flush()
+            while written < len(PING_COMMAND):
+                count = device.write(PING_COMMAND[written:])
+                if not count:
+                    raise serial.SerialTimeoutException(
+                        f"握手包仅发送 {written}/{len(PING_COMMAND)} 字节"
+                    )
+                written += count
+            device.flush()
             LOGGER.info(
                 "[Monitor -> Pico][%s][握手 %d/3][实际发送 %d/%d 字节]",
                 device.port,
@@ -127,25 +161,26 @@ class PicoJsonClient:
             )
             deadline = time.monotonic() + 1.2
             while time.monotonic() < deadline:
-                message = device.readline().decode("utf-8", errors="replace").strip()
+                raw_message = device.readline()
+                message = raw_message.decode("utf-8", errors="replace").strip()
                 if message:
                     LOGGER.info("[Pico -> Monitor][%s][握手响应] %s", device.port, message)
-                if message.startswith("PONG:PICO_LCD:"):
-                    self._parse_pong(message)
+                try:
+                    frame = parse_frame(raw_message)
+                except ValueError as error:
+                    LOGGER.warning("[Pico -> Monitor][%s][坏帧] %s", device.port, error)
+                    continue
+                if frame and frame[0] == "PONG":
+                    self._parse_pong_payload(frame[1])
                     return True
         return False
 
-    def _parse_pong(self, message):
-        """解析新版握手中的开发板、屏幕方案和固件版本字段。"""
-        fields = {}
-        for part in message.split(":"):
-            if "=" not in part:
-                continue
-            name, value = part.split("=", 1)
-            fields[name.strip().upper()] = value.strip()
-        self.board_model = fields.get("BOARD") or None
-        self.screen_color_profile = fields.get("SCREEN") or None
-        self.firmware_version = fields.get("VERSION") or None
+    def _parse_pong_payload(self, payload):
+        """解析 PV1 PONG 的 JSON 设备信息。"""
+        information = json.loads(payload.decode("utf-8"))
+        self.board_model = information.get("board_model") or None
+        self.screen_color_profile = information.get("screen_color_profile") or None
+        self.firmware_version = information.get("firmware_version") or None
 
     def device_information(self):
         """返回当前已连接 Pico 的硬件配置与固件版本。"""
@@ -157,15 +192,13 @@ class PicoJsonClient:
 
     @staticmethod
     def build_packet(snapshot):
-        """编码 JSON 并补齐协议块，支持 Pico 批量读取且不阻塞尾块。"""
+        """把 JSON 编码为带长度与 CRC 的 PV1 数据帧。"""
         payload = json.dumps(
             snapshot,
             ensure_ascii=True,
             separators=(",", ":"),
         ).encode("utf-8")
-        line = b"JSON:" + payload
-        padding_size = -(len(line) + 1) % SERIAL_PROTOCOL_BLOCK_SIZE
-        return line + b" " * padding_size + b"\n"
+        return build_frame("JSON", payload)
 
     def send(self, snapshot):
         """分块发送单行 JSON 数据，并等待 Pico 返回接收确认。"""
@@ -193,17 +226,21 @@ class PicoJsonClient:
             response = self.serial.readline().strip()
             if response:
                 LOGGER.info("[Pico -> Monitor][%s][响应] %s", self.port_name, response.decode("utf-8", errors="replace"))
-            if response == JSON_ACK:
+            try:
+                frame = parse_frame(response)
+            except ValueError as error:
+                raise RuntimeError(f"Pico 返回损坏协议帧：{error}") from error
+            if frame == ("ACK", b"JSON"):
                 LOGGER.info("[交互完成][%s] Pico 已确认本次 JSON", self.port_name)
                 return
-            if response == BAD_JSON_ERROR:
+            if frame == ("ERR", b"BAD_JSON"):
                 LOGGER.warning(
                     "[数据帧丢弃][%s] Pico 无法解析本次 JSON，保持串口连接并等待下一帧",
                     self.port_name,
                 )
                 return
-            if response.startswith((b"ERR:", b"FATAL:")):
-                raise RuntimeError(response.decode("utf-8", errors="replace"))
+            if frame and frame[0] == "ERR":
+                raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
         LOGGER.error("[交互超时][%s] 5 秒内未收到 ACK:JSON", self.port_name)
         raise RuntimeError("等待 Pico JSON 接收确认超时")
 

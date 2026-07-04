@@ -151,7 +151,7 @@ def main():
         from upgrade_manager import UpgradeManager
 
         protocol = JsonProtocol()
-        protocol._upgrade_manager = UpgradeManager(protocol.write)
+        protocol._upgrade_manager = UpgradeManager(protocol.write_upgrade_response)
         Application(protocol).run()
     except Exception as error:
         message = "FATAL:{}:{}\n".format(type(error).__name__, error)

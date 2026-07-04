@@ -20,7 +20,7 @@ import unittest
 from unittest import mock
 from types import SimpleNamespace
 
-from pico_client import PING_COMMAND, PicoJsonClient
+from pico_client import PING_COMMAND, PicoJsonClient, build_frame, parse_frame
 from pico_monitor import (
     MonitorService,
     create_argument_parser,
@@ -53,7 +53,7 @@ class FakeSerial:
 
     def readline(self):
         """返回 Pico JSON 接收确认。"""
-        return b"ACK:JSON\n"
+        return build_frame("ACK", b"JSON")
 
     def close(self):
         """将模拟串口切换为关闭状态。"""
@@ -65,7 +65,7 @@ class BadJsonSerial(FakeSerial):
 
     def readline(self):
         """返回可恢复的 JSON 解析错误。"""
-        return b"ERR:BAD_JSON\n"
+        return build_frame("ERR", b"BAD_JSON")
 
 
 class HandshakeSerial(FakeSerial):
@@ -90,7 +90,7 @@ class PicoClientTest(unittest.TestCase):
         client.serial = FakeSerial()
         with self.assertLogs("pico-monitor.serial", level="INFO") as logs:
             client.send({"version": 1})
-        self.assertTrue(client.serial.written.startswith(b"JSON:"))
+        self.assertTrue(client.serial.written.startswith(b"PV1:JSON:"))
         self.assertTrue(client.serial.written.endswith(b"\n"))
         self.assertTrue(any("Monitor -> Pico" in message for message in logs.output))
         self.assertTrue(any("Pico -> Monitor" in message for message in logs.output))
@@ -119,48 +119,44 @@ class PicoClientTest(unittest.TestCase):
         """确认开发模式打印内容与真实串口 JSON 协议行一致。"""
         packet = PicoJsonClient.build_packet({"host": "开发机"})
 
-        self.assertTrue(packet.startswith(b"JSON:"))
+        self.assertTrue(packet.startswith(b"PV1:JSON:"))
         self.assertTrue(packet.endswith(b"\n"))
-        self.assertEqual(len(packet) % 64, 0)
-        self.assertIn(b'"host"', packet)
+        message_type, payload = parse_frame(packet)
+        self.assertEqual(message_type, "JSON")
+        self.assertIn(b'"host"', payload)
 
-    def test_ping_fills_firmware_serial_read_block(self):
-        """握手命令填满固件读取块，避免 Windows CDC 短包阻塞 Pico。"""
-        self.assertEqual(len(PING_COMMAND), 64)
-        self.assertTrue(PING_COMMAND.startswith(b"PING:PICO_LCD?"))
+    def test_ping_uses_pv1_frame(self):
+        """握手使用带长度与 CRC 的 PV1 帧。"""
+        self.assertTrue(PING_COMMAND.startswith(b"PV1:PING:"))
         self.assertTrue(PING_COMMAND.endswith(b"\n"))
+        self.assertEqual(parse_frame(PING_COMMAND), ("PING", b""))
 
-    def test_handshake_splits_ping_at_usb_packet_boundary(self):
-        """握手按 63+1 写入，兼容 Linux CDC 与固件的六十四字节读取。"""
+    def test_handshake_sends_only_pv1_ping(self):
+        """握手只发送一条 PV1 PING。"""
         device = HandshakeSerial([
-            b"PONG:PICO_LCD:ST7789:240x320:RGB565:JSON\n",
+            build_frame("PONG", json.dumps({
+                "board_model": "rp2040_typec",
+                "screen_color_profile": "st7789_2_4inch",
+                "firmware_version": "1.2.3",
+            }).encode()),
         ])
 
         self.assertTrue(PicoJsonClient()._handshake(device))
-        self.assertEqual(device.write_calls, 2)
+        self.assertEqual(device.write_calls, 1)
         self.assertEqual(device.written, PING_COMMAND)
 
     def test_parse_pico_hardware_and_firmware_information(self):
         """确认 Monitor 能从新版握手读取板型、屏幕方案和固件版本。"""
         client = PicoJsonClient()
-        client._parse_pong(
-            "PONG:PICO_LCD:ST7789:240x320:RGB565:"
-            "BOARD=rp2040_typec:SCREEN=st7789_2_4inch:VERSION=1.2.3:JSON"
-        )
+        client._parse_pong_payload(json.dumps({
+            "board_model": "rp2040_typec",
+            "screen_color_profile": "st7789_2_4inch",
+            "firmware_version": "1.2.3",
+        }).encode())
         self.assertEqual(client.device_information(), {
             "board_model": "rp2040_typec",
             "screen_color_profile": "st7789_2_4inch",
             "firmware_version": "1.2.3",
-        })
-
-    def test_old_pico_handshake_keeps_unknown_information(self):
-        """确认旧固件握手不包含扩展字段时仍可安全解析。"""
-        client = PicoJsonClient()
-        client._parse_pong("PONG:PICO_LCD:ST7789:240x320:RGB565:JSON")
-        self.assertEqual(client.device_information(), {
-            "board_model": None,
-            "screen_color_profile": None,
-            "firmware_version": None,
         })
 
     @mock.patch("pico_client.time.monotonic")
@@ -178,9 +174,11 @@ class PicoClientTest(unittest.TestCase):
     def test_handshake_accepts_only_pong_and_parses_information(self):
         """收到真实 PONG 后才完成握手并记录硬件信息。"""
         device = HandshakeSerial([
-            b"PONG:PICO_LCD:ST7789:240x320:RGB565:"
-            b"BOARD=rp2040_typec:SCREEN=st7789_2_4inch:"
-            b"VERSION=1.2.3:JSON\n",
+            build_frame("PONG", json.dumps({
+                "board_model": "rp2040_typec",
+                "screen_color_profile": "st7789_2_4inch",
+                "firmware_version": "1.2.3",
+            }).encode()),
         ])
         client = PicoJsonClient()
 

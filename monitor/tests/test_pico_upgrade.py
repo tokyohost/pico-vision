@@ -21,11 +21,8 @@ import tempfile
 import unittest
 import zipfile
 
-from pico_upgrade import (
-    SERIAL_PROTOCOL_BLOCK_SIZE,
-    PicoFirmwareUpgrader,
-    PicoUpgradePackage,
-)
+from pico_upgrade import PicoFirmwareUpgrader, PicoUpgradePackage
+from pico_client import build_frame, parse_frame
 
 
 class FakeUpgradeSerial:
@@ -40,19 +37,24 @@ class FakeUpgradeSerial:
     def write(self, data):
         """记录命令并生成与协议对应的确认响应。"""
         self.packets.append(bytes(data))
-        command = bytes(data).decode("ascii").strip()
+        frame = parse_frame(data)
+        self.assert_frame = frame
+        command = "UPGRADE:" + frame[1].decode("ascii")
         self.commands.append(command)
         if command.startswith("UPGRADE:BEGIN:"):
-            self.responses.append(b"ACK:UPGRADE:BEGIN:1.0.0\n")
+            self.responses.append(build_frame("STATUS", b"ACK:UPGRADE:BEGIN:1.0.0"))
         elif command.startswith("UPGRADE:FILE:"):
-            self.responses.append(b"ACK:UPGRADE:FILE:main.py\n")
+            self.responses.append(build_frame("STATUS", b"ACK:UPGRADE:FILE:main.py"))
         elif command.startswith("UPGRADE:DATA:"):
             sequence = command.split(":", 3)[2]
-            self.responses.append(("ACK:UPGRADE:DATA:" + sequence + "\n").encode())
+            self.responses.append(build_frame("STATUS", ("ACK:UPGRADE:DATA:" + sequence).encode()))
         elif command == "UPGRADE:FILE_END":
-            self.responses.append(b"ACK:UPGRADE:FILE_END:main.py\n")
+            self.responses.append(build_frame("STATUS", b"ACK:UPGRADE:FILE_END:main.py"))
         elif command == "UPGRADE:COMMIT":
-            self.responses.extend((b"PROGRESS:UPGRADE:INSTALL:100\n", b"ACK:UPGRADE:COMPLETE:1.0.0\n"))
+            self.responses.extend((
+                build_frame("STATUS", b"PROGRESS:UPGRADE:INSTALL:100"),
+                build_frame("STATUS", b"ACK:UPGRADE:COMPLETE:1.0.0"),
+            ))
         return len(data)
 
     def flush(self):
@@ -102,7 +104,7 @@ class PicoUpgradeTests(unittest.TestCase):
             self.assertEqual(client.serial.commands[0], "UPGRADE:BEGIN:1.0.0:1")
             self.assertEqual(client.serial.commands[-1], "UPGRADE:COMMIT")
             self.assertEqual(sum(command.startswith("UPGRADE:DATA:") for command in client.serial.commands), 3)
-            self.assertTrue(all(len(packet) % SERIAL_PROTOCOL_BLOCK_SIZE == 0 for packet in client.serial.packets))
+            self.assertTrue(all(parse_frame(packet)[0] == "UPGRADE" for packet in client.serial.packets))
             self.assertTrue(all(packet.endswith(b"\n") for packet in client.serial.packets))
 
 

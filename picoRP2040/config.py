@@ -16,12 +16,12 @@
 
 # 开发板型号：多色 WS2812 灯版本使用 rp2040_usb；GP25 单色灯版本使用
 # rp2040_typec。具体引脚由开发板硬件档案统一管理。
-BOARD_MODEL = "rp2040_usb"
+BOARD_MODEL = "rp2040_typec"
 # 开发源码使用 development；正式升级包由打包工具写入发布版本。
 FIRMWARE_VERSION = "development"
 # 屏幕色彩方案：旧款 ST7789VW 二英寸屏使用 st7789vw_2inch；新款
 # 二点四英寸屏使用 st7789_2_4inch。当前默认选择新款屏幕。
-SCREEN_COLOR_PROFILE = "st7789vw_2inch"
+SCREEN_COLOR_PROFILE = "st7789_2_4inch"
 
 
 # ST7789 显示参数。
@@ -36,7 +36,6 @@ LCD_STYLE = "disk"
 # JSON 数据包限制与单次读取预算。
 MAX_JSON_SIZE = 16 * 1024
 SERIAL_READ_BUDGET = 2048
-SERIAL_READ_CHUNK_SIZE = 64
 
 # ST7789 的 SPI 与控制引脚。
 PIN_SCK = 6
@@ -58,9 +57,6 @@ LED_DATA_PULSE_DURATION_MS = 100
 DEVICE_NAME = "PICO_LCD"
 LCD_DRIVER = "ST7789"
 PIXEL_FORMAT = "RGB565"
-PING_TEXT = b"PING:PICO_LCD?"
-JSON_PREFIX = b"JSON:"
-UPGRADE_PREFIX = b"UPGRADE:"
 MAX_UPGRADE_LINE_SIZE = 1024
 
 # RGB565 调色板。

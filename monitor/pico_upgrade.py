@@ -24,9 +24,10 @@ import time
 import urllib.request
 import zipfile
 
+from pico_client import build_frame, parse_frame
+
 
 LOGGER = logging.getLogger("pico-monitor.upgrade")
-SERIAL_PROTOCOL_BLOCK_SIZE = 64
 UPGRADE_CHUNK_SIZE = 384
 
 
@@ -117,7 +118,7 @@ class PicoFirmwareUpgrader:
         serial_device.flush()
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
-            response = serial_device.readline().decode("utf-8", errors="replace").strip()
+            response = self._response_text(serial_device.readline())
             if not response:
                 continue
             LOGGER.info("[Pico -> Monitor][升级] %s", response)
@@ -135,7 +136,7 @@ class PicoFirmwareUpgrader:
         device.write(self._build_command_packet(command))
         device.flush()
         for _ in range(100):
-            response = device.readline().decode("utf-8", errors="replace").strip()
+            response = self._response_text(device.readline())
             if not response:
                 continue
             LOGGER.info("[Pico -> Monitor][升级] %s", response)
@@ -145,9 +146,22 @@ class PicoFirmwareUpgrader:
                 raise RuntimeError(response)
         raise RuntimeError("等待 Pico 升级确认超时：{}".format(command.split(":", 2)[:2]))
 
+    def _build_command_packet(self, command):
+        """把升级命令编码为 PV1 帧。"""
+        payload = command.removeprefix("UPGRADE:").encode("ascii")
+        return build_frame("UPGRADE", payload)
+
     @staticmethod
-    def _build_command_packet(command):
-        """把升级命令补齐为固定协议块，避免 Pico 批量读取短命令时阻塞。"""
-        line = command.encode("ascii")
-        padding_size = -(len(line) + 1) % SERIAL_PROTOCOL_BLOCK_SIZE
-        return line + b" " * padding_size + b"\n"
+    def _response_text(data):
+        """读取并校验 PV1 状态帧。"""
+        if not data:
+            return ""
+        try:
+            frame = parse_frame(data)
+        except ValueError as error:
+            raise RuntimeError("Pico 返回损坏升级帧：{}".format(error)) from error
+        if frame is not None:
+            if frame[0] not in ("STATUS", "ERR"):
+                return ""
+            return frame[1].decode("utf-8", errors="replace")
+        raise RuntimeError("Pico 返回非 PV1 升级响应")
