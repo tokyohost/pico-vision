@@ -77,7 +77,7 @@ qBittorrent 也可通过环境变量 `PICO_MONITOR_QBITTORRENT_ENABLED`、`PICO_
 build-exe.bat
 ```
 
-输出文件为 `dist\pico-monitor.exe`。双击后驻留系统托盘，运行日志位于 `%LOCALAPPDATA%\PicoMonitor\pico-monitor.log`。
+输出文件为 `dist\pico-monitor.exe`。双击后驻留系统托盘。右键选择“Monitor 设置”可配置串口、采集与重连间隔、Ping 目标、屏幕旋转、网络单位、LCD 样式及 qBittorrent；保存后后台服务自动重启。配置和运行日志分别位于 `%LOCALAPPDATA%\PicoMonitor\settings.json` 与 `%LOCALAPPDATA%\PicoMonitor\pico-monitor.log`。
 
 日志使用 `[Monitor -> Pico]` 和 `[Pico -> Monitor]` 标识通信方向。Linux 服务可通过 `journalctl -u pico-monitor -f` 实时查看相同内容。
 
