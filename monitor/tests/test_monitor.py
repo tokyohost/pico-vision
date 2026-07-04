@@ -24,7 +24,9 @@ from pico_client import PicoJsonClient
 from pico_monitor import (
     MonitorService,
     create_argument_parser,
+    format_pico_information,
     log_monitor_version,
+    show_pico_information,
     validate_arguments,
 )
 from system_monitor import PowerMonitor, SystemInformationCollector
@@ -108,6 +110,71 @@ class PicoClientTest(unittest.TestCase):
         self.assertTrue(packet.endswith(b"\n"))
         self.assertEqual(len(packet) % 64, 0)
         self.assertIn(b'"host"', packet)
+
+    def test_parse_pico_hardware_and_firmware_information(self):
+        """确认 Monitor 能从新版握手读取板型、屏幕方案和固件版本。"""
+        client = PicoJsonClient()
+        client._parse_pong(
+            "PONG:PICO_LCD:ST7789:240x320:RGB565:"
+            "BOARD=rp2040_typec:SCREEN=st7789_2_4inch:VERSION=1.2.3:JSON"
+        )
+        self.assertEqual(client.device_information(), {
+            "board_model": "rp2040_typec",
+            "screen_color_profile": "st7789_2_4inch",
+            "firmware_version": "1.2.3",
+        })
+
+    def test_old_pico_handshake_keeps_unknown_information(self):
+        """确认旧固件握手不包含扩展字段时仍可安全解析。"""
+        client = PicoJsonClient()
+        client._parse_pong("PONG:PICO_LCD:ST7789:240x320:RGB565:JSON")
+        self.assertEqual(client.device_information(), {
+            "board_model": None,
+            "screen_color_profile": None,
+            "firmware_version": None,
+        })
+
+    def test_pico_info_argument(self):
+        """确认命令行可以选择仅查询 Pico 设备信息。"""
+        arguments = create_argument_parser().parse_args(["--pico-info"])
+        self.assertTrue(arguments.pico_info)
+
+    def test_pico_info_rejects_upgrade_action(self):
+        """确认设备信息查询不会与固件升级同时执行。"""
+        arguments = create_argument_parser().parse_args([
+            "--pico-info", "--upgrade-pico",
+        ])
+        with self.assertRaisesRegex(SystemExit, "不能同时使用"):
+            validate_arguments(arguments)
+
+    def test_format_pico_information(self):
+        """确认 Pico 信息使用清晰的中文字段输出。"""
+        text = format_pico_information({
+            "board_model": "rp2040_typec",
+            "screen_color_profile": "st7789_2_4inch",
+            "firmware_version": "1.2.3",
+        })
+        self.assertIn("Pico 开发板型号：rp2040_typec", text)
+        self.assertIn("Pico 屏幕色彩方案：st7789_2_4inch", text)
+        self.assertIn("Pico 固件版本：1.2.3", text)
+
+    @mock.patch("pico_monitor._write_version_to_console")
+    @mock.patch("pico_monitor.PicoJsonClient")
+    def test_show_pico_information_connects_prints_and_closes(
+        self, client_class, output
+    ):
+        """确认信息命令连接设备、输出结果并始终关闭串口。"""
+        client = client_class.return_value
+        client.device_information.return_value = {
+            "board_model": "rp2040_usb",
+            "screen_color_profile": "st7789vw_2inch",
+            "firmware_version": "2.0.0",
+        }
+        self.assertEqual(show_pico_information("COM3"), 0)
+        client_class.assert_called_once_with("COM3")
+        client.connect.assert_called_once_with()
+        client.close.assert_called_once_with()
+        self.assertIn("rp2040_usb", output.call_args.args[0])
 
     def test_screen_rotation_argument(self):
         """确认屏幕旋转参数只接受固件支持的方向。"""

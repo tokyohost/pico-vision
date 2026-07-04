@@ -2,7 +2,7 @@
 
 项目包含电脑端数据采集程序和 Pico RP2040 显示程序，实现两个独立功能：
 
-1. 非阻塞控制 GPIO22 上的 WS2812 状态灯；绿色表示运行，蓝色表示收到有效 JSON。
+1. 按开发板型号非阻塞控制 WS2812 多色灯或 GPIO 单色状态灯。
 2. 通过 USB 串口增量接收 JSON，并将 ST7789 LCD 按 48 行条带异步刷新。
 
 ## 设计约束
@@ -15,10 +15,10 @@
 
 ## Pico 端文件
 
-将 `picoRP2040/` 内全部 `.py` 文件复制到 Pico 根目录：
+将 `picoRP2040/` 的完整目录结构复制到 Pico 根目录：
 
 - `main.py`：应用入口和协作式主循环。
-- `ledController.py`：WS2812 非阻塞状态机。
+- `led/`：不同板载状态灯的非阻塞控制策略与控制器工厂。
 - `protocol.py`：USB 握手及 JSON 增量接收状态机。
 - `upgrade_manager.py`：串口升级会话、临时写入、SHA-256 校验、安装和自动重启。
 - `data_receiver.py`：最新 JSON 快照缓存。
@@ -27,6 +27,18 @@
 - `dashboard.py`：仪表盘布局和分段刷新。
 - `config.py`：引脚、周期、协议和颜色配置。
 - `color_manager.py`：按屏幕型号管理反色模式和 RGB/BGR 颜色顺序。
+- `board_manager.py`：注册开发板硬件档案并隔离不同板载 LED 类型。
+
+Pico 握手会向 Monitor 返回当前开发板型号、屏幕色彩方案和运行固件版本；源码
+直接部署时版本为 `development`，发布升级包会自动写入对应的发布版本。
+
+开发板型号由 `picoRP2040/config.py` 中的 `BOARD_MODEL` 选择：
+
+- `rp2040_usb`：GP22 上的 WS2812 多色状态灯。
+- `rp2040_typec`：GP25 控制的单色状态灯。
+
+新增型号时，可创建 `BoardProfile` 并通过 `register_board_profile()` 注册；业务层
+无需感知 LED 的具体实现。
 
 屏幕色彩由 `picoRP2040/config.py` 中的 `SCREEN_COLOR_PROFILE` 选择：
 
@@ -35,6 +47,10 @@
 - `st7789_2_4inch_bgr`：新款屏的 BGR 变体；仅在红色与蓝色互换时使用。
 
 旧配置名 `st7789_2inch` 仍可使用，并会自动映射到 `st7789vw_2inch`。
+
+GitHub Actions 会按照全部开发板型号与规范屏幕色彩方案的笛卡尔积生成升级包，
+文件名格式为 `pico-upgrade-v<版本>-<开发板型号>-<屏幕方案>.zip`。无型号后缀的
+兼容包固定对应 `rp2040_usb` 与 `st7789vw_2inch`，其他硬件不可混用该兼容包。
 
 ## 通信协议
 
