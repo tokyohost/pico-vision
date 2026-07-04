@@ -7,7 +7,7 @@
 
 
 from config import BLACK, BLUE, DARK, GRAY, GREEN, PURPLE, RED, WHITE, YELLOW
-from style_plugins import register_style
+from styles.style_plugins import register_style
 
 
 SUCCESS = 0x6607
@@ -16,10 +16,10 @@ DANGER = 0xF9C7
 CYAN = 0x06DB
 
 
-class DiskV4Style:
+class DiskV3Style:
     """按截图布局绘制顶部状态栏、侧边指标和十五块磁盘卡片。"""
 
-    name = "diskv4"
+    name = "diskv3"
     width = 320
     height = 240
     landscape = True
@@ -49,73 +49,6 @@ class DiskV4Style:
             ("disk_row_3", 75, 161, 243, 37),
             ("disk_row_4", 75, 200, 243, 38),
         ]
-
-    @classmethod
-    def select_dirty_regions(cls, previous, current):
-        """根据快照差异选择需要重绘的面板，并持续刷新健康告警行。"""
-        regions = cls.create_dirty_regions()
-        region_map = {region[0]: region for region in regions}
-        selected = []
-        previous_header = (
-            previous.get("timestamp"), previous.get("uptime_seconds"),
-            previous.get("network", {}).get("ip"),
-        )
-        current_header = (
-            current.get("timestamp"), current.get("uptime_seconds"),
-            current.get("network", {}).get("ip"),
-        )
-        if previous_header != current_header:
-            selected.append(region_map["header"])
-        if previous.get("cpu") != current.get("cpu"):
-            selected.append(region_map["cpu"])
-        previous_memory = previous.get("memory", {})
-        current_memory = current.get("memory", {})
-        memory_keys = ("percent", "used_bytes", "total_bytes")
-        if tuple(previous_memory.get(key) for key in memory_keys) != tuple(
-            current_memory.get(key) for key in memory_keys
-        ):
-            selected.append(region_map["memory"])
-        previous_network = previous.get("network", {})
-        current_network = current.get("network", {})
-        network_keys = ("upload_bps", "download_bps", "ping_ms")
-        if tuple(previous_network.get(key) for key in network_keys) != tuple(
-            current_network.get(key) for key in network_keys
-        ):
-            selected.append(region_map["network"])
-        if previous.get("gpu") != current.get("gpu"):
-            selected.append(region_map["gpu"])
-        previous_disk = previous.get("disk", {})
-        current_disk = current.get("disk", {})
-        disk_keys = ("percent", "used_bytes", "total_bytes")
-        if tuple(previous_disk.get(key) for key in disk_keys) != tuple(
-            current_disk.get(key) for key in disk_keys
-        ):
-            selected.append(region_map["summary"])
-        previous_disks = previous.get("physical_disks") or previous.get("disks", ())
-        current_disks = current.get("physical_disks") or current.get("disks", ())
-        for row in range(5):
-            start = row * 3
-            current_row = current_disks[start:start + 3]
-            has_health_alarm = any(
-                cls._number(disk.get("health")) >= 3
-                for disk in current_row
-            )
-            previous_signature = tuple(
-                cls._disk_signature(disk)
-                for disk in previous_disks[start:start + 3]
-            )
-            current_signature = tuple(
-                cls._disk_signature(disk) for disk in current_row
-            )
-            if previous_signature != current_signature or has_health_alarm:
-                selected.append(region_map["disk_row_{}".format(row)])
-        return selected
-
-    @staticmethod
-    def _disk_signature(disk):
-        """返回磁盘卡片实际显示字段组成的轻量差异签名。"""
-        keys = ("name", "percent", "health", "used_bytes", "total_bytes")
-        return tuple(disk.get(key) for key in keys)
 
     @staticmethod
     def _number(value, default=0):
@@ -225,41 +158,17 @@ class DiskV4Style:
 
     @classmethod
     def _history(cls, canvas, x, y, width, height, values, color):
-        """在侧栏中绘制资源使用率的紧凑实心面积图。"""
+        """在侧栏中绘制资源使用率的紧凑历史折线。"""
         if not values or len(values) < 2:
             return
-        points = []
+        previous = None
         for index, item in enumerate(values):
             point_x = x + int(index * (width - 1) / (len(values) - 1))
             ratio = max(0, min(100, cls._number(item))) / 100
             point_y = y + height - 1 - int(ratio * (height - 1))
-            points.append((point_x, point_y))
-        bottom = y + height - 1
-        polygon = [(x, bottom)] + points + [(x + width - 1, bottom)]
-        if canvas.fill_polygon(polygon, color):
-            return
-        previous = points[0]
-        for point in points[1:]:
-            span = max(1, point[0] - previous[0])
-            for draw_x in range(previous[0], point[0] + 1):
-                offset = draw_x - previous[0]
-                draw_y = previous[1] + int(
-                    (point[1] - previous[1]) * offset / span
-                )
-                canvas.line(draw_x, draw_y, draw_x, bottom, color)
-            previous = point
-
-    def _draw_empty_disk(self, canvas, x, y, index):
-        """绘制低对比度的空磁盘槽位占位卡片。"""
-        self._frame(canvas, x, y, 79, 37, DARK)
-        label = "D{}".format(index)
-        canvas.text(x + 4, y + 4, label, GRAY)
-        empty_text = "EMPTY"
-        canvas.text(
-            x + 39 - canvas.text_width(empty_text) // 2,
-            y + 15, empty_text, GRAY,
-        )
-        canvas.fill_rect(x + 12, y + 28, 55, 2, DARK)
+            if previous is not None:
+                canvas.line(previous[0], previous[1], point_x, point_y, color)
+            previous = (point_x, point_y)
 
     def _draw_header(self, canvas, snapshot):
         """绘制 IP 地址、时间和运行时长状态栏。"""
@@ -346,16 +255,11 @@ class DiskV4Style:
     def _draw_disks(self, canvas, snapshot, selected_row=None):
         """按照三列五行网格绘制最多十五块物理磁盘。"""
         disks = snapshot.get("physical_disks") or snapshot.get("disks", ())
-        disks = disks[:15]
-        for index in range(15):
+        for index, disk in enumerate(disks[:15]):
             column, row = index % 3, index // 3
             if selected_row is not None and row != selected_row:
                 continue
             x, y = 75 + column * 81, 44 + row * 39
-            if index >= len(disks):
-                self._draw_empty_disk(canvas, x, y, index)
-                continue
-            disk = disks[index]
             percent = self._number(disk.get("percent"))
             color = self._usage_color(percent)
             health = int(self._number(disk.get("health")))
@@ -421,9 +325,9 @@ class DiskV4Style:
             methods[key](canvas, snapshot)
 
 
-def create_diskv4_style():
-    """创建带实心趋势图和空磁盘占位卡的紧凑横屏样式插件。"""
-    return DiskV4Style()
+def create_diskv3_style():
+    """创建顶部显示 IP 地址的紧凑型多磁盘横屏样式插件。"""
+    return DiskV3Style()
 
 
-register_style(DiskV4Style.name, create_diskv4_style)
+register_style(DiskV3Style.name, create_diskv3_style)

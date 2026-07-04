@@ -27,6 +27,7 @@ PING_COMMAND = b"PING:PICO_LCD?".ljust(
     SERIAL_PROTOCOL_BLOCK_SIZE - 1, b" "
 ) + b"\n"
 JSON_ACK = b"ACK:JSON"
+BAD_JSON_ERROR = b"ERR:BAD_JSON"
 SERIAL_WRITE_CHUNK_SIZE = 512
 LOGGER = logging.getLogger("pico-monitor.serial")
 
@@ -38,6 +39,9 @@ class PicoJsonClient:
         """保存可选固定串口名称并初始化断开状态。"""
         self.configured_port = configured_port
         self.serial = None
+        self.board_model = None
+        self.screen_color_profile = None
+        self.firmware_version = None
 
     @property
     def is_connected(self):
@@ -62,7 +66,13 @@ class PicoJsonClient:
                 device.reset_output_buffer()
                 if self._handshake(device):
                     self.serial = device
-                    LOGGER.info("[串口连接] %s 握手成功", port)
+                    LOGGER.info(
+                        "[串口连接] %s 握手成功：开发板=%s，屏幕方案=%s，固件版本=%s",
+                        port,
+                        self.board_model or "未知",
+                        self.screen_color_profile or "未知",
+                        self.firmware_version or "未知",
+                    )
                     return
                 LOGGER.warning("[串口握手] %s 未返回有效设备标识", port)
                 device.close()
@@ -73,8 +83,16 @@ class PicoJsonClient:
         raise RuntimeError(f"未找到 Pico LCD：{detail}")
 
     @staticmethod
-    def _handshake(device):
+    def available_ports():
+        """返回当前系统可见串口的稳定快照。"""
+        return frozenset(item.device for item in list_ports.comports())
+
+    def _handshake(self, device):
         """发送设备发现命令并验证 Pico 固件响应。"""
+        self.board_model = None
+        self.screen_color_profile = None
+        self.firmware_version = None
+        legacy_response_received = False
         for attempt in range(1, 4):
             LOGGER.info("[Monitor -> Pico][%s][握手 %d/3] %s", device.port, attempt, PING_COMMAND.decode("ascii").strip())
             device.write(PING_COMMAND)
@@ -84,9 +102,32 @@ class PicoJsonClient:
                 message = device.readline().decode("utf-8", errors="replace").strip()
                 if message:
                     LOGGER.info("[Pico -> Monitor][%s][握手响应] %s", device.port, message)
-                if message == "BOOT:PICO_LCD_READY" or message.startswith("PONG:PICO_LCD:") or message.startswith("ACK:LCD_FRAME:"):
+                if message.startswith("PONG:PICO_LCD:"):
+                    self._parse_pong(message)
                     return True
-        return False
+                if message == "BOOT:PICO_LCD_READY" or message.startswith("ACK:LCD_FRAME:"):
+                    legacy_response_received = True
+        return legacy_response_received
+
+    def _parse_pong(self, message):
+        """解析新版握手中的开发板、屏幕方案和固件版本字段。"""
+        fields = {}
+        for part in message.split(":"):
+            if "=" not in part:
+                continue
+            name, value = part.split("=", 1)
+            fields[name.strip().upper()] = value.strip()
+        self.board_model = fields.get("BOARD") or None
+        self.screen_color_profile = fields.get("SCREEN") or None
+        self.firmware_version = fields.get("VERSION") or None
+
+    def device_information(self):
+        """返回当前已连接 Pico 的硬件配置与固件版本。"""
+        return {
+            "board_model": self.board_model,
+            "screen_color_profile": self.screen_color_profile,
+            "firmware_version": self.firmware_version,
+        }
 
     @staticmethod
     def build_packet(snapshot):
@@ -128,6 +169,12 @@ class PicoJsonClient:
                 LOGGER.info("[Pico -> Monitor][%s][响应] %s", self.port_name, response.decode("utf-8", errors="replace"))
             if response == JSON_ACK:
                 LOGGER.info("[交互完成][%s] Pico 已确认本次 JSON", self.port_name)
+                return
+            if response == BAD_JSON_ERROR:
+                LOGGER.warning(
+                    "[数据帧丢弃][%s] Pico 无法解析本次 JSON，保持串口连接并等待下一帧",
+                    self.port_name,
+                )
                 return
             if response.startswith((b"ERR:", b"FATAL:")):
                 raise RuntimeError(response.decode("utf-8", errors="replace"))

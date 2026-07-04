@@ -27,7 +27,9 @@ except ImportError:
     import json
 
 from config import (
+    BOARD_MODEL,
     DEVICE_NAME,
+    FIRMWARE_VERSION,
     HEIGHT,
     JSON_PREFIX,
     LCD_DRIVER,
@@ -35,6 +37,7 @@ from config import (
     MAX_UPGRADE_LINE_SIZE,
     PING_TEXT,
     PIXEL_FORMAT,
+    SCREEN_COLOR_PROFILE,
     SERIAL_READ_CHUNK_SIZE,
     SERIAL_READ_BUDGET,
     UPGRADE_PREFIX,
@@ -132,8 +135,17 @@ class JsonProtocol:
             self._buffer = bytearray(self._buffer[count:])
 
     def _write_pong(self):
-        """返回包含设备与屏幕能力的握手响应。"""
-        response = "PONG:{}:{}:{}x{}:{}:JSON\n".format(
-            DEVICE_NAME, LCD_DRIVER, WIDTH, HEIGHT, PIXEL_FORMAT
+        """返回设备能力、硬件型号、屏幕方案及固件版本。"""
+        response = (
+            "PONG:{}:{}:{}x{}:{}:BOARD={}:SCREEN={}:VERSION={}:JSON\n"
+        ).format(
+            DEVICE_NAME,
+            LCD_DRIVER,
+            WIDTH,
+            HEIGHT,
+            PIXEL_FORMAT,
+            BOARD_MODEL,
+            SCREEN_COLOR_PROFILE,
+            FIRMWARE_VERSION,
         )
         self.write(response.encode())

@@ -1,12 +1,12 @@
 # LCD 样式插件说明
 
-LCD 渲染由 `dashboard.py` 统一调度，具体布局由 `style_<名称>.py` 插件负责。
-当前原有界面已经迁移为 `style_default.py`，并由 `config.py` 中的
+LCD 渲染由 `dashboard.py` 统一调度，具体布局由 `styles/style_<名称>.py` 插件负责。
+当前原有界面已经迁移为 `styles/style_default.py`，并由 `config.py` 中的
 `LCD_STYLE = "default"` 选中。
 
-新增样式时，可复制 `style_default.py` 并完成以下调整：
+新增样式时，可复制 `styles/style_default.py` 并完成以下调整：
 
-1. 将文件命名为 `style_<名称>.py`，名称只能包含小写字母、数字和下划线。
+1. 在 `styles` 文件夹内将文件命名为 `style_<名称>.py`，名称只能包含小写字母、数字和下划线。
 2. 样式类必须提供 `create_dirty_regions()`、`draw_visible()` 和 `draw_dirty()`。
 3. 模块末尾调用 `register_style("<名称>", 工厂函数)` 完成注册。
 4. 将名称加入 monitor 的 `BUILTIN_LCD_STYLES`，通过 `--lcd-style <名称>`

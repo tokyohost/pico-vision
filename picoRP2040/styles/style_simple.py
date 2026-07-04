@@ -7,10 +7,10 @@
 
 
 from config import BLACK, BLUE, DARK, GRAY, GREEN, PURPLE, RED, WHITE, YELLOW
-from style_horizontal_disk import (
+from styles.style_horizontal_disk import (
     ELEMENT_DANGER, ELEMENT_SUCCESS, ELEMENT_WARNING, HorizontalDiskStyle,
 )
-from style_plugins import register_style
+from styles.style_plugins import register_style
 
 
 class SimpleStyle(HorizontalDiskStyle):

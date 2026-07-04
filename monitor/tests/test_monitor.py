@@ -24,7 +24,9 @@ from pico_client import PicoJsonClient
 from pico_monitor import (
     MonitorService,
     create_argument_parser,
+    format_pico_information,
     log_monitor_version,
+    show_pico_information,
     validate_arguments,
 )
 from system_monitor import PowerMonitor, SystemInformationCollector
@@ -58,6 +60,14 @@ class FakeSerial:
         self.is_open = False
 
 
+class BadJsonSerial(FakeSerial):
+    """模拟 Pico 拒绝单个损坏 JSON 数据帧的串口设备。"""
+
+    def readline(self):
+        """返回可恢复的 JSON 解析错误。"""
+        return b"ERR:BAD_JSON\n"
+
+
 class PicoClientTest(unittest.TestCase):
     """验证 Pico 客户端生成兼容固件的 JSON 数据包。"""
 
@@ -81,6 +91,17 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertLessEqual(client.serial.write_calls, 6)
 
+    def test_bad_json_keeps_serial_connected(self):
+        """确认单帧 JSON 解析失败时保持串口连接并等待下一帧。"""
+        client = PicoJsonClient()
+        client.serial = BadJsonSerial()
+
+        with self.assertLogs("pico-monitor.serial", level="WARNING") as logs:
+            client.send({"version": 1})
+
+        self.assertTrue(client.is_connected)
+        self.assertTrue(any("数据帧丢弃" in message for message in logs.output))
+
     def test_build_packet_for_development_mode(self):
         """确认开发模式打印内容与真实串口 JSON 协议行一致。"""
         packet = PicoJsonClient.build_packet({"host": "开发机"})
@@ -89,6 +110,71 @@ class PicoClientTest(unittest.TestCase):
         self.assertTrue(packet.endswith(b"\n"))
         self.assertEqual(len(packet) % 64, 0)
         self.assertIn(b'"host"', packet)
+
+    def test_parse_pico_hardware_and_firmware_information(self):
+        """确认 Monitor 能从新版握手读取板型、屏幕方案和固件版本。"""
+        client = PicoJsonClient()
+        client._parse_pong(
+            "PONG:PICO_LCD:ST7789:240x320:RGB565:"
+            "BOARD=rp2040_typec:SCREEN=st7789_2_4inch:VERSION=1.2.3:JSON"
+        )
+        self.assertEqual(client.device_information(), {
+            "board_model": "rp2040_typec",
+            "screen_color_profile": "st7789_2_4inch",
+            "firmware_version": "1.2.3",
+        })
+
+    def test_old_pico_handshake_keeps_unknown_information(self):
+        """确认旧固件握手不包含扩展字段时仍可安全解析。"""
+        client = PicoJsonClient()
+        client._parse_pong("PONG:PICO_LCD:ST7789:240x320:RGB565:JSON")
+        self.assertEqual(client.device_information(), {
+            "board_model": None,
+            "screen_color_profile": None,
+            "firmware_version": None,
+        })
+
+    def test_pico_info_argument(self):
+        """确认命令行可以选择仅查询 Pico 设备信息。"""
+        arguments = create_argument_parser().parse_args(["--pico-info"])
+        self.assertTrue(arguments.pico_info)
+
+    def test_pico_info_rejects_upgrade_action(self):
+        """确认设备信息查询不会与固件升级同时执行。"""
+        arguments = create_argument_parser().parse_args([
+            "--pico-info", "--upgrade-pico",
+        ])
+        with self.assertRaisesRegex(SystemExit, "不能同时使用"):
+            validate_arguments(arguments)
+
+    def test_format_pico_information(self):
+        """确认 Pico 信息使用清晰的中文字段输出。"""
+        text = format_pico_information({
+            "board_model": "rp2040_typec",
+            "screen_color_profile": "st7789_2_4inch",
+            "firmware_version": "1.2.3",
+        })
+        self.assertIn("Pico 开发板型号：rp2040_typec", text)
+        self.assertIn("Pico 屏幕色彩方案：st7789_2_4inch", text)
+        self.assertIn("Pico 固件版本：1.2.3", text)
+
+    @mock.patch("pico_monitor._write_version_to_console")
+    @mock.patch("pico_monitor.PicoJsonClient")
+    def test_show_pico_information_connects_prints_and_closes(
+        self, client_class, output
+    ):
+        """确认信息命令连接设备、输出结果并始终关闭串口。"""
+        client = client_class.return_value
+        client.device_information.return_value = {
+            "board_model": "rp2040_usb",
+            "screen_color_profile": "st7789vw_2inch",
+            "firmware_version": "2.0.0",
+        }
+        self.assertEqual(show_pico_information("COM3"), 0)
+        client_class.assert_called_once_with("COM3")
+        client.connect.assert_called_once_with()
+        client.close.assert_called_once_with()
+        self.assertIn("rp2040_usb", output.call_args.args[0])
 
     def test_screen_rotation_argument(self):
         """确认屏幕旋转参数只接受固件支持的方向。"""
@@ -136,6 +222,7 @@ class PicoClientTest(unittest.TestCase):
         service.stopping.is_set.return_value = False
         service.client = mock.Mock()
         service.client.is_connected = False
+        service.client.available_ports.return_value = frozenset()
         service.client.connect.side_effect = RuntimeError("未找到 Pico")
         service._run_development_loop = mock.Mock(return_value=0)
 
@@ -144,6 +231,38 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual(result, 0)
         service.client.connect.assert_called_once_with()
         service._run_development_loop.assert_called_once_with()
+
+    def test_connection_failure_waits_for_usb_change_before_retry(self):
+        """确认首次探测失败后仅在 USB 端口变化后延迟重试。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(
+            port=None,
+            ping_target="127.0.0.1",
+            interval=1.0,
+            reconnect_interval=3.0,
+            screen_rotation=0,
+            network_unit="MB",
+            lcd_style="horizontal_disk",
+            dev=False,
+            upgrade_pico=False,
+            once=False,
+        )
+        service.stopping = mock.Mock()
+        service.stopping.is_set.side_effect = [False, False, False, True]
+        service.client = mock.Mock()
+        service.client.is_connected = False
+        service.client.available_ports.side_effect = [
+            frozenset({"COM1"}),
+            frozenset({"COM1"}),
+            frozenset({"COM2"}),
+        ]
+        service.client.connect.side_effect = RuntimeError("未找到 Pico")
+
+        self.assertEqual(service.run(), 0)
+
+        service.client.connect.assert_called_once_with()
+        service.stopping.wait.assert_any_call(0.5)
+        service.stopping.wait.assert_any_call(3.0)
 
     def test_ping_and_network_unit_arguments(self):
         """确认 Ping 默认地址和网络速率单位可以独立配置。"""
@@ -217,6 +336,35 @@ class PicoClientTest(unittest.TestCase):
 
 class SystemCollectorTest(unittest.TestCase):
     """验证系统采集器输出 Pico 仪表盘需要的字段。"""
+
+    def test_network_rates_use_selected_interface_counter(self):
+        """确认网络速率仅根据主通信接口的累计字节差值计算。"""
+        collector = SystemInformationCollector("127.0.0.1")
+        counters = [
+            ("eth0", 1000, 2000),
+            ("eth0", 1600, 2900),
+        ]
+
+        with mock.patch.object(collector, "_network_counter", side_effect=counters):
+            with mock.patch("system_monitor.time.monotonic", side_effect=(10.0, 11.0)):
+                self.assertEqual(collector._network_rates("192.168.1.2")[:2], (0, 0))
+                self.assertEqual(collector._network_rates("192.168.1.2")[:2], (600, 900))
+
+    def test_network_rates_reset_baseline_after_interface_change(self):
+        """确认出口接口切换后重置基线，避免累计计数差产生速率尖峰。"""
+        collector = SystemInformationCollector("127.0.0.1")
+        counters = [
+            ("eth0", 1000, 2000),
+            ("bond0", 500000, 800000),
+        ]
+
+        with mock.patch.object(collector, "_network_counter", side_effect=counters):
+            with mock.patch("system_monitor.time.monotonic", side_effect=(10.0, 11.0)):
+                collector._network_rates("192.168.1.2")
+                rates = collector._network_rates("192.168.1.2")
+
+        self.assertEqual(rates[:2], (0, 0))
+        self.assertEqual(rates[2:], (500000, 800000))
 
     @mock.patch.object(SystemInformationCollector, "_disk_temperatures", return_value={})
     @mock.patch.object(SystemInformationCollector, "_cpu_temperature", return_value=None)

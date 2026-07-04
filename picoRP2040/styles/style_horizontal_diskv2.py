@@ -6,8 +6,8 @@
 """提供原横向九磁盘仪表盘的紧凑字体版本。"""
 
 
-from style_horizontal_disk import HorizontalDiskStyle
-from style_plugins import register_style
+from styles.style_horizontal_disk import HorizontalDiskStyle
+from styles.style_plugins import register_style
 
 
 class HorizontalDiskV2Style(HorizontalDiskStyle):

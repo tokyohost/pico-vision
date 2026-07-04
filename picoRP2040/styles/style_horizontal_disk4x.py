@@ -15,7 +15,7 @@
 
 
 from config import BLACK, BLUE, DARK, GRAY, GREEN, PURPLE, RED, WHITE, YELLOW
-from style_plugins import register_style
+from styles.style_plugins import register_style
 
 
 # Element UI 经典状态色转换后的 RGB565 色值。
@@ -25,10 +25,10 @@ ELEMENT_DANGER = 0xF36D
 NETWORK_RATE_MAX_CHARS = 8
 
 
-class HorizontalDisk6xStyle:
-    """封装每行双磁盘、最多显示六块磁盘的横向仪表盘绘制规则。"""
+class HorizontalDisk4xStyle:
+    """封装每行双磁盘、最多显示四块磁盘的横向仪表盘绘制规则。"""
 
-    name = "horizontal_disk6x"
+    name = "horizontal_disk4x"
     width = 320
     height = 240
     landscape = True
@@ -52,7 +52,7 @@ class HorizontalDisk6xStyle:
             ("storage_summary", 106, 2, 212, 43),
             ("disk_row_0", 106, 49, 212, 48),
             ("disk_row_1", 106, 101, 212, 48),
-            ("disk_row_2", 106, 153, 212, 48),
+            ("network_details", 106, 153, 212, 56),
             ("footer", 2, 213, 316, 25),
         ]
 
@@ -76,11 +76,17 @@ class HorizontalDisk6xStyle:
         )
         if previous_network != current_network:
             selected.append(region_map["network"])
+            selected.append(region_map["network_details"])
+        if (
+            previous.get("gpu") != current.get("gpu")
+            and region_map["network_details"] not in selected
+        ):
+            selected.append(region_map["network_details"])
         if previous.get("disk") != current.get("disk"):
             selected.append(region_map["storage_summary"])
         previous_disks = previous.get("physical_disks") or previous.get("disks", ())
         current_disks = current.get("physical_disks") or current.get("disks", ())
-        for row in range(3):
+        for row in range(2):
             start = row * 2
             current_row = current_disks[start:start + 2]
             has_health_alarm = any(cls._number(disk.get("health")) >= 3 for disk in current_row)
@@ -249,6 +255,23 @@ class HorizontalDisk6xStyle:
         else:
             number = "{:.1f}".format(amount)
         return (number + units[unit_index])[:5]
+
+    @classmethod
+    def _format_link_speed(cls, value):
+        """把网口协商速率格式化为紧凑的 Mbps 或 Gbps 文本。"""
+        speed = max(0, cls._number(value))
+        if speed <= 0:
+            return "--Mbps"
+        if speed >= 1000:
+            gigabits = speed / 1000
+            # MicroPython 的浮点对象不保证实现 is_integer，使用整数比较保持兼容。
+            number = (
+                str(int(gigabits))
+                if gigabits == int(gigabits)
+                else "{:.1f}".format(gigabits)
+            )
+            return number + "Gbps"
+        return "{}Mbps".format(int(speed))
 
     @classmethod
     def _format_uptime(cls, seconds):
@@ -480,11 +503,11 @@ class HorizontalDisk6xStyle:
         canvas.fill_rect(x + 14, y + height - 8, width - 28, 2, DARK)
 
     def _draw_disk_cards(self, canvas, snapshot, selected_row=None):
-        """按每行两张卡片绘制最多六块物理磁盘及其实时读写趋势。"""
+        """按每行两张卡片绘制最多四块物理磁盘及其实时读写趋势。"""
         # 优先使用主机端明确提供的物理磁盘统计，并兼容旧版 disks 字段。
         disks = snapshot.get("physical_disks") or snapshot.get("disks", ())
-        disks = disks[:6]
-        for index in range(6):
+        disks = disks[:4]
+        for index in range(4):
             column, row = index % 2, index // 2
             if selected_row is not None and row != selected_row:
                 continue
@@ -534,6 +557,43 @@ class HorizontalDisk6xStyle:
                 disk.get("write_history", ()), RED if all_red else YELLOW, filled=True,
             )
 
+    def _draw_network_details(self, canvas, snapshot):
+        """分栏绘制网络详情以及 GPU 使用率和实心历史折线图。"""
+        network = snapshot.get("network", {})
+        self._frame(canvas, 106, 153, 212, 56, BLUE)
+        canvas.line(211, 154, 211, 207, BLUE)
+        canvas.text(110, 157, "IP", BLUE, 1)
+        canvas.text(126, 157, str(network.get("ip") or "0.0.0.0")[:15], WHITE, 1)
+        canvas.text(110, 169, "LINK", BLUE, 1)
+        canvas.text(
+            142, 169,
+            self._format_link_speed(network.get("link_speed_mbps")), WHITE, 1,
+        )
+        canvas.text(110, 181, "↑", BLUE, 1)
+        canvas.text(
+            122, 181,
+            self._format_bytes(network.get("transmit_bytes")), WHITE, 1,
+        )
+        canvas.text(110, 193, "↓", GREEN, 1)
+        canvas.text(
+            122, 193,
+            self._format_bytes(network.get("receive_bytes")), WHITE, 1,
+        )
+        gpu = snapshot.get("gpu") or {}
+        gpu_percent = gpu.get("percent")
+        if gpu_percent is not None:
+            gpu_text = "{}%".format(int(self._number(gpu_percent)))
+            canvas.text(216, 157, "GPU", PURPLE, 1)
+            canvas.text(
+                312 - canvas.text_width(gpu_text), 158,
+                gpu_text, self._usage_color(gpu_percent), 1,
+            )
+            self._history(
+                canvas, 216, 170, 96, 34,
+                gpu.get("history", ()), self._usage_color(gpu_percent),
+                percentage=True, filled=True, color_by_value=True,
+            )
+
     def _draw_footer(self, canvas, snapshot):
         """绘制横屏底部的时间、运行时长和功耗。"""
         self._frame(canvas, 2, 213, 316, 25, BLUE)
@@ -568,8 +628,10 @@ class HorizontalDisk6xStyle:
             self._draw_network(canvas, snapshot)
         if self._visible(canvas, 2, 45):
             self._draw_storage_summary(canvas, snapshot)
-        if self._visible(canvas, 49, 205):
+        if self._visible(canvas, 49, 149):
             self._draw_disk_cards(canvas, snapshot)
+        if self._visible(canvas, 153, 209):
+            self._draw_network_details(canvas, snapshot)
         if self._visible(canvas, 213, 238):
             self._draw_footer(canvas, snapshot)
 
@@ -587,13 +649,15 @@ class HorizontalDisk6xStyle:
             self._draw_storage_summary(canvas, snapshot)
         elif key.startswith("disk_row_"):
             self._draw_disk_cards(canvas, snapshot, int(key[-1]))
+        elif key == "network_details":
+            self._draw_network_details(canvas, snapshot)
         else:
             self._draw_footer(canvas, snapshot)
 
 
-def create_horizontal_disk6x_style():
-    """创建每行双磁盘、最多六块磁盘的横向 LCD 样式插件。"""
-    return HorizontalDisk6xStyle()
+def create_horizontal_disk4x_style():
+    """创建每行双磁盘、最多四块磁盘的横向 LCD 样式插件。"""
+    return HorizontalDisk4xStyle()
 
 
-register_style(HorizontalDisk6xStyle.name, create_horizontal_disk6x_style)
+register_style(HorizontalDisk4xStyle.name, create_horizontal_disk4x_style)

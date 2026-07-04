@@ -103,6 +103,7 @@ def create_argument_parser():
     parser.add_argument("--disk-health-test-index", type=int, default=int(os.getenv("PICO_MONITOR_DISK_HEALTH_TEST_INDEX", "0")), help="磁盘健康显示测试：指定从 1 开始的磁盘序号，0 表示关闭")
     parser.add_argument("--disk-health-test-level", type=int, choices=range(6), default=int(os.getenv("PICO_MONITOR_DISK_HEALTH_TEST_LEVEL", "3")), help="磁盘健康显示测试等级，范围为 0 至 5，默认 3")
     parser.add_argument("--once", action="store_true", help="仅成功发送一次数据")
+    parser.add_argument("--pico-info", action="store_true", help="连接 Pico，显示开发板型号、屏幕方案和固件版本后退出")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--upgrade-pico", action="store_true", help="下载当前 Monitor 版本的 Pico 升级包并执行升级")
     parser.add_argument("--upgrade-url", default=os.getenv("PICO_MONITOR_UPGRADE_URL") or None, help="覆盖 Pico 升级包下载地址")
@@ -148,6 +149,7 @@ class MonitorService:
         """持续连接设备、采集指标并发送最新系统快照。"""
         LOGGER.info("监控服务启动：端口=%s，Ping=%s，发送间隔=%.1f 秒，重连间隔=%.1f 秒，屏幕旋转=%d°，网络单位=%s，LCD 样式=%s，开发模式=%s", self.arguments.port or "自动发现", self.arguments.ping_target, self.arguments.interval, self.arguments.reconnect_interval, self.arguments.screen_rotation, self.arguments.network_unit, self.arguments.lcd_style, "开启" if self.arguments.dev else "关闭")
         while not self.stopping.is_set():
+            ports_before_probe = self.client.available_ports()
             try:
                 if not self.client.is_connected:
                     LOGGER.info("正在搜索 Pico LCD 设备")
@@ -175,11 +177,25 @@ class MonitorService:
                 remaining = self.arguments.interval - (time.monotonic() - started)
                 self.stopping.wait(max(0.0, remaining))
             except (OSError, RuntimeError, serial.SerialException) as error:
-                LOGGER.warning("监控通信异常：%s；%.1f 秒后重试", error, self.arguments.reconnect_interval)
+                LOGGER.warning("监控通信异常：%s；等待 USB 端口变化", error)
                 self.client.close()
+                if not self._wait_for_usb_change(ports_before_probe):
+                    break
+                LOGGER.info(
+                    "USB 端口已变化，%.1f 秒后重新探测 Pico LCD",
+                    self.arguments.reconnect_interval,
+                )
                 self.stopping.wait(self.arguments.reconnect_interval)
         LOGGER.info("监控服务已停止")
         return 0
+
+    def _wait_for_usb_change(self, previous_ports):
+        """等待系统串口集合变化，期间不发起 Pico 握手。"""
+        while not self.stopping.is_set():
+            if self.client.available_ports() != previous_ports:
+                return True
+            self.stopping.wait(0.5)
+        return False
 
     def _upgrade_pico(self):
         """下载当前 Monitor 版本升级包，完成串口升级后退出。"""
@@ -268,10 +284,46 @@ def log_monitor_version():
     LOGGER.info("Pico Monitor 启动：版本=%s", MONITOR_VERSION)
 
 
+def format_pico_information(information):
+    """将 Pico 硬件配置与固件版本格式化为终端文本。"""
+    return "\n".join((
+        "Pico 开发板型号：{}".format(
+            information.get("board_model") or "未知（旧版固件未提供）"
+        ),
+        "Pico 屏幕色彩方案：{}".format(
+            information.get("screen_color_profile") or "未知（旧版固件未提供）"
+        ),
+        "Pico 固件版本：{}".format(
+            information.get("firmware_version") or "未知（旧版固件未提供）"
+        ),
+    ))
+
+
+def show_pico_information(port=None):
+    """连接指定或自动发现的 Pico，输出设备信息后安全断开。"""
+    client = PicoJsonClient(port)
+    try:
+        client.connect()
+        _write_version_to_console(
+            format_pico_information(client.device_information())
+        )
+        return 0
+
+    finally:
+        client.close()
+
+
 def validate_arguments(arguments):
     """校验通用间隔以及启用 qBittorrent 后的必填连接参数。"""
+    exclusive_actions = sum(bool(value) for value in (
+        arguments.pico_info, arguments.upgrade_pico, arguments.update,
+    ))
+    if exclusive_actions > 1:
+        raise SystemExit("--pico-info、--upgrade-pico 和 --update 不能同时使用")
     if arguments.interval <= 0 or arguments.reconnect_interval <= 0 or arguments.qbittorrent_interval <= 0:
         raise SystemExit("采集间隔和重连间隔必须大于 0")
+    if arguments.pico_info:
+        return
     if not arguments.qbittorrent_enabled:
         return
     required = (
@@ -288,12 +340,19 @@ def main():
     """校验参数并按当前平台启动后台工作进程或 Windows 托盘。"""
     arguments = create_argument_parser().parse_args()
     validate_arguments(arguments)
-    if sys.platform == "win32" and getattr(sys, "frozen", False) and not arguments.worker:
+    if (
+        sys.platform == "win32"
+        and getattr(sys, "frozen", False)
+        and not arguments.worker
+        and not arguments.pico_info
+    ):
         from windows_tray import WindowsTrayApplication
 
         return WindowsTrayApplication([*sys.argv[1:], "--worker"]).run()
     configure_logging()
     log_monitor_version()
+    if arguments.pico_info:
+        return show_pico_information(arguments.port)
     if arguments.update:
         LinuxDebUpdater(GITHUB_REPOSITORY, MONITOR_VERSION).update()
         return 0

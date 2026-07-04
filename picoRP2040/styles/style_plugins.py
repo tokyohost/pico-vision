@@ -58,7 +58,7 @@ def release_style(name):
     """释放已停用样式的工厂和模块，使其占用的堆内存可被回收。"""
     normalized_name = _normalize_name(name)
     _STYLE_FACTORIES.pop(normalized_name, None)
-    sys.modules.pop("style_" + normalized_name, None)
+    sys.modules.pop("styles.style_" + normalized_name, None)
     gc.collect()
 
 
@@ -78,6 +78,6 @@ def _load_style_module(name):
     """回收碎片内存后，按照命名约定动态导入样式模块。"""
     # 大型样式源码在首次导入时需要连续编译内存，LCD 初始化后先整理堆。
     gc.collect()
-    __import__("style_" + name)
+    __import__("styles.style_" + name)
     # 及时释放导入期间产生的临时解析对象，为条带画布保留连续空间。
     gc.collect()

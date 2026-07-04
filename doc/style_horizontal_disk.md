@@ -1,6 +1,6 @@
 # 横向磁盘统计表盘说明
 
-`style_horizontal_disk.py` 实现名为 `horizontal_disk` 的 LCD 表盘样式。该样式面向 320×240 横屏，在保留 CPU、内存和网络概览的同时，把主要显示空间用于磁盘总览和各分区统计。
+`styles/style_horizontal_disk.py` 实现名为 `horizontal_disk` 的 LCD 表盘样式。该样式面向 320×240 横屏，在保留 CPU、内存和网络概览的同时，把主要显示空间用于磁盘总览和各分区统计。
 
 ## 启用方式
 

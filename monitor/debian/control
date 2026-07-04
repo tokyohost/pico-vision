@@ -8,7 +8,7 @@ Rules-Requires-Root: no
 
 Package: pico-monitor
 Architecture: any
-Depends: ${misc:Depends}, python3, python3-psutil, python3-serial, iputils-ping
+Depends: ${misc:Depends}, python3, python3-psutil, python3-serial, python3-pyroute2, iputils-ping
 Description: Pico LCD 系统硬件监控程序
  通过操作系统底层接口采集 CPU、内存、磁盘、网络和温度指标，
  并经 USB 串口实时发送至 Pico RP2040 LCD。

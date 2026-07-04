@@ -13,6 +13,7 @@
 ## 主要功能
 
 - 自动发现并握手识别 Pico LCD，也可固定串口。
+- 连接后读取并记录 Pico 开发板型号、屏幕色彩方案和当前固件版本。
 - 下载当前 Monitor 版本对应的 Pico 升级包，经 SHA-256 校验后通过串口升级固件。
 - 磁盘汇总统计所有有效本地分区，并发送每个磁盘的设备、挂载点、容量、占用率和可用温度。
 - Linux 支持通过 RAPL 能耗计数器发送实时功耗；不支持的平台明确发送空值。
@@ -56,6 +57,7 @@ python pico_monitor.py
 --dev                       开发模式；未发现 Pico 后停止重试并持续打印 JSON
 --once                      成功发送一次后退出
 --version                   显示 Monitor 构建版本并退出
+--pico-info                 显示已连接 Pico 的板型、屏幕方案和固件版本
 --upgrade-pico              下载当前 Monitor 版本升级包并升级 Pico
 --upgrade-url URL           开发版或私有发布使用的升级包地址
 --upgrade-sha256 HASH       可选的升级包下载摘要校验值
@@ -127,7 +129,15 @@ pico-monitor --version
 
 ## Pico 在线升级
 
-发布版 Monitor 可执行 `pico-monitor --upgrade-pico`，程序会下载同版本 GitHub Release 中的 `pico-upgrade-v<版本>.zip`。开发版使用 `python pico_monitor.py --upgrade-pico --upgrade-url <地址>`。升级时 Monitor 与 Pico 会持续打印下载、传输、安装百分比；Pico 对每个文件核对长度和 SHA-256，全部通过后替换内部文件并自动软重启。传输或校验失败时只删除临时区，不安装未通过校验的文件。
+查看当前连接 Pico 的硬件配置与固件版本：
+
+```bash
+pico-monitor --pico-info
+```
+
+该命令会自动发现 Pico，也可同时通过 `--port` 指定串口；信息打印完成后程序立即退出。
+
+发布版 Monitor 可执行 `pico-monitor --upgrade-pico`，程序会下载同版本 GitHub Release 中的 `pico-upgrade-v<版本>.zip`。该无后缀兼容包仅适用于 `rp2040_usb` 与 `st7789vw_2inch`。其他硬件必须从 Release 选择 `pico-upgrade-v<版本>-<开发板型号>-<屏幕方案>.zip`，并通过 `--upgrade-url` 指定。升级时 Monitor 与 Pico 会持续打印下载、传输、安装百分比；Pico 对每个文件核对长度和 SHA-256，全部通过后替换内部文件并自动软重启。传输或校验失败时只删除临时区，不安装未通过校验的文件。
 
 ### Linux DEB 安装后升级 Pico
 
@@ -217,7 +227,8 @@ python pico_monitor.py `
 - `pico-monitor_<版本>_armhf.deb`：ARM 32 位硬浮点设备
 - `pico-monitor_<版本>_i386.deb`：Intel/AMD 32 位电脑
 - `pico-monitor-<版本>-linux.tar.gz`：Fedora、RHEL、openSUSE、Arch 等 systemd 发行版通用安装包
-- `pico-upgrade-v<版本>.zip` 与 `.sha256`：Pico 串口升级包及下载摘要
+- `pico-upgrade-v<版本>-<开发板型号>-<屏幕方案>.zip` 与 `.sha256`：定向 Pico 串口升级包及下载摘要
+- `pico-upgrade-v<版本>.zip` 与 `.sha256`：默认硬件组合的兼容升级包
 
 发布示例：
 
