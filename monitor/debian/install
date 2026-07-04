@@ -5,5 +5,6 @@ monitor_update.py usr/lib/pico-monitor
 build_info.py usr/lib/pico-monitor
 qbittorrent_monitor.py usr/lib/pico-monitor
 system_monitor.py usr/lib/pico-monitor
+history.py usr/lib/pico-monitor
 bin/pico-monitor usr/bin
 debian/pico-monitor.conf etc
