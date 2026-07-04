@@ -26,6 +26,15 @@
 - `canvas.py`：带条带裁剪的 RGB565 绘图。
 - `dashboard.py`：仪表盘布局和分段刷新。
 - `config.py`：引脚、周期、协议和颜色配置。
+- `color_manager.py`：按屏幕型号管理反色模式和 RGB/BGR 颜色顺序。
+
+屏幕色彩由 `picoRP2040/config.py` 中的 `SCREEN_COLOR_PROFILE` 选择：
+
+- `st7789vw_2inch`：旧款 ST7789VW 二英寸屏，开启反色并使用 RGB 顺序。
+- `st7789_2_4inch`：新款二点四英寸屏，关闭反色并使用 RGB 顺序。
+- `st7789_2_4inch_bgr`：新款屏的 BGR 变体；仅在红色与蓝色互换时使用。
+
+旧配置名 `st7789_2inch` 仍可使用，并会自动映射到 `st7789vw_2inch`。
 
 ## 通信协议
 

@@ -21,6 +21,9 @@ LCD_STRIP_HEIGHT = 40
 # 未收到新 JSON 时仍使用缓存快照主动刷新的最大间隔，保证至少一帧每秒。
 RENDER_INTERVAL_MS = 1000
 LCD_STYLE = "disk"
+# 屏幕色彩方案：旧款 ST7789VW 二英寸屏使用 st7789vw_2inch；新款
+# 二点四英寸屏使用 st7789_2_4inch。当前默认选择新款屏幕。
+SCREEN_COLOR_PROFILE = "st7789vw_2inch"
 
 # JSON 数据包限制与单次读取预算。
 MAX_JSON_SIZE = 16 * 1024

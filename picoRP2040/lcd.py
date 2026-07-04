@@ -26,10 +26,12 @@ from config import (
     PIN_MOSI,
     PIN_RST,
     PIN_SCK,
+    SCREEN_COLOR_PROFILE,
     WIDTH,
     X_OFFSET,
     Y_OFFSET,
 )
+from color_manager import get_color_profile
 
 
 class LcdDevice:
@@ -51,6 +53,7 @@ class LcdDevice:
         )
         self._rotation = 0
         self._landscape = False
+        self._color_profile = get_color_profile(SCREEN_COLOR_PROFILE)
 
     def write_command(self, command):
         """向 LCD 写入一个控制命令。"""
@@ -96,7 +99,7 @@ class LcdDevice:
         time.sleep_ms(120)
         self.command(0x3A, b"\x55")
         self._write_orientation()
-        self.command(0x21)
+        self.command(self._color_profile.inversion_command())
         self.command(0x13)
         time.sleep_ms(10)
         self.command(0x29)
@@ -128,7 +131,12 @@ class LcdDevice:
             value = 0xA0 if self._rotation == 180 else 0x60
         else:
             value = 0xC0 if self._rotation == 180 else 0x00
+        value |= self._color_profile.madctl_color_bits()
         self.command(0x36, bytes((value,)))
+
+    def color_profile_name(self):
+        """返回当前 LCD 正在使用的屏幕色彩方案名称。"""
+        return self._color_profile.name
 
     def rotation(self):
         """返回当前生效的屏幕旋转角度。"""

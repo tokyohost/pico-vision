@@ -46,6 +46,11 @@ class Application:
         self._protocol.write(b"BOOT:LED_READY\n")
         self._lcd = LcdDevice()
         self._lcd.initialize()
+        self._protocol.write(
+            "BOOT:LCD_COLOR_PROFILE:{}\n".format(
+                self._lcd.color_profile_name()
+            ).encode()
+        )
         self._protocol.write(b"BOOT:LCD_READY\n")
         self._renderer = DashboardRenderer(self._lcd)
         self._cache = SnapshotCache()
