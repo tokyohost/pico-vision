@@ -104,6 +104,9 @@ pico_hole_d = 2.10;
 
 // Pico placement on the rear cover.
 // USB-C side is the negative-Y end. It sits near the bottom Type-C opening.
+// IMPORTANT:
+// Keep the Type-C opening derived from the Pico position on the rear cover.
+// Do not tune the shell opening independently, otherwise the port may not align after the Pico is screwed to the cover.
 pico_usb_edge_inset = 1.10;
 pico_usb_edge_y = -body_h/2 + wall + pico_usb_edge_inset;
 pico_center_y = pico_usb_edge_y + pico_pcb_h/2;
@@ -123,18 +126,32 @@ pico_usb_pad_z = pico_standoff_h;
 
 // ---------- USB-C opening ----------
 // Rounded Type-C shaped side opening, not a square hole.
-// Tune width/height after measuring your real connector and printer shrinkage.
+// The opening position is calculated from the Pico mounted on the rear cover,
+// so changing cover_t / pico_standoff_h / pico_usb_edge_inset will move the opening together.
 typec_open_w = 9.40;
 typec_open_h = 3.80;
 typec_open_r = typec_open_h/2 - 0.05;
 typec_cut_depth = wall + 4.50;
 
+// Type-C connector mouth position relative to the Pico PCB USB-side edge.
+// Positive value means the connector mouth protrudes past the Pico PCB edge toward negative Y.
+typec_mouth_from_pico_usb_edge = 1.20;
+
 // Connector center in Z when Pico is mounted on the recessed rear cover.
-// Adjust this if the plug is visually high/low after a draft print.
+// If the real plug is visually high/low after a draft print, tune only this value.
+// Larger value moves the shell opening toward the front/screen side because the Pico component face points inward.
 typec_center_from_pcb_front = 1.70;
-pico_board_center_z = shell_depth - cover_t - pico_standoff_h - pico_pcb_t/2;
-typec_open_center_z = pico_board_center_z - pico_pcb_t/2 - typec_center_from_pcb_front;
-typec_open_y = -body_h/2 + wall/2;
+
+// Derived Pico / Type-C coordinates in the final assembly.
+// The Pico PCB is screwed onto the front-facing top of the rear-cover standoffs.
+pico_mount_face_z = shell_depth - cover_t - pico_standoff_h;
+pico_board_front_z = pico_mount_face_z - pico_pcb_t;
+pico_board_center_z = pico_board_front_z + pico_pcb_t/2;
+
+// Opening center follows the real Type-C connector center after the Pico is fixed on the rear cover.
+typec_open_x = pico_center_x;
+typec_open_y = pico_usb_edge_y - typec_mouth_from_pico_usb_edge;
+typec_open_center_z = pico_board_front_z - typec_center_from_pcb_front;
 
 // ---------- Helper modules ----------
 module round_rect_2d(w, h, r) {
@@ -243,7 +260,7 @@ module front_shell() {
 
     // Type-C side opening. Cut through shell and shelf if they overlap.
     side_typec_cut(typec_open_w, typec_open_h, typec_cut_depth, typec_open_r,
-                   0, typec_open_y, typec_open_center_z);
+                   typec_open_x, typec_open_y, typec_open_center_z);
 
     // Screen M2 pilot holes.
     at_screen_holes()
@@ -311,15 +328,17 @@ module pico_reference() {
 
   // Type-C connector rough envelope near USB side.
   color([1.0, 0.45, 0.10, 0.55])
-    translate([pico_center_x, pico_usb_edge_y - 1.20, typec_open_center_z])
+    translate([typec_open_x, typec_open_y, typec_open_center_z])
       cube([9.00, 4.00, 3.20], center = true);
 }
 
 module assembled_back_cover() {
   // Rotate cover so its inner features point into the shell.
+  // Use Y-axis flip instead of X-axis flip so the Pico USB-C side remains on negative-Y,
+  // matching the front-shell bottom Type-C opening after assembly.
   // Outside/back face becomes flush with shell rear at Z = shell_depth.
   translate([0, 0, shell_depth])
-    rotate([180, 0, 0])
+    rotate([0, 180, 0])
       back_cover();
 }
 
@@ -343,5 +362,5 @@ if (part == "print_plate") {
   // Type-C opening reference.
   color([1.0, 0.20, 0.10, 0.45])
     side_typec_cut(typec_open_w, typec_open_h, 1.80, typec_open_r,
-                   0, typec_open_y - 1.30, typec_open_center_z);
+                   typec_open_x, typec_open_y, typec_open_center_z);
 }
