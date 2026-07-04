@@ -12,6 +12,7 @@ def update_per_second(history, value, state, now=None):
     if previous_second is None:
         history.append(value)
     elif second <= previous_second:
+        value = max(previous_value, value)
         if history:
             history[-1] = value
         else:
@@ -24,4 +25,3 @@ def update_per_second(history, value, state, now=None):
 
     state["second"] = max(second, previous_second if previous_second is not None else second)
     state["value"] = value
-

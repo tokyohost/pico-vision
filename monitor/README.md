@@ -8,7 +8,7 @@
 
 网络统计通过 `network.receive_bytes` 提供已下载总流量，通过 `network.transmit_bytes` 提供已上传总流量，单位均为字节。
 
-所有 `history`、`*_history` 字段均以一秒为固定时间格，表示最近 24 秒，不受 `PICO_MONITOR_INTERVAL` 或 qBittorrent 采集间隔影响。同一秒内的多次采集会更新当前点；跨过多秒时，缺失秒使用上一秒数值补齐。
+所有 `history`、`*_history` 字段均以一秒为固定时间格，表示最近 24 秒，不受 `PICO_MONITOR_INTERVAL` 或 qBittorrent 采集间隔影响。同一秒内的多次采集保留峰值，避免折线尖峰被后续低值擦除；跨过多秒时，缺失秒使用上一秒数值补齐。
 
 开启并配置 qBittorrent Web UI 后，程序会在后台通过 Web API 采集 `qbittorrent` 顶层指标，不会阻塞系统指标发送。字段包括实时上传下载速度及历史、会话与历史流量、历史分享率、会话丢弃、连接用户、下载目录剩余空间和种子状态数量。完整配置与字段说明见 [qbittorrent_config.md](qbittorrent_config.md)。
 

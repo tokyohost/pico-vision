@@ -7,12 +7,13 @@ from history import update_per_second
 
 
 class PerSecondHistoryTest(unittest.TestCase):
-    def test_repeated_samples_replace_the_current_second(self):
+    def test_repeated_samples_keep_the_current_second_peak(self):
         history = deque([0] * 4, maxlen=4)
         state = {}
 
         update_per_second(history, 10, state, now=100.1)
-        update_per_second(history, 20, state, now=100.9)
+        update_per_second(history, 20, state, now=100.5)
+        update_per_second(history, 5, state, now=100.9)
 
         self.assertEqual(list(history), [0, 0, 0, 20])
 
