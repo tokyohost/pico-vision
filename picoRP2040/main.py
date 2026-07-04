@@ -18,7 +18,7 @@ import gc
 import sys
 import time
 
-from config import LCD_STYLE, RENDER_INTERVAL_MS
+from config import BOARD_MODEL, LCD_STYLE, RENDER_INTERVAL_MS
 from protocol import JsonProtocol
 
 
@@ -37,12 +37,19 @@ class Application:
         from dashboard import DashboardRenderer
         from data_receiver import DataReceiver, SnapshotCache
         from lcd import LcdDevice
-        from ledController import LedController
+        from board_manager import get_board_profile
+        from led import create_led_controller
 
         self._protocol = protocol
         self._protocol.write(b"BOOT:PROTOCOL_READY\n")
-        self._led = LedController()
+        self._board_profile = get_board_profile(BOARD_MODEL)
+        self._led = create_led_controller(self._board_profile)
         self._led.start()
+        self._protocol.write(
+            "BOOT:BOARD_MODEL:{}\n".format(
+                self._board_profile.name
+            ).encode()
+        )
         self._protocol.write(b"BOOT:LED_READY\n")
         self._lcd = LcdDevice()
         self._lcd.initialize()

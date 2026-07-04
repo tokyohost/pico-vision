@@ -14,6 +14,10 @@
 """集中定义 RP2040、ST7789、WS2812 和通信协议参数。"""
 
 
+# 开发板型号：多色 WS2812 灯版本使用 rp2040_usb；GP25 单色灯版本使用
+# rp2040_typec。具体引脚由开发板硬件档案统一管理。
+BOARD_MODEL = "rp2040_typec"
+
 # ST7789 显示参数。
 WIDTH = 240
 HEIGHT = 320
@@ -40,9 +44,7 @@ PIN_BL = 26
 X_OFFSET = 0
 Y_OFFSET = 0
 
-# 板载 WS2812 参数。
-PIN_LED = 22
-LED_COUNT = 1
+# 板载状态灯公共时序参数。
 LED_BRIGHTNESS = 10
 LED_ON_DURATION_MS = 200
 LED_OFF_DURATION_MS = 1500
