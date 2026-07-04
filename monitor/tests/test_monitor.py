@@ -17,6 +17,8 @@
 import json
 import os
 import unittest
+import zlib
+import base64
 from unittest import mock
 from types import SimpleNamespace
 
@@ -90,7 +92,7 @@ class PicoClientTest(unittest.TestCase):
         client.serial = FakeSerial()
         with self.assertLogs("pico-monitor.serial", level="INFO") as logs:
             client.send({"version": 1})
-        self.assertTrue(client.serial.written.startswith(b"PV1:JSON:"))
+        self.assertTrue(client.serial.written.startswith(b"PV1:JSONZ:"))
         self.assertTrue(client.serial.written.endswith(b"\n"))
         self.assertTrue(any("Monitor -> Pico" in message for message in logs.output))
         self.assertTrue(any("Pico -> Monitor" in message for message in logs.output))
@@ -119,11 +121,13 @@ class PicoClientTest(unittest.TestCase):
         """确认开发模式打印内容与真实串口 JSON 协议行一致。"""
         packet = PicoJsonClient.build_packet({"host": "开发机"})
 
-        self.assertTrue(packet.startswith(b"PV1:JSON:"))
+        self.assertTrue(packet.startswith(b"PV1:JSONZ:"))
         self.assertTrue(packet.endswith(b"\n"))
         message_type, payload = parse_frame(packet)
-        self.assertEqual(message_type, "JSON")
-        self.assertIn(b'"host"', payload)
+        self.assertEqual(message_type, "JSONZ")
+        compressed = base64.b64decode(payload)
+        self.assertEqual(compressed[0] >> 4, 1)
+        self.assertIn(b'"host"', zlib.decompress(compressed))
 
     def test_wire_packet_omits_duplicate_logical_disks(self):
         """已有物理磁盘列表时不重复发送逻辑磁盘列表。"""
@@ -133,7 +137,7 @@ class PicoClientTest(unittest.TestCase):
         }
 
         _, payload = parse_frame(PicoJsonClient.build_packet(snapshot))
-        decoded = json.loads(payload)
+        decoded = json.loads(zlib.decompress(base64.b64decode(payload)))
         self.assertNotIn("disks", decoded)
         self.assertEqual(decoded["physical_disks"], snapshot["physical_disks"])
         self.assertIn("disks", snapshot)

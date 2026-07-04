@@ -28,6 +28,34 @@ try:
 except ImportError:
     import json
 
+try:
+    import zlib
+    ZLIB_ERROR = getattr(zlib, "error", ValueError)
+
+    def decompress_zlib(data):
+        return zlib.decompress(data, 15)
+except ImportError:
+    import deflate
+    try:
+        import io
+    except ImportError:
+        import uio as io
+
+    ZLIB_ERROR = OSError
+
+    def decompress_zlib(data):
+        source = io.BytesIO(data)
+        stream = deflate.DeflateIO(source, deflate.ZLIB, 9)
+        try:
+            return stream.read()
+        finally:
+            stream.close()
+
+try:
+    import ubinascii as binascii
+except ImportError:
+    import binascii
+
 from config import (
     BOARD_MODEL,
     DEVICE_NAME,
@@ -155,26 +183,36 @@ class JsonProtocol:
                     continue
                 if message_type == "PING":
                     self._write_pong()
-                elif message_type == "JSON":
+                elif message_type == "JSONZ":
                     try:
+                        decompress_started_ms = self._ticks_ms()
+                        compressed_payload = binascii.a2b_base64(payload)
+                        json_payload = decompress_zlib(compressed_payload)
+                        decompress_elapsed_ms = self._elapsed_ms(
+                            self._ticks_ms(), decompress_started_ms
+                        )
+                        if len(json_payload) > MAX_JSON_SIZE:
+                            raise ValueError("JSON_TOO_LARGE")
                         json_started_ms = self._ticks_ms()
-                        latest = json.loads(payload.decode("utf-8"))
+                        latest = json.loads(json_payload.decode("utf-8"))
                         json_elapsed_ms = self._elapsed_ms(
                             self._ticks_ms(), json_started_ms
                         )
                         timing = (
-                            "PROTOCOL_TIMING:TYPE=JSON:BYTES={}:READS={}:"
-                            "RX={}MS:FRAME_PARSE={}MS:JSON={}MS"
+                            "PROTOCOL_TIMING:TYPE=JSONZ:BYTES={}:JSON_BYTES={}:READS={}:"
+                            "RX={}MS:FRAME_PARSE={}MS:DECOMPRESS={}MS:JSON={}MS"
                         ).format(
                             len(line),
+                            len(json_payload),
                             frame_read_calls,
                             receive_elapsed_ms,
                             parse_elapsed_ms,
+                            decompress_elapsed_ms,
                             json_elapsed_ms,
                         )
                         self._write_frame("EVENT", timing.encode("ascii"))
                         self._write_frame("ACK", b"JSON")
-                    except (ValueError, UnicodeError):
+                    except (ValueError, UnicodeError, OSError, MemoryError, ZLIB_ERROR):
                         self._write_frame("ERR", b"BAD_JSON")
                 elif message_type == "UPGRADE":
                     if self._upgrade_manager is None:

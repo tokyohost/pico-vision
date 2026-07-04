@@ -17,6 +17,8 @@
 import json
 import logging
 import time
+import zlib
+import base64
 from array import array
 
 import serial
@@ -26,6 +28,7 @@ from serial.tools import list_ports
 FRAME_MAGIC = b"PV1"
 FRAME_MAX_PAYLOAD = 16 * 1024
 TRANSPORT_BLOCK_SIZE = 64
+ZLIB_WINDOW_BITS = 9
 
 
 def _build_crc16_byte_table():
@@ -219,7 +222,10 @@ class PicoJsonClient:
             ensure_ascii=True,
             separators=(",", ":"),
         ).encode("utf-8")
-        return build_frame("JSON", payload)
+        # 使用 512 字节 zlib 窗口，避免 RP2040 解压时申请默认的 32KB 连续堆。
+        compressor = zlib.compressobj(level=6, wbits=ZLIB_WINDOW_BITS)
+        compressed = compressor.compress(payload) + compressor.flush()
+        return build_frame("JSONZ", base64.b64encode(compressed))
 
     def send(self, snapshot):
         """分块发送单行 JSON 数据，并等待 Pico 返回接收确认。"""
@@ -228,7 +234,11 @@ class PicoJsonClient:
         build_started = time.monotonic()
         packet = memoryview(self.build_packet(snapshot))
         build_elapsed_ms = (time.monotonic() - build_started) * 1000
-        LOGGER.info("[Monitor -> Pico][%s][JSON][%d 字节] %s", self.port_name, len(packet), bytes(packet).decode("utf-8", errors="replace").rstrip())
+        LOGGER.info(
+            "[Monitor -> Pico][%s][JSONZ][压缩帧 %d 字节]",
+            self.port_name,
+            len(packet),
+        )
         send_started = time.monotonic()
         chunk_count = 0
         write_elapsed_ms = 0.0
