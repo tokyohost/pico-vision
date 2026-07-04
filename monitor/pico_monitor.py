@@ -24,7 +24,7 @@ import time
 import psutil
 import serial
 
-from pico_client import PicoJsonClient
+from pico_client import PicoJsonClient, PicoRestartingError
 from pico_upgrade import PicoFirmwareUpgrader, PicoUpgradeDownloader, PicoUpgradePackage
 from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
 from monitor_update import LinuxDebUpdater
@@ -179,6 +179,9 @@ class MonitorService:
             except (OSError, RuntimeError, serial.SerialException) as error:
                 LOGGER.warning("监控通信异常：%s；等待 USB 端口插入", error)
                 self.client.close()
+                if isinstance(error, PicoRestartingError):
+                    self.stopping.wait(self.arguments.reconnect_interval)
+                    continue
                 if not self._wait_for_usb_addition(ports_before_probe):
                     break
                 LOGGER.info(

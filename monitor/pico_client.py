@@ -92,6 +92,10 @@ SERIAL_WRITE_CHUNK_SIZE = 512
 LOGGER = logging.getLogger("pico-monitor.serial")
 
 
+class PicoRestartingError(RuntimeError):
+    """Pico reported a fatal condition and is restarting itself."""
+
+
 class PicoJsonClient:
     """封装 Pico LCD 自动发现、握手、数据发送和连接清理。"""
 
@@ -312,6 +316,8 @@ class PicoJsonClient:
                     self.port_name,
                 )
                 return
+            if frame and frame[0] == "EVENT" and frame[1].startswith(b"FATAL:MemoryError:"):
+                raise PicoRestartingError("Pico 内存不足，设备正在自动重启")
             if frame and frame[0] == "ERR":
                 raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
         LOGGER.error("[交互超时][%s] 5 秒内未收到 ACK:JSON", self.port_name)

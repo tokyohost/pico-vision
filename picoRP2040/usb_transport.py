@@ -1,5 +1,6 @@
 """Configure a dedicated USB CDC interface for PV1 application traffic."""
 
+import gc
 import time
 
 from config import (
@@ -34,4 +35,5 @@ def create_data_cdc(timeout_ms=USB_CDC_ENUMERATION_TIMEOUT_MS):
         if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
             raise RuntimeError("USB_DATA_CDC_ENUMERATION_TIMEOUT")
         time.sleep_ms(20)
+    gc.collect()
     return cdc
