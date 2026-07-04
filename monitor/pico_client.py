@@ -23,6 +23,8 @@ from serial.tools import list_ports
 
 
 SERIAL_PROTOCOL_BLOCK_SIZE = 64
+# 已发布固件使用 readinto(64) 接收串口数据；短包会在 Windows USB CDC
+# 上让固件等待剩余字节，因此握手也必须填满一个完整协议块。
 PING_COMMAND = b"PING:PICO_LCD?".ljust(
     SERIAL_PROTOCOL_BLOCK_SIZE - 1, b" "
 ) + b"\n"
@@ -92,7 +94,6 @@ class PicoJsonClient:
         self.board_model = None
         self.screen_color_profile = None
         self.firmware_version = None
-        legacy_response_received = False
         for attempt in range(1, 4):
             LOGGER.info("[Monitor -> Pico][%s][握手 %d/3] %s", device.port, attempt, PING_COMMAND.decode("ascii").strip())
             device.write(PING_COMMAND)
@@ -105,9 +106,7 @@ class PicoJsonClient:
                 if message.startswith("PONG:PICO_LCD:"):
                     self._parse_pong(message)
                     return True
-                if message == "BOOT:PICO_LCD_READY" or message.startswith("ACK:LCD_FRAME:"):
-                    legacy_response_received = True
-        return legacy_response_received
+        return False
 
     def _parse_pong(self, message):
         """解析新版握手中的开发板、屏幕方案和固件版本字段。"""

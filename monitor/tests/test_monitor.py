@@ -20,7 +20,7 @@ import unittest
 from unittest import mock
 from types import SimpleNamespace
 
-from pico_client import PicoJsonClient
+from pico_client import PING_COMMAND, PicoJsonClient
 from pico_monitor import (
     MonitorService,
     create_argument_parser,
@@ -123,6 +123,12 @@ class PicoClientTest(unittest.TestCase):
         self.assertTrue(packet.endswith(b"\n"))
         self.assertEqual(len(packet) % 64, 0)
         self.assertIn(b'"host"', packet)
+
+    def test_ping_fills_firmware_serial_read_block(self):
+        """握手命令填满固件读取块，避免 Windows CDC 短包阻塞 Pico。"""
+        self.assertEqual(len(PING_COMMAND), 64)
+        self.assertTrue(PING_COMMAND.startswith(b"PING:PICO_LCD?"))
+        self.assertTrue(PING_COMMAND.endswith(b"\n"))
 
     def test_parse_pico_hardware_and_firmware_information(self):
         """确认 Monitor 能从新版握手读取板型、屏幕方案和固件版本。"""
