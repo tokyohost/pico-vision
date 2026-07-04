@@ -30,7 +30,6 @@ FRAME_MAGIC = b"PV1"
 FRAME_MAX_PAYLOAD = 16 * 1024
 TRANSPORT_BLOCK_SIZE = 64
 POSIX_SYNC_DELAY_SECONDS = 1.05
-POSIX_WRITE_GAP_SECONDS = 0.002
 ZLIB_WINDOW_BITS = 9
 
 
@@ -167,33 +166,26 @@ class PicoJsonClient:
                 PING_COMMAND,
                 PING_COMMAND.hex(" "),
             )
+            # Debian's cdc_acm/TTY layer may merge separate 63+1 writes back
+            # into one full 64-byte USB packet.  Appending a harmless blank line
+            # makes the transfer 65 bytes, guaranteeing a terminating short
+            # packet while leaving the logical PV1 PING unchanged.
+            wire_ping = PING_COMMAND + b"\n" if os.name == "posix" else PING_COMMAND
             written = 0
-            while written < len(PING_COMMAND):
-                # Linux CDC ACM may coalesce one exact 64-byte write into a full
-                # USB endpoint packet.  Some MicroPython USB streams then keep
-                # waiting for another packet before making the final LF visible.
-                # A 63+1 physical split preserves the logical PV1 frame while
-                # forcing a short packet boundary.
-                split_at = TRANSPORT_BLOCK_SIZE - 1
-                end = len(PING_COMMAND)
-                if os.name == "posix" and written < split_at and end == TRANSPORT_BLOCK_SIZE:
-                    end = split_at
-                count = device.write(PING_COMMAND[written:end])
+            while written < len(wire_ping):
+                count = device.write(wire_ping[written:])
                 if not count:
                     raise serial.SerialTimeoutException(
-                        f"握手包仅发送 {written}/{len(PING_COMMAND)} 字节"
+                        f"握手包仅发送 {written}/{len(wire_ping)} 字节"
                     )
                 written += count
-                if os.name == "posix" and written == TRANSPORT_BLOCK_SIZE - 1:
-                    device.flush()
-                    time.sleep(POSIX_WRITE_GAP_SECONDS)
             device.flush()
             LOGGER.info(
                 "[Monitor -> Pico][%s][握手 %d/3][实际发送 %d/%d 字节]",
                 device.port,
                 attempt,
                 written,
-                len(PING_COMMAND),
+                len(wire_ping),
             )
             deadline = time.monotonic() + 1.2
             while time.monotonic() < deadline:

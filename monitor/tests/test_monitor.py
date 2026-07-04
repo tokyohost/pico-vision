@@ -157,9 +157,8 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual(parse_frame(PING_COMMAND), ("PING", b""))
 
     @mock.patch("pico_client.os.name", "posix")
-    @mock.patch("pico_client.time.sleep")
-    def test_posix_handshake_splits_pv1_ping(self, sleep):
-        """POSIX 将 64 字节 PING 拆成 63+1，逻辑帧保持不变。"""
+    def test_posix_handshake_terminates_full_usb_packet(self):
+        """POSIX 在 64 字节 PING 后添加空行，强制 USB 短包收尾。"""
         device = HandshakeSerial([
             build_frame("PONG", json.dumps({
                 "board_model": "rp2040_typec",
@@ -169,9 +168,8 @@ class PicoClientTest(unittest.TestCase):
         ])
 
         self.assertTrue(PicoJsonClient()._handshake(device))
-        self.assertEqual(device.write_calls, 2)
-        self.assertEqual(device.written, PING_COMMAND)
-        sleep.assert_called_once()
+        self.assertEqual(device.write_calls, 1)
+        self.assertEqual(device.written, PING_COMMAND + b"\n")
 
     @mock.patch("pico_client.time.sleep")
     def test_posix_recovery_clears_stale_serial_state(self, sleep):
