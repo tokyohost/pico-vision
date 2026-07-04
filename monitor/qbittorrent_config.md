@@ -50,8 +50,8 @@ sudo journalctl -u pico-monitor -f
 | `error` | 最近一次采集错误，成功时为空 | 文本 |
 | `upload_bps` | 当前上传速度 | 字节/秒 |
 | `download_bps` | 当前下载速度 | 字节/秒 |
-| `upload_history` | 最近 24 次上传速度 | 字节/秒数组 |
-| `download_history` | 最近 24 次下载速度 | 字节/秒数组 |
+| `upload_history` | 最近 24 秒上传速度 | 字节/秒数组 |
+| `download_history` | 最近 24 秒下载速度 | 字节/秒数组 |
 | `uploaded_bytes` | 本次会话已上传 | 字节 |
 | `downloaded_bytes` | 本次会话已下载 | 字节 |
 | `free_space_bytes` | qBittorrent 下载位置剩余空间 | 字节 |
