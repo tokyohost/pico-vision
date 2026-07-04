@@ -18,7 +18,7 @@ from config import (
     BLACK, BLUE, DARK, GRAY, GREEN, HEIGHT, PURPLE, RED, WHITE, WIDTH,
     YELLOW,
 )
-from style_plugins import register_style
+from styles.style_plugins import register_style
 
 
 class DefaultStyle:

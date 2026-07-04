@@ -19,7 +19,7 @@ import time
 
 from canvas import Canvas
 from config import HEIGHT, LCD_STRIP_HEIGHT, LCD_STYLE, WIDTH
-from style_plugins import create_style, normalize_style_name, release_style
+from styles.style_plugins import create_style, normalize_style_name, release_style
 
 
 class DashboardRenderer:

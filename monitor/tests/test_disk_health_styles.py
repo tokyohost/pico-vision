@@ -24,15 +24,15 @@ if str(PICO_SOURCE) not in sys.path:
     sys.path.insert(0, str(PICO_SOURCE))
 
 from config import BLUE, GRAY, RED, YELLOW  # noqa: E402
-from style_horizontal_disk import HorizontalDiskStyle  # noqa: E402
-from style_horizontal_disk4x_qb import HorizontalDisk4xQbStyle  # noqa: E402
-from style_horizontal_disk6x import (  # noqa: E402
+from styles.style_horizontal_disk import HorizontalDiskStyle  # noqa: E402
+from styles.style_horizontal_disk4x_qb import HorizontalDisk4xQbStyle  # noqa: E402
+from styles.style_horizontal_disk6x import (  # noqa: E402
     ELEMENT_DANGER,
     ELEMENT_SUCCESS,
     ELEMENT_WARNING,
     HorizontalDisk6xStyle,
 )
-from style_simple import SimpleStyle  # noqa: E402
+from styles.style_simple import SimpleStyle  # noqa: E402
 
 
 class HistoryCanvas:

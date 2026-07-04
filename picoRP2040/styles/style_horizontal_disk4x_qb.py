@@ -15,7 +15,7 @@
 
 
 from config import BLACK, BLUE, DARK, GRAY, GREEN, PURPLE, RED, WHITE, YELLOW
-from style_plugins import register_style
+from styles.style_plugins import register_style
 
 
 # Element UI 经典状态色转换后的 RGB565 色值。
@@ -25,14 +25,14 @@ ELEMENT_DANGER = 0xF36D
 NETWORK_RATE_MAX_CHARS = 8
 
 
-class HorizontalDiskStyle:
-    """封装三百二十乘二百四十横向磁盘统计仪表盘的绘制规则。"""
+class HorizontalDisk4xQbStyle:
+    """封装保留四磁盘布局并增加 qBittorrent 面板的横向绘制规则。"""
 
-    name = "horizontal_disk"
+    name = "horizontal_disk4x_qb"
     width = 320
     height = 240
     landscape = True
-    font_name = "screen_2inch"
+    font_name = "screen_2inch_compact"
 
     def __init__(self):
         """初始化磁盘健康告警的逐帧闪烁相位。"""
@@ -52,7 +52,7 @@ class HorizontalDiskStyle:
             ("storage_summary", 106, 2, 212, 43),
             ("disk_row_0", 106, 49, 212, 48),
             ("disk_row_1", 106, 101, 212, 48),
-            ("disk_row_2", 106, 153, 212, 48),
+            ("network_details", 106, 153, 212, 56),
             ("footer", 2, 213, 316, 25),
         ]
 
@@ -76,15 +76,17 @@ class HorizontalDiskStyle:
         )
         if previous_network != current_network:
             selected.append(region_map["network"])
+        if previous.get("qbittorrent") != current.get("qbittorrent"):
+            selected.append(region_map["network_details"])
         if previous.get("disk") != current.get("disk"):
             selected.append(region_map["storage_summary"])
         previous_disks = previous.get("physical_disks") or previous.get("disks", ())
         current_disks = current.get("physical_disks") or current.get("disks", ())
-        for row in range(3):
-            start = row * 3
-            current_row = current_disks[start:start + 3]
+        for row in range(2):
+            start = row * 2
+            current_row = current_disks[start:start + 2]
             has_health_alarm = any(cls._number(disk.get("health")) >= 3 for disk in current_row)
-            if previous_disks[start:start + 3] != current_row or has_health_alarm:
+            if previous_disks[start:start + 2] != current_row or has_health_alarm:
                 selected.append(region_map["disk_row_{}".format(row)])
         previous_footer = (
             previous.get("timestamp"), previous.get("uptime_seconds"),
@@ -203,39 +205,6 @@ class HorizontalDiskStyle:
             )
         return result[:8]
 
-    @staticmethod
-    def _format_disk_name(value, max_chars=4):
-        """压缩过长磁盘名称，并优先保留可识别的磁盘类型和编号。"""
-        name = str(value or "DISK").strip().upper()
-        if len(name) <= max_chars:
-            return name
-        compact_prefixes = (
-            ("PHYSICALDRIVE", "D"),
-            ("DISK", "D"),
-            ("NVME", "N"),
-            ("SATA", "S"),
-        )
-        for source_prefix, display_prefix in compact_prefixes:
-            if not name.startswith(source_prefix):
-                continue
-            remainder = name[len(source_prefix):].lstrip()
-            digits = ""
-            for character in remainder:
-                if not character.isdigit():
-                    break
-                digits += character
-            if digits:
-                return (display_prefix + digits)[:max_chars]
-        suffix = ""
-        index = len(name)
-        while index > 0 and name[index - 1].isdigit():
-            index -= 1
-        if index < len(name):
-            suffix = name[index:]
-        if suffix and len(suffix) < max_chars:
-            return name[:max_chars - len(suffix)] + suffix
-        return name[:max_chars]
-
     @classmethod
     def _format_rate(cls, value, unit):
         """按监控端配置生成不超过八个字符的网络速率。"""
@@ -265,6 +234,40 @@ class HorizontalDiskStyle:
                 continue
             available = NETWORK_RATE_MAX_CHARS - len(units[index])
             return (">" + "9" * max(0, available - 1) + units[index])[:NETWORK_RATE_MAX_CHARS]
+
+    @classmethod
+    def _format_disk_rate(cls, value):
+        """把磁盘每秒字节数压缩为适合卡片显示的短速率文本。"""
+        amount = max(0, cls._number(value))
+        units = ("B", "K", "M", "G", "T")
+        unit_index = 0
+        while amount >= 1000 and unit_index < len(units) - 1:
+            amount /= 1000
+            unit_index += 1
+        if amount >= 100:
+            number = str(int(round(amount)))
+        elif amount >= 10:
+            number = "{:.1f}".format(amount).rstrip("0").rstrip(".")
+        else:
+            number = "{:.1f}".format(amount)
+        return (number + units[unit_index])[:5]
+
+    @classmethod
+    def _format_link_speed(cls, value):
+        """把网口协商速率格式化为紧凑的 Mbps 或 Gbps 文本。"""
+        speed = max(0, cls._number(value))
+        if speed <= 0:
+            return "--Mbps"
+        if speed >= 1000:
+            gigabits = speed / 1000
+            # MicroPython 的浮点对象不保证实现 is_integer，使用整数比较保持兼容。
+            number = (
+                str(int(gigabits))
+                if gigabits == int(gigabits)
+                else "{:.1f}".format(gigabits)
+            )
+            return number + "Gbps"
+        return "{}Mbps".format(int(speed))
 
     @classmethod
     def _format_uptime(cls, seconds):
@@ -316,23 +319,21 @@ class HorizontalDiskStyle:
             point_y = y + height - 1 - int(ratio * (height - 1))
             points.append((point_x, point_y, numeric_value))
         if color_by_value:
-            self._draw_value_colored_history(canvas, y, height, points, filled)
+            self._draw_value_colored_history(
+                canvas, y, height, points, filled
+            )
             return
-        previous = points[0]
-        for point in points[1:]:
-            point_x, point_y = point[0], point[1]
-            if previous is not None:
-                if filled:
-                    span = max(1, point_x - previous[0])
-                    for fill_x in range(previous[0], point_x + 1):
-                        offset = fill_x - previous[0]
-                        fill_y = previous[1] + int(
-                            (point_y - previous[1]) * offset / span
-                        )
-                        canvas.line(
-                            fill_x, fill_y, fill_x, y + height - 1, color
-                        )
-                canvas.line(previous[0], previous[1], point_x, point_y, color)
+        plain_points = [(point[0], point[1]) for point in points]
+        native_filled = False
+        if filled:
+            native_filled = self._fill_history_area(
+                canvas, x, y, width, height, plain_points, color
+            )
+        if native_filled:
+            return
+        previous = plain_points[0]
+        for point in plain_points[1:]:
+            canvas.line(previous[0], previous[1], point[0], point[1], color)
             previous = point
 
     def _draw_value_colored_history(self, canvas, y, height, points, filled):
@@ -355,6 +356,51 @@ class HorizontalDiskStyle:
                 else:
                     canvas.pixel(draw_x, draw_y, sample_color)
             previous = point
+
+    @staticmethod
+    def _fill_history_area(canvas, x, y, width, height, points, color):
+        """优先原生填充趋势图，并为旧固件选择调用次数较少的扫描方向。"""
+        bottom = y + height - 1
+        polygon = list(points)
+        polygon.append((points[-1][0], bottom))
+        polygon.append((points[0][0], bottom))
+        if canvas.fill_polygon(polygon, color):
+            return True
+        top_by_x = [bottom] * width
+        previous = points[0]
+        for point in points[1:]:
+            span = max(1, point[0] - previous[0])
+            start = max(x, previous[0])
+            end = min(x + width - 1, point[0])
+            for fill_x in range(start, end + 1):
+                offset = fill_x - previous[0]
+                top_by_x[fill_x - x] = previous[1] + int(
+                    (point[1] - previous[1]) * offset / span
+                )
+            previous = point
+        scanline_runs = []
+        for fill_y in range(y, bottom + 1):
+            run_start = None
+            for offset, top in enumerate(top_by_x):
+                if top <= fill_y:
+                    if run_start is None:
+                        run_start = x + offset
+                elif run_start is not None:
+                    scanline_runs.append(
+                        (run_start, fill_y, x + offset - 1, fill_y)
+                    )
+                    run_start = None
+            if run_start is not None:
+                scanline_runs.append(
+                    (run_start, fill_y, x + width - 1, fill_y)
+                )
+        if len(scanline_runs) < width:
+            for start_x, start_y, end_x, end_y in scanline_runs:
+                canvas.line(start_x, start_y, end_x, end_y, color)
+        else:
+            for offset, top in enumerate(top_by_x):
+                canvas.line(x + offset, top, x + offset, bottom, color)
+        return False
 
     def _draw_cpu(self, canvas, snapshot):
         """绘制左上角 CPU 百分比、温度与趋势。"""
@@ -410,7 +456,7 @@ class HorizontalDiskStyle:
             96 - len(ping_text) * 8, 132,
             ping_text, self._ping_color(ping), 1,
         )
-        canvas.text(8, 143, "↑U", WHITE, 1)
+        canvas.text(8, 143, "↑UP", WHITE, 1)
         canvas.text(
             32, 143,
             self._format_rate(network.get("upload_bps"), unit), BLUE, 1,
@@ -419,7 +465,7 @@ class HorizontalDiskStyle:
             canvas, 8, 152, 88, 19,
             network.get("upload_history", ()), BLUE, filled=True,
         )
-        canvas.text(8, 174, "↓D", WHITE, 1)
+        canvas.text(8, 174, "↓DN", WHITE, 1)
         canvas.text(
             32, 174,
             self._format_rate(network.get("download_bps"), unit), GREEN, 1,
@@ -450,20 +496,21 @@ class HorizontalDiskStyle:
             x + (width - canvas.text_width(empty_text)) // 2,
             y + 19, empty_text, GRAY, 1,
         )
-        canvas.fill_rect(x + 10, y + height - 8, width - 20, 2, DARK)
+        canvas.fill_rect(x + 14, y + height - 8, width - 28, 2, DARK)
 
     def _draw_disk_cards(self, canvas, snapshot, selected_row=None):
-        """按三列网格绘制指定行或全部物理磁盘卡片。"""
+        """按每行两张卡片绘制最多四块物理磁盘及其实时读写趋势。"""
         # 优先使用主机端明确提供的物理磁盘统计，并兼容旧版 disks 字段。
         disks = snapshot.get("physical_disks") or snapshot.get("disks", ())
-        disks = disks[:9]
-        for index in range(9):
-            column, row = index % 3, index // 3
+        disks = disks[:4]
+        for index in range(4):
+            column, row = index % 2, index // 2
             if selected_row is not None and row != selected_row:
                 continue
-            x, y = 106 + column * 71, 49 + row * 52
+            # 每行两张磁盘卡片共同占满 212 像素，与总体面板和底部组件的右边界对齐。
+            x, y = 106 + column * 108, 49 + row * 52
             if index >= len(disks):
-                self._draw_empty_disk(canvas, x, y, 68, 48, index)
+                self._draw_empty_disk(canvas, x, y, 104, 48, index)
                 continue
             disk = disks[index]
             percent = int(self._number(disk.get("percent")))
@@ -471,25 +518,128 @@ class HorizontalDiskStyle:
             frame_color, name_color, all_red, show_warning = self._health_display(
                 disk.get("health", 0), usage_color
             )
-            self._frame(canvas, x, y, 68, 48, frame_color)
-            name = self._format_disk_name(
-                disk.get("name", "DISK{}".format(index))
-            )
+            self._frame(canvas, x, y, 104, 48, frame_color)
+            name = str(
+                disk.get("name") or "DISK{}".format(index)
+            ).strip().upper()
             if show_warning:
                 name = "WARN"
             temperature = disk.get("temperature_c")
             temperature_text = "--℃" if temperature is None else "{}℃".format(int(self._number(temperature)))
-            canvas.text(x + 4, y + 4, name, RED if all_red else name_color, 1)
+            canvas.text(x + 3, y + 4, name, RED if all_red else name_color, 1)
             canvas.text(
-                x + 64 - canvas.text_width(temperature_text), y + 4, temperature_text,
+                x + 101 - canvas.text_width(temperature_text), y + 4, temperature_text,
                 RED if all_red else self._temperature_color(temperature), 1,
             )
             capacity = self._format_disk_capacity(
                 disk.get("used_bytes"), disk.get("total_bytes")
             )
-            canvas.text(x + 3, y + 18, capacity[:8], RED if all_red else WHITE, 1)
-            canvas.text(x + 4, y + 32, "{}%".format(percent), RED if all_red else usage_color, 1)
-            self._bar(canvas, x + 38, y + 34, 25, 8, percent, RED if all_red else usage_color)
+            canvas.text(x + 3, y + 15, capacity[:8], RED if all_red else WHITE, 1)
+            percent_text = "{}%".format(percent)
+            canvas.text(
+                x + 101 - canvas.text_width(percent_text), y + 15,
+                percent_text, RED if all_red else usage_color, 1,
+            )
+            read_text = "R" + self._format_disk_rate(disk.get("read_bps"))
+            write_text = "W" + self._format_disk_rate(disk.get("write_bps"))
+            canvas.text(x + 3, y + 27, read_text, RED if all_red else GREEN, 1)
+            canvas.text(x + 3, y + 38, write_text, RED if all_red else YELLOW, 1)
+            self._history(
+                canvas, x + 42, y + 27, 59, 8,
+                disk.get("read_history", ()), RED if all_red else GREEN, filled=True,
+            )
+            self._history(
+                canvas, x + 42, y + 38, 59, 7,
+                disk.get("write_history", ()), RED if all_red else YELLOW, filled=True,
+            )
+
+    def _draw_network_details(self, canvas, snapshot):
+        """分栏绘制 qBittorrent 连接、传输趋势及累计统计。"""
+        qbittorrent = snapshot.get("qbittorrent") or {}
+        enabled = bool(qbittorrent.get("enabled"))
+        connection_status = str(
+            qbittorrent.get("connection_status") or "disconnected"
+        ).lower()
+        if not enabled:
+            status_text = "OFF"
+            status_color = GRAY
+        elif connection_status == "connected" or (
+            qbittorrent.get("online") and "connection_status" not in qbittorrent
+        ):
+            status_text = "ONLINE"
+            status_color = ELEMENT_SUCCESS
+        elif connection_status == "firewalled":
+            status_text = "FIREWALLED"
+            status_color = ELEMENT_WARNING
+        else:
+            status_text = "DISCONNECTED"
+            status_color = ELEMENT_DANGER
+        unit = snapshot.get("display", {}).get("network_unit", "MB")
+        statistics = qbittorrent.get("user_statistics") or {}
+        torrents = qbittorrent.get("torrents") or {}
+        self._frame(canvas, 106, 153, 212, 56, status_color)
+        canvas.line(211, 154, 211, 207, GRAY)
+        canvas.text(110, 157, status_text, status_color, 1)
+        users_text = "USER {}".format(
+            int(self._number(statistics.get("connected_users")))
+        )
+        canvas.text(110, 168, users_text, WHITE, 1)
+
+        canvas.text(110, 180, "UP", BLUE, 1)
+        canvas.text(
+            130, 180,
+            self._format_rate(qbittorrent.get("upload_bps"), unit),
+            WHITE, 1,
+        )
+        self._history(
+            canvas, 174, 179, 33, 9,
+            qbittorrent.get("upload_history", ()), BLUE, filled=True,
+        )
+
+        canvas.text(110, 193, "DN", GREEN, 1)
+        canvas.text(
+            130, 193,
+            self._format_rate(qbittorrent.get("download_bps"), unit),
+            WHITE, 1,
+        )
+        self._history(
+            canvas, 174, 192, 33, 9,
+            qbittorrent.get("download_history", ()), GREEN, filled=True,
+        )
+
+        canvas.text(
+            216, 157,
+            "ALL {}".format(int(self._number(torrents.get("all")))),
+            WHITE, 1,
+        )
+        canvas.text(
+            216, 167,
+            "SEEDING {}".format(
+                int(self._number(torrents.get("seeding")))
+            ),
+            BLUE, 1,
+        )
+        canvas.text(
+            216, 177,
+            "ACTIVE {}".format(int(self._number(torrents.get("active")))),
+            ELEMENT_WARNING, 1,
+        )
+        canvas.text(216, 187, "ALL UP", BLUE, 1)
+        alltime_upload = self._format_bytes(
+            statistics.get("alltime_uploaded_bytes")
+        )
+        canvas.text(
+            313 - canvas.text_width(alltime_upload), 187,
+            alltime_upload, WHITE, 1,
+        )
+        canvas.text(216, 197, "ALL DN", GREEN, 1)
+        alltime_download = self._format_bytes(
+            statistics.get("alltime_downloaded_bytes")
+        )
+        canvas.text(
+            313 - canvas.text_width(alltime_download), 197,
+            alltime_download, WHITE, 1,
+        )
 
     def _draw_footer(self, canvas, snapshot):
         """绘制横屏底部的时间、运行时长和功耗。"""
@@ -499,15 +649,19 @@ class HorizontalDiskStyle:
         canvas.text(8, 221, clock, BLUE, 1)
         canvas.line(77, 217, 77, 233, BLUE)
         canvas.text(85, 221, "UPTIME", BLUE, 1)
+        uptime_text = self._format_uptime(snapshot.get("uptime_seconds"))
         canvas.text(
-            141, 221,
-            self._format_uptime(snapshot.get("uptime_seconds")), WHITE, 1,
+            231 - canvas.text_width(uptime_text), 221,
+            uptime_text, WHITE, 1,
         )
         canvas.line(237, 217, 237, 233, BLUE)
         watts = snapshot.get("power", {}).get("watts")
         power_text = "--W" if watts is None else "{:.0f}W".format(self._number(watts))
         canvas.text(245, 221, "PWR", BLUE, 1)
-        canvas.text(277, 221, power_text, YELLOW, 1)
+        canvas.text(
+            312 - canvas.text_width(power_text), 221,
+            power_text, YELLOW, 1,
+        )
 
     def draw_visible(self, canvas, snapshot):
         """绘制与当前条带相交的横屏仪表盘内容。"""
@@ -521,8 +675,10 @@ class HorizontalDiskStyle:
             self._draw_network(canvas, snapshot)
         if self._visible(canvas, 2, 45):
             self._draw_storage_summary(canvas, snapshot)
-        if self._visible(canvas, 49, 205):
+        if self._visible(canvas, 49, 149):
             self._draw_disk_cards(canvas, snapshot)
+        if self._visible(canvas, 153, 209):
+            self._draw_network_details(canvas, snapshot)
         if self._visible(canvas, 213, 238):
             self._draw_footer(canvas, snapshot)
 
@@ -540,13 +696,15 @@ class HorizontalDiskStyle:
             self._draw_storage_summary(canvas, snapshot)
         elif key.startswith("disk_row_"):
             self._draw_disk_cards(canvas, snapshot, int(key[-1]))
+        elif key == "network_details":
+            self._draw_network_details(canvas, snapshot)
         else:
             self._draw_footer(canvas, snapshot)
 
 
-def create_horizontal_disk_style():
-    """创建横向磁盘统计 LCD 仪表盘样式插件。"""
-    return HorizontalDiskStyle()
+def create_horizontal_disk4x_qb_style():
+    """创建保留四磁盘布局并显示 qBittorrent 面板的横向样式。"""
+    return HorizontalDisk4xQbStyle()
 
 
-register_style(HorizontalDiskStyle.name, create_horizontal_disk_style)
+register_style(HorizontalDisk4xQbStyle.name, create_horizontal_disk4x_qb_style)

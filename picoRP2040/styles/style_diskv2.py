@@ -7,7 +7,7 @@
 
 
 from config import BLACK, BLUE, DARK, GRAY, GREEN, PURPLE, RED, WHITE, YELLOW
-from style_plugins import register_style
+from styles.style_plugins import register_style
 
 
 SUCCESS = 0x6607
