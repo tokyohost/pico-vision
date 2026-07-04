@@ -149,6 +149,7 @@ class MonitorService:
         """持续连接设备、采集指标并发送最新系统快照。"""
         LOGGER.info("监控服务启动：端口=%s，Ping=%s，发送间隔=%.1f 秒，重连间隔=%.1f 秒，屏幕旋转=%d°，网络单位=%s，LCD 样式=%s，开发模式=%s", self.arguments.port or "自动发现", self.arguments.ping_target, self.arguments.interval, self.arguments.reconnect_interval, self.arguments.screen_rotation, self.arguments.network_unit, self.arguments.lcd_style, "开启" if self.arguments.dev else "关闭")
         while not self.stopping.is_set():
+            ports_before_probe = self.client.available_ports()
             try:
                 if not self.client.is_connected:
                     LOGGER.info("正在搜索 Pico LCD 设备")
@@ -176,11 +177,25 @@ class MonitorService:
                 remaining = self.arguments.interval - (time.monotonic() - started)
                 self.stopping.wait(max(0.0, remaining))
             except (OSError, RuntimeError, serial.SerialException) as error:
-                LOGGER.warning("监控通信异常：%s；%.1f 秒后重试", error, self.arguments.reconnect_interval)
+                LOGGER.warning("监控通信异常：%s；等待 USB 端口变化", error)
                 self.client.close()
+                if not self._wait_for_usb_change(ports_before_probe):
+                    break
+                LOGGER.info(
+                    "USB 端口已变化，%.1f 秒后重新探测 Pico LCD",
+                    self.arguments.reconnect_interval,
+                )
                 self.stopping.wait(self.arguments.reconnect_interval)
         LOGGER.info("监控服务已停止")
         return 0
+
+    def _wait_for_usb_change(self, previous_ports):
+        """等待系统串口集合变化，期间不发起 Pico 握手。"""
+        while not self.stopping.is_set():
+            if self.client.available_ports() != previous_ports:
+                return True
+            self.stopping.wait(0.5)
+        return False
 
     def _upgrade_pico(self):
         """下载当前 Monitor 版本升级包，完成串口升级后退出。"""
@@ -293,6 +308,7 @@ def show_pico_information(port=None):
             format_pico_information(client.device_information())
         )
         return 0
+
     finally:
         client.close()
 

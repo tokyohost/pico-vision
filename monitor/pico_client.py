@@ -82,6 +82,11 @@ class PicoJsonClient:
         detail = "；".join(errors) if errors else "未发现可用串口"
         raise RuntimeError(f"未找到 Pico LCD：{detail}")
 
+    @staticmethod
+    def available_ports():
+        """返回当前系统可见串口的稳定快照。"""
+        return frozenset(item.device for item in list_ports.comports())
+
     def _handshake(self, device):
         """发送设备发现命令并验证 Pico 固件响应。"""
         self.board_model = None

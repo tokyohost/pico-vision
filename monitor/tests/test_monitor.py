@@ -222,6 +222,7 @@ class PicoClientTest(unittest.TestCase):
         service.stopping.is_set.return_value = False
         service.client = mock.Mock()
         service.client.is_connected = False
+        service.client.available_ports.return_value = frozenset()
         service.client.connect.side_effect = RuntimeError("未找到 Pico")
         service._run_development_loop = mock.Mock(return_value=0)
 
@@ -230,6 +231,38 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual(result, 0)
         service.client.connect.assert_called_once_with()
         service._run_development_loop.assert_called_once_with()
+
+    def test_connection_failure_waits_for_usb_change_before_retry(self):
+        """确认首次探测失败后仅在 USB 端口变化后延迟重试。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(
+            port=None,
+            ping_target="127.0.0.1",
+            interval=1.0,
+            reconnect_interval=3.0,
+            screen_rotation=0,
+            network_unit="MB",
+            lcd_style="horizontal_disk",
+            dev=False,
+            upgrade_pico=False,
+            once=False,
+        )
+        service.stopping = mock.Mock()
+        service.stopping.is_set.side_effect = [False, False, False, True]
+        service.client = mock.Mock()
+        service.client.is_connected = False
+        service.client.available_ports.side_effect = [
+            frozenset({"COM1"}),
+            frozenset({"COM1"}),
+            frozenset({"COM2"}),
+        ]
+        service.client.connect.side_effect = RuntimeError("未找到 Pico")
+
+        self.assertEqual(service.run(), 0)
+
+        service.client.connect.assert_called_once_with()
+        service.stopping.wait.assert_any_call(0.5)
+        service.stopping.wait.assert_any_call(3.0)
 
     def test_ping_and_network_unit_arguments(self):
         """确认 Ping 默认地址和网络速率单位可以独立配置。"""
