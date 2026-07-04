@@ -16,7 +16,6 @@
 
 import json
 import logging
-import os
 import time
 import zlib
 import base64
@@ -29,7 +28,6 @@ from serial.tools import list_ports
 FRAME_MAGIC = b"PV1"
 FRAME_MAX_PAYLOAD = 16 * 1024
 TRANSPORT_BLOCK_SIZE = 64
-POSIX_SYNC_DELAY_SECONDS = 1.05
 ZLIB_WINDOW_BITS = 9
 
 
@@ -117,7 +115,17 @@ class PicoJsonClient:
 
     def connect(self):
         """连接固定串口，或枚举所有串口并通过协议握手识别设备。"""
-        candidates = [self.configured_port] if self.configured_port else [item.device for item in list_ports.comports()]
+        if self.configured_port:
+            candidates = [self.configured_port]
+        else:
+            # 复合 USB 设备中自定义数据 CDC 的接口序号高于内置
+            # REPL CDC；优先探测高序号接口，仍以 PONG 作为最终判据。
+            ports = list(list_ports.comports())
+            ports.sort(
+                key=lambda item: (item.location or "", item.device),
+                reverse=True,
+            )
+            candidates = [item.device for item in ports]
         LOGGER.info("[串口发现] 候选端口：%s", ", ".join(candidates) if candidates else "无")
         errors = []
         for port in candidates:
@@ -125,10 +133,8 @@ class PicoJsonClient:
                 LOGGER.info("[串口打开] 正在打开 %s，波特率 115200", port)
                 device = serial.Serial(port, 115200, timeout=0.3, write_timeout=10)
                 time.sleep(1.0)
-                if os.name == "posix":
-                    self._recover_posix_serial(device)
-                else:
-                    device.reset_output_buffer()
+                device.reset_input_buffer()
+                device.reset_output_buffer()
                 if self._handshake(device):
                     self.serial = device
                     LOGGER.info(
@@ -166,11 +172,7 @@ class PicoJsonClient:
                 PING_COMMAND,
                 PING_COMMAND.hex(" "),
             )
-            # Debian's cdc_acm/TTY layer may merge separate 63+1 writes back
-            # into one full 64-byte USB packet.  Appending a harmless blank line
-            # makes the transfer 65 bytes, guaranteeing a terminating short
-            # packet while leaving the logical PV1 PING unchanged.
-            wire_ping = PING_COMMAND + b"\n" if os.name == "posix" else PING_COMMAND
+            wire_ping = PING_COMMAND
             written = 0
             while written < len(wire_ping):
                 count = device.write(wire_ping[written:])
@@ -202,16 +204,6 @@ class PicoJsonClient:
                     self._parse_pong_payload(frame[1])
                     return True
         return False
-
-    @staticmethod
-    def _recover_posix_serial(device):
-        """Clear stale CDC state before the first Linux/POSIX handshake."""
-        device.reset_input_buffer()
-        device.reset_output_buffer()
-        device.write(b"\n" * TRANSPORT_BLOCK_SIZE)
-        device.flush()
-        time.sleep(POSIX_SYNC_DELAY_SECONDS)
-        device.reset_input_buffer()
 
     def _parse_pong_payload(self, payload):
         """解析 PV1 PONG 的 JSON 设备信息。"""

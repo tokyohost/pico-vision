@@ -88,18 +88,21 @@ CRC16_BYTE_TABLE = _build_crc16_byte_table()
 class JsonProtocol:
     """增量接收 ASCII 行，避免二进制控制字节触发 MicroPython 中断。"""
 
-    def __init__(self, upgrade_manager=None):
+    def __init__(self, upgrade_manager=None, stream=None):
         """初始化标准输入输出、轮询器和行缓冲区。"""
-        self._input = sys.stdin
-        self._reader = getattr(sys.stdin, "buffer", sys.stdin)
-        self._output = getattr(sys.stdout, "buffer", sys.stdout)
+        self._dedicated_stream = stream is not None
+        self._input = stream if stream is not None else sys.stdin
+        self._reader = stream if stream is not None else getattr(sys.stdin, "buffer", sys.stdin)
+        self._output = stream if stream is not None else getattr(sys.stdout, "buffer", sys.stdout)
         self._poller = select.poll()
         # RP2 的 USB REPL 在 sys.stdin 上实现流轮询接口；部分固件的
         # sys.stdin.buffer 虽可非阻塞读取，却不会正确报告 POLLIN 可读事件。
         # 因此轮询文本流、读取二进制流，兼顾 Linux CDC 与 Windows 串口行为。
         self._poller.register(self._input, select.POLLIN)
         self._buffer = bytearray()
-        self._read_buffer = bytearray(64)
+        # 独立 CDC 的 readinto() 会按当前 FIFO 可用长度立即返回；
+        # 内置 REPL stdin 则只能安全地逐字节读取。
+        self._read_buffer = bytearray(512 if self._dedicated_stream else 1)
         self._last_byte_ms = None
         self._frame_started_ms = None
         self._frame_read_calls = 0
@@ -125,12 +128,7 @@ class JsonProtocol:
         self._expire_partial_frame()
         read_count = 0
         while read_count < SERIAL_READ_BUDGET and self._poller.poll(0):
-            # 未同步时逐字节寻找 PV1 魔数；同步后，Monitor 保证每帧按 64
-            # 字节传输块补齐，因此可以安全批量读取，避免数千次单字节轮询。
-            read_size = 1
-            if self._buffer.startswith(b"PV1:"):
-                read_size = min(64 - len(self._buffer) % 64, SERIAL_READ_BUDGET - read_count)
-            received = self._reader.readinto(memoryview(self._read_buffer)[:read_size])
+            received = self._reader.readinto(self._read_buffer)
             if not received:
                 break
             self._buffer.extend(memoryview(self._read_buffer)[:received])

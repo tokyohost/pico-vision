@@ -8,7 +8,7 @@
 ## 设计约束
 
 - 不使用 RP2040 第二核心，规避 MicroPython 线程、USB 和 SPI 之间的互锁风险。
-- 串口通过 `uselect.poll()` 检查后逐字节读取，主循环中不存在无限阻塞读取。
+- 内置 USB CDC 仅用于 REPL；PV1 通信使用独立 USB CDC 及非阻塞批量 FIFO。
 - LCD 不申请 240×320 的整帧缓冲，仅使用 240×48×2，即 23,040 字节条带缓冲。
 - LED、串口接收和 LCD 刷新均由单核协作式主循环调度。
 - JSON 最大长度为 16 KiB，超限数据包会被拒绝。
@@ -20,6 +20,8 @@
 - `main.py`：应用入口和协作式主循环。
 - `led/`：不同板载状态灯的非阻塞控制策略与控制器工厂。
 - `protocol.py`：USB 握手及 JSON 增量接收状态机。
+- `usb_transport.py`：创建与 REPL 隔离的 USB CDC 数据通道。
+- `usb/device/`：上游 MicroPython `usb-device` 和 `usb-device-cdc` MIT 实现。
 - `upgrade_manager.py`：串口升级会话、临时写入、SHA-256 校验、安装和自动重启。
 - `data_receiver.py`：最新 JSON 快照缓存。
 - `lcd.py`：ST7789 初始化和区域写屏。
@@ -39,6 +41,11 @@ Pico 握手会向 Monitor 返回当前开发板型号、屏幕色彩方案和运
 
 新增型号时，可创建 `BoardProfile` 并通过 `register_board_profile()` 注册；业务层
 无需感知 LED 的具体实现。
+
+Pico 端需要 MicroPython 1.23 或更新版本。启动后 USB 会重新枚举为
+两个串口：一个保留给 REPL，另一个由 Monitor 通过 PV1 PING 自动识别。
+首次部署后原串口短暂断开属于正常现象。Debian 下建议将
+`PICO_MONITOR_PORT` 留空，不要固定 `/dev/ttyACM0`。
 
 屏幕色彩由 `picoRP2040/config.py` 中的 `SCREEN_COLOR_PROFILE` 选择：
 

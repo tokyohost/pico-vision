@@ -1,6 +1,6 @@
 # Pico LCD 系统硬件监控程序
 
-本目录提供独立电脑端监控程序，兼容 `pico-project/picoRP2040` 固件的 `JSON:` 行协议。程序通过操作系统内核公开接口采集 CPU、内存、磁盘、网络、运行时间和可用温度传感器数据，经 USB 串口持续发送给 Pico RP2040。
+本目录提供独立电脑端监控程序，使用 PV1 协议经 Pico 的独立 USB CDC 数据接口传输系统快照。内置 USB CDC 仅保留给 MicroPython REPL，不承载监控数据。
 
 本程序不安装自定义内核驱动：Windows 使用系统性能接口和串口驱动，Linux 使用 `/proc`、`/sys` 及系统串口驱动。这样无需驱动签名，也不会绑定特定内核版本。
 
@@ -34,7 +34,7 @@ python pico_monitor.py
 
 ```text
 --port COM3                 固定 Windows 串口
---port /dev/ttyACM0         固定 Linux 串口
+--port /dev/ttyACM1         固定 Linux 数据 CDC；建议留空自动发现
 --ping-target 1.1.1.1       指定延迟探测目标，默认 www.baidu.com
 --interval 1.0              指定采集发送间隔
 --reconnect-interval 3.0    指定断线重连间隔
@@ -125,7 +125,7 @@ pico-monitor --version
 
 ## Pico 固件要求
 
-先将 `pico-project/picoRP2040` 下的 MicroPython 程序部署到 Pico。主机端会发送 `PING:PICO_LCD?` 完成设备识别，再发送 `JSON:` 加单行 JSON；固件应返回 `ACK:JSON`。
+先将 `picoRP2040` 完整目录部署到运行 MicroPython 1.23 或更新版本的 Pico。启动后会枚举两个 CDC 串口：内置接口用于 REPL，新增接口用于 PV1。Monitor 会通过 PING/PONG 自动找到数据接口，Debian 配置中应将 `PICO_MONITOR_PORT` 留空。
 
 ## Pico 在线升级
 
@@ -150,10 +150,10 @@ sudo systemctl start pico-monitor
 sudo journalctl -u pico-monitor -n 100 --no-pager
 ```
 
-程序会根据已安装 Monitor 的版本号，从同版本 GitHub Release 下载 `pico-upgrade-v<版本>.zip`。如果机器连接了多个串口设备，或者自动发现没有选中目标 Pico，可查看 `/etc/pico-monitor.conf` 中配置的端口，并在命令中显式指定：
+程序会根据已安装 Monitor 的版本号，从同版本 GitHub Release 下载 `pico-upgrade-v<版本>.zip`。如果必须显式指定端口，应选择能响应 PV1 PONG 的数据 CDC，而不是 REPL CDC：
 
 ```bash
-sudo /usr/bin/pico-monitor --port /dev/ttyACM0 --upgrade-pico
+sudo /usr/bin/pico-monitor --port /dev/ttyACM1 --upgrade-pico
 ```
 
 升级成功时终端会依次显示 `ACK:UPGRADE:BEGIN:<版本>`、文件传输确认、`PROGRESS:UPGRADE:INSTALL:100` 和 `ACK:UPGRADE:COMPLETE:<版本>`。Pico 随后自动重启；重新启动 systemd 服务后，可通过日志确认出现 `PONG:PICO_LCD` 和 `ACK:JSON`。

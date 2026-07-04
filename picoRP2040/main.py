@@ -152,7 +152,9 @@ def main():
     try:
         from upgrade_manager import UpgradeManager
 
-        protocol = JsonProtocol()
+        from usb_transport import create_data_cdc
+
+        protocol = JsonProtocol(stream=create_data_cdc())
         protocol._upgrade_manager = UpgradeManager(protocol.write_upgrade_response)
         Application(protocol).run()
     except Exception as error:

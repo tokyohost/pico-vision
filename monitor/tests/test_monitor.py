@@ -156,9 +156,8 @@ class PicoClientTest(unittest.TestCase):
         self.assertTrue(PING_COMMAND.endswith(b"\n"))
         self.assertEqual(parse_frame(PING_COMMAND), ("PING", b""))
 
-    @mock.patch("pico_client.os.name", "posix")
-    def test_posix_handshake_terminates_full_usb_packet(self):
-        """POSIX 在 64 字节 PING 后添加空行，强制 USB 短包收尾。"""
+    def test_handshake_sends_only_pv1_ping(self):
+        """独立 CDC 握手只发送一条 PV1 PING。"""
         device = HandshakeSerial([
             build_frame("PONG", json.dumps({
                 "board_model": "rp2040_typec",
@@ -169,19 +168,7 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertTrue(PicoJsonClient()._handshake(device))
         self.assertEqual(device.write_calls, 1)
-        self.assertEqual(device.written, PING_COMMAND + b"\n")
-
-    @mock.patch("pico_client.time.sleep")
-    def test_posix_recovery_clears_stale_serial_state(self, sleep):
-        """POSIX 首次握手前用 LF 边界清理旧半包与诊断残留。"""
-        device = FakeSerial()
-
-        PicoJsonClient._recover_posix_serial(device)
-
-        self.assertEqual(device.written, b"\n" * 64)
-        self.assertEqual(device.reset_input_calls, 2)
-        self.assertEqual(device.reset_output_calls, 1)
-        sleep.assert_called_once()
+        self.assertEqual(device.written, PING_COMMAND)
 
     def test_parse_pico_hardware_and_firmware_information(self):
         """确认 Monitor 能从新版握手读取板型、屏幕方案和固件版本。"""
