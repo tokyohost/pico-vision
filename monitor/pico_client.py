@@ -16,6 +16,7 @@
 
 import json
 import logging
+import os
 import time
 import zlib
 import base64
@@ -28,6 +29,8 @@ from serial.tools import list_ports
 FRAME_MAGIC = b"PV1"
 FRAME_MAX_PAYLOAD = 16 * 1024
 TRANSPORT_BLOCK_SIZE = 64
+POSIX_SYNC_DELAY_SECONDS = 1.05
+POSIX_WRITE_GAP_SECONDS = 0.002
 ZLIB_WINDOW_BITS = 9
 
 
@@ -123,7 +126,10 @@ class PicoJsonClient:
                 LOGGER.info("[串口打开] 正在打开 %s，波特率 115200", port)
                 device = serial.Serial(port, 115200, timeout=0.3, write_timeout=10)
                 time.sleep(1.0)
-                device.reset_output_buffer()
+                if os.name == "posix":
+                    self._recover_posix_serial(device)
+                else:
+                    device.reset_output_buffer()
                 if self._handshake(device):
                     self.serial = device
                     LOGGER.info(
@@ -163,12 +169,24 @@ class PicoJsonClient:
             )
             written = 0
             while written < len(PING_COMMAND):
-                count = device.write(PING_COMMAND[written:])
+                # Linux CDC ACM may coalesce one exact 64-byte write into a full
+                # USB endpoint packet.  Some MicroPython USB streams then keep
+                # waiting for another packet before making the final LF visible.
+                # A 63+1 physical split preserves the logical PV1 frame while
+                # forcing a short packet boundary.
+                split_at = TRANSPORT_BLOCK_SIZE - 1
+                end = len(PING_COMMAND)
+                if os.name == "posix" and written < split_at and end == TRANSPORT_BLOCK_SIZE:
+                    end = split_at
+                count = device.write(PING_COMMAND[written:end])
                 if not count:
                     raise serial.SerialTimeoutException(
                         f"握手包仅发送 {written}/{len(PING_COMMAND)} 字节"
                     )
                 written += count
+                if os.name == "posix" and written == TRANSPORT_BLOCK_SIZE - 1:
+                    device.flush()
+                    time.sleep(POSIX_WRITE_GAP_SECONDS)
             device.flush()
             LOGGER.info(
                 "[Monitor -> Pico][%s][握手 %d/3][实际发送 %d/%d 字节]",
@@ -192,6 +210,16 @@ class PicoJsonClient:
                     self._parse_pong_payload(frame[1])
                     return True
         return False
+
+    @staticmethod
+    def _recover_posix_serial(device):
+        """Clear stale CDC state before the first Linux/POSIX handshake."""
+        device.reset_input_buffer()
+        device.reset_output_buffer()
+        device.write(b"\n" * TRANSPORT_BLOCK_SIZE)
+        device.flush()
+        time.sleep(POSIX_SYNC_DELAY_SECONDS)
+        device.reset_input_buffer()
 
     def _parse_pong_payload(self, payload):
         """解析 PV1 PONG 的 JSON 设备信息。"""

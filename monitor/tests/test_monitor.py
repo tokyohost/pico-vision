@@ -43,6 +43,8 @@ class FakeSerial:
         self.port = "TEST"
         self.written = bytearray()
         self.write_calls = 0
+        self.reset_input_calls = 0
+        self.reset_output_calls = 0
 
     def write(self, data):
         """记录主机写入的协议字节。"""
@@ -52,6 +54,12 @@ class FakeSerial:
 
     def flush(self):
         """模拟立即完成串口发送。"""
+
+    def reset_input_buffer(self):
+        self.reset_input_calls += 1
+
+    def reset_output_buffer(self):
+        self.reset_output_calls += 1
 
     def readline(self):
         """返回 Pico JSON 接收确认。"""
@@ -148,8 +156,10 @@ class PicoClientTest(unittest.TestCase):
         self.assertTrue(PING_COMMAND.endswith(b"\n"))
         self.assertEqual(parse_frame(PING_COMMAND), ("PING", b""))
 
-    def test_handshake_sends_only_pv1_ping(self):
-        """握手只发送一条 PV1 PING。"""
+    @mock.patch("pico_client.os.name", "posix")
+    @mock.patch("pico_client.time.sleep")
+    def test_posix_handshake_splits_pv1_ping(self, sleep):
+        """POSIX 将 64 字节 PING 拆成 63+1，逻辑帧保持不变。"""
         device = HandshakeSerial([
             build_frame("PONG", json.dumps({
                 "board_model": "rp2040_typec",
@@ -159,8 +169,21 @@ class PicoClientTest(unittest.TestCase):
         ])
 
         self.assertTrue(PicoJsonClient()._handshake(device))
-        self.assertEqual(device.write_calls, 1)
+        self.assertEqual(device.write_calls, 2)
         self.assertEqual(device.written, PING_COMMAND)
+        sleep.assert_called_once()
+
+    @mock.patch("pico_client.time.sleep")
+    def test_posix_recovery_clears_stale_serial_state(self, sleep):
+        """POSIX 首次握手前用 LF 边界清理旧半包与诊断残留。"""
+        device = FakeSerial()
+
+        PicoJsonClient._recover_posix_serial(device)
+
+        self.assertEqual(device.written, b"\n" * 64)
+        self.assertEqual(device.reset_input_calls, 2)
+        self.assertEqual(device.reset_output_calls, 1)
+        sleep.assert_called_once()
 
     def test_parse_pico_hardware_and_firmware_information(self):
         """确认 Monitor 能从新版握手读取板型、屏幕方案和固件版本。"""
