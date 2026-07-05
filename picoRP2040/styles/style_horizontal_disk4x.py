@@ -301,12 +301,11 @@ class HorizontalDisk4xStyle:
         """绘制带边框的百分比进度条。"""
         value = max(0, min(100, self._number(percent)))
         if rounded:
-            canvas.fill_round_rect(x, y, width, height, GRAY, 3)
-            canvas.fill_round_rect(x + 1, y + 1, width - 2, height - 2, DARK, 2)
-            filled_width = int((width - 2) * value / 100)
+            canvas.fill_round_rect(x, y, width, height, DARK, 2)
+            filled_width = int(width * value / 100)
             if filled_width > 0:
                 canvas.fill_round_rect(
-                    x + 1, y + 1, filled_width, height - 2, color, 2
+                    x, y, filled_width, height, color, 2
                 )
             return
         canvas.fill_rect(x, y, width, height, DARK)
@@ -458,7 +457,7 @@ class HorizontalDisk4xStyle:
             97 - canvas.text_width(percent_text, 2), 80,
             percent_text, usage_color, 2,
         )
-        self._bar(canvas, 7, 96, 90, 10, percent, usage_color, rounded=True)
+        self._bar(canvas, 7, 97, 90, 8, percent, usage_color, rounded=True)
         used_text = self._format_bytes(memory.get("used_bytes"))
         total_text = self._format_bytes(memory.get("total_bytes"))
         if used_text[-1:] == total_text[-1:]:
@@ -510,10 +509,10 @@ class HorizontalDisk4xStyle:
         canvas.text(112, 20, capacity, WHITE, 1)
         percent_text = "{:.2f}%".format(percent)
         canvas.text(
-            310 - canvas.text_width(percent_text, 2), 7,
+            312 - canvas.text_width(percent_text, 2), 7,
             percent_text, usage_color, 2,
         )
-        self._bar(canvas, 112, 33, 198, 8, percent, usage_color)
+        self._bar(canvas, 112, 33, 200, 8, percent, usage_color)
 
     def _draw_empty_disk(self, canvas, x, y, width, height, index):
         """绘制保留磁盘编号和装饰槽线的低对比度空位卡片。"""
