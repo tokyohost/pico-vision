@@ -6,11 +6,14 @@
 
 import ctypes
 import os
+import queue
 import subprocess
 import sys
 import threading
 import winreg
 from pathlib import Path
+
+from qbittorrent_monitor import QbittorrentApiClient
 
 from .settings import (
     DEFAULT_SETTINGS,
@@ -39,6 +42,7 @@ class WindowsTrayApplication:
         self.settings_window = None
         self.settings_window_lock = threading.Lock()
         self.settings_window_open = False
+        self.settings_window_restore_requested = threading.Event()
         data_directory = Path(os.getenv("LOCALAPPDATA", Path.home())) / "PicoMonitor"
         data_directory.mkdir(parents=True, exist_ok=True)
         self.log_path = data_directory / "pico-monitor.log"
@@ -148,10 +152,10 @@ class WindowsTrayApplication:
         del item
         with self.settings_window_lock:
             if self.settings_window_open:
-                if icon is not None:
-                    icon.notify("配置窗口已经打开", APPLICATION_NAME)
+                self.settings_window_restore_requested.set()
                 return
             # 在创建线程前占位，避免连续点击同时创建多个 Tk 窗口。
+            self.settings_window_restore_requested.clear()
             self.settings_window_open = True
         threading.Thread(
             target=self._run_settings_window_guarded,
@@ -175,10 +179,24 @@ class WindowsTrayApplication:
         root = tk.Tk()
         self.settings_window = root
         root.title("Pico Monitor 配置")
+        icon_directory = Path(getattr(sys, "_MEIPASS", MONITOR_DIRECTORY))
+        settings_icon = tk.PhotoImage(file=icon_directory / "icon" / "icon.png")
+        root.iconphoto(True, settings_icon)
+        root.settings_icon = settings_icon
         root.geometry("680x700")
         root.minsize(620, 620)
         root.configure(bg="#f5f7fa")
         root.option_add("*Font", ("Microsoft YaHei UI", 10))
+
+        def restore_when_requested():
+            if self.settings_window_restore_requested.is_set():
+                self.settings_window_restore_requested.clear()
+                root.deiconify()
+                root.lift()
+                root.focus_force()
+            root.after(100, restore_when_requested)
+
+        root.after(100, restore_when_requested)
         style = ttk.Style(root)
         style.theme_use("vista")
         style.configure("Title.TLabel", font=("Microsoft YaHei UI", 18, "bold"), foreground="#303133", background="#f5f7fa")
@@ -188,8 +206,37 @@ class WindowsTrayApplication:
         style.configure("Card.TLabel", foreground="#606266", background="#ffffff")
         style.configure("Primary.TButton", foreground="#ffffff", background="#409eff", padding=(18, 8))
 
-        body = ttk.Frame(root, padding=24)
-        body.pack(fill="both", expand=True)
+        root.rowconfigure(0, weight=1)
+        root.columnconfigure(0, weight=1)
+        content_area = ttk.Frame(root)
+        content_area.grid(row=0, column=0, sticky="nsew")
+        content_area.rowconfigure(0, weight=1)
+        content_area.columnconfigure(0, weight=1)
+
+        canvas = tk.Canvas(content_area, bg="#f5f7fa", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(content_area, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        body = ttk.Frame(canvas, padding=24)
+        body_window = canvas.create_window((0, 0), window=body, anchor="nw")
+
+        def update_scroll_region(event=None):
+            del event
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def resize_scroll_body(event):
+            canvas.itemconfigure(body_window, width=event.width)
+
+        def scroll_with_mouse(event):
+            if event.delta:
+                canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+
+        body.bind("<Configure>", update_scroll_region)
+        canvas.bind("<Configure>", resize_scroll_body)
+        root.bind("<MouseWheel>", scroll_with_mouse)
+
         ttk.Label(body, text="配置", style="Title.TLabel").pack(anchor="w")
         ttk.Label(body, text="保存后监控服务会自动重启并应用新设置", style="Hint.TLabel").pack(anchor="w", pady=(2, 18))
 
@@ -201,7 +248,7 @@ class WindowsTrayApplication:
             "screen_rotation": tk.StringVar(value=str(self.settings["screen_rotation"])),
             "network_unit": tk.StringVar(value=self.settings["network_unit"]),
             "lcd_style": tk.StringVar(value=style_label(self.settings["lcd_style"])),
-            "qbittorrent_enabled": tk.BooleanVar(value=self.settings["qbittorrent_enabled"]),
+            "qbittorrent_enabled": tk.BooleanVar(value=False),
             "qbittorrent_address": tk.StringVar(value=self.settings["qbittorrent_address"]),
             "qbittorrent_username": tk.StringVar(value=self.settings["qbittorrent_username"]),
             "qbittorrent_password": tk.StringVar(value=self.settings["qbittorrent_password"]),
@@ -250,11 +297,78 @@ class WindowsTrayApplication:
         field(monitor, 3, "重连间隔（秒）", ttk.Entry(monitor, textvariable=variables["reconnect_interval"]))
 
         qb = card("qBittorrent")
-        ttk.Checkbutton(qb, text="启用 qBittorrent 指标采集", variable=variables["qbittorrent_enabled"]).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        enable_qbittorrent = ttk.Checkbutton(
+            qb,
+            text="启用 qBittorrent 指标采集（请先验证账号密码）",
+            variable=variables["qbittorrent_enabled"],
+            state="disabled",
+        )
+        enable_qbittorrent.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
         field(qb, 1, "Web UI 地址", ttk.Entry(qb, textvariable=variables["qbittorrent_address"]))
         field(qb, 2, "用户名", ttk.Entry(qb, textvariable=variables["qbittorrent_username"]))
         field(qb, 3, "密码", ttk.Entry(qb, textvariable=variables["qbittorrent_password"], show="●"))
         field(qb, 4, "采集间隔（秒）", ttk.Entry(qb, textvariable=variables["qbittorrent_interval"]))
+
+        verified_qbittorrent_credentials = [None]
+        verification_results = queue.Queue()
+        verification_button = ttk.Button(qb, text="验证账号密码")
+        verification_button.grid(row=5, column=1, sticky="e", pady=(6, 0))
+
+        def current_qbittorrent_credentials():
+            return (
+                variables["qbittorrent_address"].get().strip(),
+                variables["qbittorrent_username"].get().strip(),
+                variables["qbittorrent_password"].get(),
+            )
+
+        def invalidate_qbittorrent_verification(*unused):
+            del unused
+            verified_qbittorrent_credentials[0] = None
+            variables["qbittorrent_enabled"].set(False)
+            enable_qbittorrent.configure(state="disabled")
+
+        for name in ("qbittorrent_address", "qbittorrent_username", "qbittorrent_password"):
+            variables[name].trace_add("write", invalidate_qbittorrent_verification)
+
+        def verify_qbittorrent():
+            credentials = current_qbittorrent_credentials()
+            if not all(credentials):
+                messagebox.showerror("验证失败", "请先填写 Web UI 地址、用户名和密码。", parent=root)
+                return
+            verification_button.configure(state="disabled", text="正在验证...")
+            enable_qbittorrent.configure(state="disabled")
+            variables["qbittorrent_enabled"].set(False)
+
+            def run_verification():
+                try:
+                    QbittorrentApiClient(*credentials).login()
+                    verification_results.put((credentials, None))
+                except Exception as error:  # 网络和认证错误均反馈到配置页。
+                    verification_results.put((credentials, str(error)))
+
+            threading.Thread(target=run_verification, name="qBittorrent 账号验证", daemon=True).start()
+
+        verification_button.configure(command=verify_qbittorrent)
+
+        def consume_verification_result():
+            try:
+                credentials, error = verification_results.get_nowait()
+            except queue.Empty:
+                root.after(100, consume_verification_result)
+                return
+            verification_button.configure(state="normal", text="验证账号密码")
+            if credentials != current_qbittorrent_credentials():
+                root.after(100, consume_verification_result)
+                return
+            if error is not None:
+                messagebox.showerror("验证失败", error, parent=root)
+            else:
+                verified_qbittorrent_credentials[0] = credentials
+                enable_qbittorrent.configure(state="normal")
+                messagebox.showinfo("验证成功", "qBittorrent 账号密码验证成功，现在可以启用指标采集。", parent=root)
+            root.after(100, consume_verification_result)
+
+        root.after(100, consume_verification_result)
 
         def save():
             try:
@@ -278,6 +392,9 @@ class WindowsTrayApplication:
                 if updated["qbittorrent_enabled"] and not all((updated["qbittorrent_address"], updated["qbittorrent_username"], updated["qbittorrent_password"])):
                     messagebox.showerror("配置错误", "启用 qBittorrent 后，请填写地址、用户名和密码。", parent=root)
                     return
+                if updated["qbittorrent_enabled"] and current_qbittorrent_credentials() != verified_qbittorrent_credentials[0]:
+                    messagebox.showerror("配置错误", "请先验证 qBittorrent 账号密码，验证成功后才能启用指标采集。", parent=root)
+                    return
             except (ValueError, StopIteration):
                 messagebox.showerror("配置错误", "请检查地址和时间间隔，时间间隔必须大于 0。", parent=root)
                 return
@@ -289,8 +406,8 @@ class WindowsTrayApplication:
                 self.icon.notify("配置已保存并生效", APPLICATION_NAME)
             root.destroy()
 
-        buttons = ttk.Frame(body)
-        buttons.pack(fill="x")
+        buttons = ttk.Frame(root, padding=(24, 12))
+        buttons.grid(row=1, column=0, sticky="ew")
         ttk.Button(buttons, text="取消", command=root.destroy).pack(side="right")
         ttk.Button(buttons, text="保存配置", command=save, style="Primary.TButton").pack(side="right", padx=(0, 10))
 

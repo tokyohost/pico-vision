@@ -24,6 +24,7 @@ class WindowsTraySettingsTest(unittest.TestCase):
         application = WindowsTrayApplication.__new__(WindowsTrayApplication)
         application.settings_window_lock = threading.Lock()
         application.settings_window_open = False
+        application.settings_window_restore_requested = threading.Event()
         icon = mock.Mock()
 
         application._show_settings(icon)
@@ -31,7 +32,8 @@ class WindowsTraySettingsTest(unittest.TestCase):
 
         thread_class.assert_called_once()
         thread_class.return_value.start.assert_called_once_with()
-        icon.notify.assert_called_once()
+        self.assertTrue(application.settings_window_restore_requested.is_set())
+        icon.notify.assert_not_called()
 
     def test_every_style_has_a_chinese_label(self):
         for name in STYLE_NAMES:
