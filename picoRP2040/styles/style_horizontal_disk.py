@@ -50,9 +50,9 @@ class HorizontalDiskStyle:
             ("memory", 2, 75, 100, 48),
             ("network", 2, 127, 100, 82),
             ("storage_summary", 106, 2, 212, 43),
-            ("disk_row_0", 106, 49, 212, 48),
-            ("disk_row_1", 106, 101, 212, 48),
-            ("disk_row_2", 106, 153, 212, 48),
+            ("disk_row_0", 106, 49, 212, 52),
+            ("disk_row_1", 106, 103, 212, 52),
+            ("disk_row_2", 106, 157, 212, 52),
             ("footer", 2, 213, 316, 25),
         ]
 
@@ -487,9 +487,9 @@ class HorizontalDiskStyle:
             column, row = index % 3, index // 3
             if selected_row is not None and row != selected_row:
                 continue
-            x, y = 106 + column * 71, 49 + row * 52
+            x, y = 106 + column * 71, 49 + row * 54
             if index >= len(disks):
-                self._draw_empty_disk(canvas, x, y, 68, 48, index)
+                self._draw_empty_disk(canvas, x, y, 68, 52, index)
                 continue
             disk = disks[index]
             percent = int(self._number(disk.get("percent")))
@@ -497,7 +497,7 @@ class HorizontalDiskStyle:
             frame_color, name_color, all_red, show_warning = self._health_display(
                 disk.get("health", 0), usage_color
             )
-            self._frame(canvas, x, y, 68, 48, frame_color)
+            self._frame(canvas, x, y, 68, 52, frame_color)
             name = self._format_disk_name(
                 disk.get("name", "DISK{}".format(index))
             )
@@ -514,8 +514,9 @@ class HorizontalDiskStyle:
                 disk.get("used_bytes"), disk.get("total_bytes")
             )
             canvas.text(x + 3, y + 18, capacity[:8], RED if all_red else WHITE, 1)
-            canvas.text(x + 4, y + 32, "{}%".format(percent), RED if all_red else usage_color, 1)
-            self._bar(canvas, x + 38, y + 34, 25, 8, percent, RED if all_red else usage_color)
+            # 与四盘清晰版一致，在卡片底边框上方保留 2 px 内容间隔。
+            canvas.text(x + 4, y + 39, "{}%".format(percent), RED if all_red else usage_color, 1)
+            self._bar(canvas, x + 38, y + 41, 25, 8, percent, RED if all_red else usage_color)
 
     def _draw_footer(self, canvas, snapshot):
         """绘制横屏底部的时间、运行时长和功耗。"""
@@ -547,7 +548,7 @@ class HorizontalDiskStyle:
             self._draw_network(canvas, snapshot)
         if self._visible(canvas, 2, 45):
             self._draw_storage_summary(canvas, snapshot)
-        if self._visible(canvas, 49, 205):
+        if self._visible(canvas, 49, 209):
             self._draw_disk_cards(canvas, snapshot)
         if self._visible(canvas, 213, 238):
             self._draw_footer(canvas, snapshot)

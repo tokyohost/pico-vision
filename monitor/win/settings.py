@@ -13,7 +13,7 @@ STYLE_NAMES = {
     "horizontal_disk": "九盘横屏版",
     "horizontal_diskv2": "九盘紧凑版",
     "horizontal_disk4x": "四盘清晰版",
-    "horizontal_disk4x_qb": "四盘下载版",
+    "horizontal_disk4x_qb": "四盘下载版(qBittorrent)",
     "horizontal_disk6x": "六盘均衡版",
     "simple": "三盘简洁版",
 }

@@ -355,8 +355,8 @@ class PicoClientTest(unittest.TestCase):
         service.client.connect.assert_called_once_with()
         service._run_development_loop.assert_called_once_with()
 
-    def test_connection_failure_waits_for_usb_addition_before_retry(self):
-        """确认首次探测失败后仅在 USB 端口增加后延迟重试。"""
+    def test_connection_failure_retries_when_port_already_exists(self):
+        """确认首次探测过早时，不要求 COM 口再次增加也会延迟重试。"""
         service = MonitorService.__new__(MonitorService)
         service.arguments = SimpleNamespace(
             port=None,
@@ -374,17 +374,12 @@ class PicoClientTest(unittest.TestCase):
         service.stopping.is_set.side_effect = [False, False, False, True]
         service.client = mock.Mock()
         service.client.is_connected = False
-        service.client.available_ports.side_effect = [
-            frozenset({"COM1"}),
-            frozenset({"COM1"}),
-            frozenset({"COM2"}),
-        ]
+        service.client.available_ports.return_value = frozenset({"COM1"})
         service.client.connect.side_effect = RuntimeError("未找到 Pico")
 
         self.assertEqual(service.run(), 0)
 
-        service.client.connect.assert_called_once_with()
-        service.stopping.wait.assert_any_call(0.5)
+        self.assertEqual(service.client.connect.call_count, 3)
         service.stopping.wait.assert_any_call(3.0)
 
     def test_usb_removal_does_not_trigger_probe(self):

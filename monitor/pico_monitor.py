@@ -156,6 +156,7 @@ class MonitorService:
         """持续连接设备、采集指标并发送最新系统快照。"""
         LOGGER.info("监控服务启动：端口=%s，Ping=%s，发送间隔=%.1f 秒，重连间隔=%.1f 秒，屏幕旋转=%d°，网络单位=%s，LCD 样式=%s，开发模式=%s", self.arguments.port or "自动发现", self.arguments.ping_target, self.arguments.interval, self.arguments.reconnect_interval, self.arguments.screen_rotation, self.arguments.network_unit, self.arguments.lcd_style, "开启" if self.arguments.dev else "关闭")
         while not self.stopping.is_set():
+            probing = not self.client.is_connected
             ports_before_probe = self.client.available_ports()
             try:
                 if not self.client.is_connected:
@@ -186,9 +187,14 @@ class MonitorService:
                 remaining = self.arguments.interval - (time.monotonic() - started)
                 self.stopping.wait(max(0.0, remaining))
             except (OSError, RuntimeError, serial.SerialException) as error:
-                LOGGER.warning("监控通信异常：%s；等待 USB 端口插入", error)
+                LOGGER.warning("监控通信异常：%s；准备重新连接", error)
                 self.client.close()
                 if isinstance(error, PicoRestartingError):
+                    self.stopping.wait(self.arguments.reconnect_interval)
+                    continue
+                # The COM port may reappear before the firmware can answer PING.
+                # Retry a failed probe even if that same port is already present.
+                if probing:
                     self.stopping.wait(self.arguments.reconnect_interval)
                     continue
                 if not self._wait_for_usb_addition(ports_before_probe):
