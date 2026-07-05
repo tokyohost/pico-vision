@@ -225,19 +225,24 @@ class PicoJsonClient:
         }
 
     @staticmethod
-    def build_packet(snapshot):
-        """把 JSON 编码为带长度与 CRC 的 PV1 数据帧。"""
+    def build_json_payload(snapshot):
+        """生成实际在线路上传输的紧凑 JSON 字节串。"""
         wire_snapshot = snapshot
         if snapshot.get("physical_disks") is not None and "disks" in snapshot:
             # physical_disks 已包含 Pico 样式所需的磁盘指标；避免在线路上再发送
             # 内容高度重复的逻辑 disks 列表，但不修改采集器持有的原始快照。
             wire_snapshot = dict(snapshot)
             wire_snapshot.pop("disks", None)
-        payload = json.dumps(
+        return json.dumps(
             wire_snapshot,
             ensure_ascii=True,
             separators=(",", ":"),
         ).encode("utf-8")
+
+    @staticmethod
+    def build_packet(snapshot):
+        """把 JSON 编码为带长度与 CRC 的 PV1 数据帧。"""
+        payload = PicoJsonClient.build_json_payload(snapshot)
         # 使用 512 字节 zlib 窗口，避免 RP2040 解压时申请默认的 32KB 连续堆。
         compressor = zlib.compressobj(level=6, wbits=ZLIB_WINDOW_BITS)
         compressed = compressor.compress(payload) + compressor.flush()

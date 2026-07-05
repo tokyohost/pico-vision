@@ -43,9 +43,21 @@ class FakeFrameBuffer:
         """接收字形像素块填充操作。"""
         del x, y, width, height, color
 
-    def blit(self, source, x, y, transparent):
+    def blit(self, source, x, y, transparent=-1, palette=None):
         """Accept cached glyph and whole-string bitmap copies."""
-        del source, x, y, transparent
+        del source, x, y, transparent, palette
+
+    def pixel(self, x, y, color):
+        """Accept palette pixel writes."""
+        del x, y, color
+
+    def hline(self, x, y, width, color):
+        """Accept native horizontal-line calls."""
+        del x, y, width, color
+
+    def vline(self, x, y, height, color):
+        """Accept native vertical-line calls."""
+        del x, y, height, color
 
     def poly(self, x, y, coordinates, color, fill):
         """Record a native polygon call used by grouped history columns."""
@@ -57,6 +69,7 @@ class FakeFrameBufferModule:
     """模拟 MicroPython framebuf 模块的必要接口。"""
 
     RGB565 = 1
+    MONO_HLSB = 2
     FrameBuffer = FakeFrameBuffer
     polygon_calls = 0
 
@@ -72,15 +85,15 @@ class CanvasGlyphCacheTest(unittest.TestCase):
         canvas_module.MAX_GLYPH_CACHE_SIZE = 3
         try:
             drawing_canvas = canvas_module.Canvas(20, 20)
-            drawing_canvas._get_scaled_glyph("A", 1, 1)
-            drawing_canvas._get_scaled_glyph("B", 1, 1)
-            drawing_canvas._get_scaled_glyph("C", 1, 1)
-            drawing_canvas._get_scaled_glyph("D", 1, 1)
+            drawing_canvas._get_scaled_glyph("A", 1)
+            drawing_canvas._get_scaled_glyph("B", 1)
+            drawing_canvas._get_scaled_glyph("C", 1)
+            drawing_canvas._get_scaled_glyph("D", 1)
 
             self.assertEqual(len(drawing_canvas._glyph_cache), 3)
-            self.assertNotIn(("native", "A", 1, 1), drawing_canvas._glyph_cache)
-            self.assertIn(("native", "B", 1, 1), drawing_canvas._glyph_cache)
-            self.assertIn(("native", "D", 1, 1), drawing_canvas._glyph_cache)
+            self.assertNotIn(("native", "A", 1), drawing_canvas._glyph_cache)
+            self.assertIn(("native", "B", 1), drawing_canvas._glyph_cache)
+            self.assertIn(("native", "D", 1), drawing_canvas._glyph_cache)
         finally:
             canvas_module.framebuf = original_framebuf
             canvas_module.MAX_GLYPH_CACHE_SIZE = original_limit
@@ -101,6 +114,7 @@ class CanvasGlyphCacheTest(unittest.TestCase):
             self.assertEqual(len(drawing_canvas._text_cache), 1)
             self.assertEqual(drawing_canvas._text_cache_bytes, cached_bytes)
             self.assertLessEqual(cached_bytes, canvas_module.MAX_TEXT_CACHE_BYTES)
+            self.assertLess(cached_bytes, len("CPU") * 8 * 7 * 2)
         finally:
             canvas_module.framebuf = original_framebuf
 

@@ -155,6 +155,20 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual(compressed[0] >> 4, 1)
         self.assertIn(b'"host"', zlib.decompress(compressed))
 
+    def test_development_json_matches_wire_payload(self):
+        """确认开发日志展示压缩前实际发送的紧凑 JSON。"""
+        snapshot = {
+            "host": "开发机",
+            "disks": [{"name": "logical"}],
+            "physical_disks": [{"name": "physical"}],
+        }
+
+        payload = PicoJsonClient.build_json_payload(snapshot)
+        _, compressed_payload = parse_frame(PicoJsonClient.build_packet(snapshot))
+
+        self.assertEqual(payload, zlib.decompress(base64.b64decode(compressed_payload)))
+        self.assertNotIn(b'"disks"', payload)
+
     def test_wire_packet_omits_duplicate_logical_disks(self):
         """已有物理磁盘列表时不重复发送逻辑磁盘列表。"""
         snapshot = {

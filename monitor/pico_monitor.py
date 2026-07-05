@@ -171,6 +171,8 @@ class MonitorService:
                         "系统指标采集耗时较长：%.3f 秒",
                         collection_elapsed,
                     )
+                if self.arguments.dev:
+                    self._print_development_snapshot(snapshot)
                 self.client.send(snapshot)
                 if self.arguments.once:
                     return 0
@@ -268,16 +270,17 @@ class MonitorService:
             if disk is selected or (selected_name and disk.get("name") == selected_name):
                 disk["health"] = health
 
-    def _print_development_snapshot(self):
-        """打印当前采集结果对应的完整 JSON 协议行。"""
+    def _print_development_snapshot(self, snapshot=None):
+        """打印实际进入压缩和发送流程的紧凑 JSON 内容。"""
         try:
-            packet = PicoJsonClient.build_packet(self._collect_snapshot())
+            if snapshot is None:
+                snapshot = self._collect_snapshot()
             LOGGER.info(
                 "[DEV][Monitor -> Pico][JSON] %s",
-                packet.decode("utf-8", errors="replace").rstrip(),
+                PicoJsonClient.build_json_payload(snapshot).decode("utf-8"),
             )
-        except (OSError, ValueError, psutil.Error) as error:
-            LOGGER.warning("[DEV][JSON] 系统指标采集失败：%s", error)
+        except (OSError, TypeError, ValueError, psutil.Error) as error:
+            LOGGER.warning("[DEV][JSON] 系统指标采集或 JSON 序列化失败：%s", error)
 
 
 def configure_logging():
