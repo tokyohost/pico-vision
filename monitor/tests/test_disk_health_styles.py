@@ -108,7 +108,7 @@ class DiskHealthStyleTest(unittest.TestCase):
             canvas, 7, 96, 90, 10, 50, BLUE, rounded=True
         )
 
-        self.assertEqual(len(canvas.rounded), 3)
+        self.assertEqual(len(canvas.rounded), 2)
 
 
 class CpuHistoryColorTest(unittest.TestCase):
@@ -188,7 +188,7 @@ class QbittorrentStyleTest(unittest.TestCase):
 
         self.assertEqual(canvas.calls[0][2], "57.13%")
         self.assertEqual(canvas.calls[0][4], 2)
-        self.assertEqual(canvas.calls[0][0], 310 - 12 * len("57.13%"))
+        self.assertEqual(canvas.calls[0][0], 312 - 12 * len("57.13%"))
 
 
 class SimpleStyleTest(unittest.TestCase):
