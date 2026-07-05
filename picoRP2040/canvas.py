@@ -30,9 +30,10 @@ except ImportError:
 # 过小的缓存会在一帧内反复清空并重建字形，128 项可在较低内存开销下
 # 容纳常用字形组合。
 MAX_GLYPH_CACHE_SIZE = 128
-MAX_TEXT_CACHE_BYTES = 8 * 1024
-MAX_TEXT_BITMAP_BYTES = 1024
+MAX_TEXT_CACHE_BYTES = 2 * 1024
+MAX_TEXT_BITMAP_BYTES = 256
 MAX_TEXT_SEEN_KEYS = 64
+MAX_POLYGON_BUFFER_SHAPES = 8
 
 
 class Canvas:
@@ -49,12 +50,14 @@ class Canvas:
         self._framebuffers = {}
         self._framebuffer = None
         self._glyph_cache = {}
+        self._palette_cache = {}
         self._text_cache = {}
         self._text_cache_bytes = 0
         self._text_seen = {}
         self._font_name = "native"
         self._font = FONT_5X7
         self._polygon_supported = None
+        self._polygon_buffers = {}
         self._select_framebuffer()
 
     def set_font(self, font_name):
@@ -75,9 +78,11 @@ class Canvas:
     def clear_glyph_cache(self):
         """清空动态字形缓存，释放样式切换遗留的帧缓冲区。"""
         self._glyph_cache.clear()
+        self._palette_cache.clear()
         self._text_cache.clear()
         self._text_cache_bytes = 0
         self._text_seen.clear()
+        self._polygon_buffers.clear()
 
     def set_origin(self, origin_y):
         """设置当前条带在完整屏幕中的纵向起点。"""
@@ -176,12 +181,29 @@ class Canvas:
     def line(self, x0, y0, x1, y1, color):
         """使用整数 Bresenham 算法绘制线段。"""
         if self._framebuffer is not None:
+            native_color = self._native_color(color)
+            if y0 == y1:
+                self._framebuffer.hline(
+                    min(x0, x1) - self.origin_x,
+                    y0 - self.origin_y,
+                    abs(x1 - x0) + 1,
+                    native_color,
+                )
+                return
+            if x0 == x1:
+                self._framebuffer.vline(
+                    x0 - self.origin_x,
+                    min(y0, y1) - self.origin_y,
+                    abs(y1 - y0) + 1,
+                    native_color,
+                )
+                return
             self._framebuffer.line(
                 x0 - self.origin_x,
                 y0 - self.origin_y,
                 x1 - self.origin_x,
                 y1 - self.origin_y,
-                self._native_color(color),
+                native_color,
             )
             return
         delta_x = abs(x1 - x0)
@@ -210,10 +232,17 @@ class Canvas:
             self._polygon_supported = False
             return False
         try:
-            coordinates = array("h")
+            coordinate_count = len(points) * 2
+            coordinates = self._polygon_buffers.get(coordinate_count)
+            if coordinates is None:
+                coordinates = array("h", [0] * coordinate_count)
+                if len(self._polygon_buffers) < MAX_POLYGON_BUFFER_SHAPES:
+                    self._polygon_buffers[coordinate_count] = coordinates
+            coordinate_index = 0
             for point_x, point_y in points:
-                coordinates.append(point_x)
-                coordinates.append(point_y)
+                coordinates[coordinate_index] = point_x
+                coordinates[coordinate_index + 1] = point_y
+                coordinate_index += 2
             polygon_method(
                 -self.origin_x, -self.origin_y, coordinates,
                 self._native_color(color), True,
@@ -337,7 +366,7 @@ class Canvas:
             else:
                 self._blit_scaled_text(x, y, value, color, scale)
             return
-        key = (self._font_name, value, color, scale)
+        key = (self._font_name, value, scale)
         cached = self._text_cache.pop(key, None)
         if cached is not None:
             self._text_cache[key] = cached
@@ -345,7 +374,7 @@ class Canvas:
         else:
             width = self.text_width(value, scale)
             height = 7 * scale
-            size = width * height * 2
+            size = ((width + 7) // 8) * height
             seen_count = self._text_seen.get(key, 0) + 1
             if (
                 len(self._text_seen) >= MAX_TEXT_SEEN_KEYS
@@ -370,19 +399,18 @@ class Canvas:
             try:
                 bitmap_buffer = bytearray(size)
                 bitmap = framebuf.FrameBuffer(
-                    bitmap_buffer, width, height, framebuf.RGB565
+                    bitmap_buffer, width, height, framebuf.MONO_HLSB
                 )
-                bitmap.fill(self._native_color(BLACK))
+                bitmap.fill(0)
                 cursor_x = 0
-                transparent = self._native_color(BLACK)
                 for character in value:
-                    glyph = self._get_scaled_glyph(character, color, scale)
+                    glyph = self._get_scaled_glyph(character, scale)
                     offset = (
                         1
                         if scale == 1 and self._font_name == "screen_2inch"
                         else 0
                     )
-                    bitmap.blit(glyph, cursor_x + offset, 0, transparent)
+                    bitmap.blit(glyph, cursor_x + offset, 0, 0)
                     cursor_x += self._character_advance(character, scale)
             except MemoryError:
                 bitmap_buffer = None
@@ -400,7 +428,7 @@ class Canvas:
             self._text_cache_bytes += size
         self._framebuffer.blit(
             bitmap, x - self.origin_x, y - self.origin_y,
-            self._native_color(BLACK),
+            self._native_color(BLACK), self._get_text_palette(color),
         )
 
     def text_width(self, value, scale=1):
@@ -419,35 +447,37 @@ class Canvas:
     def _blit_font_text(self, x, y, value, color):
         """按照原生字符间距绘制当前样式选择的点阵字体。"""
         cursor_x = x
-        transparent = self._native_color(BLACK)
+        palette = self._get_text_palette(color)
         for character in value:
-            glyph = self._get_scaled_glyph(character, color, 1)
+            glyph = self._get_scaled_glyph(character, 1)
             offset = 1 if self._font_name == "screen_2inch" else 0
             self._framebuffer.blit(
                 glyph,
                 cursor_x + offset - self.origin_x,
                 y - self.origin_y,
-                transparent,
+                self._native_color(BLACK),
+                palette,
             )
             cursor_x += self._character_advance(character, 1)
 
     def _blit_scaled_text(self, x, y, value, color, scale):
         """使用缓存字形快速绘制放大文本。"""
         cursor_x = x
-        transparent = self._native_color(BLACK)
+        palette = self._get_text_palette(color)
         for character in value:
-            glyph = self._get_scaled_glyph(character, color, scale)
+            glyph = self._get_scaled_glyph(character, scale)
             self._framebuffer.blit(
                 glyph,
                 cursor_x - self.origin_x,
                 y - self.origin_y,
-                transparent,
+                self._native_color(BLACK),
+                palette,
             )
             cursor_x += self._character_advance(character, scale)
 
-    def _get_scaled_glyph(self, character, color, scale):
+    def _get_scaled_glyph(self, character, scale):
         """获取或创建指定字符的原生放大字形缓存。"""
-        key = (self._font_name, character, color, scale)
+        key = (self._font_name, character, scale)
         glyph = self._glyph_cache.get(key)
         if glyph is not None:
             return glyph
@@ -459,15 +489,14 @@ class Canvas:
         columns = self._font.get(character, self._font["?"])
         width = max(6, len(columns)) * scale
         height = 7 * scale
-        glyph_buffer = bytearray(width * height * 2)
+        glyph_buffer = bytearray(((width + 7) // 8) * height)
         glyph = framebuf.FrameBuffer(
             glyph_buffer,
             width,
             height,
-            framebuf.RGB565,
+            framebuf.MONO_HLSB,
         )
-        glyph.fill(self._native_color(BLACK))
-        native_color = self._native_color(color)
+        glyph.fill(0)
         for column_index, bits in enumerate(columns):
             for row_index in range(7):
                 if bits & (1 << row_index):
@@ -476,7 +505,21 @@ class Canvas:
                         row_index * scale,
                         scale,
                         scale,
-                        native_color,
+                        1,
                     )
         self._glyph_cache[key] = glyph
         return glyph
+
+    def _get_text_palette(self, color):
+        """Return a tiny RGB565 palette mapping monochrome text to color."""
+        palette = self._palette_cache.get(color)
+        if palette is not None:
+            return palette
+        palette_buffer = bytearray(4)
+        palette = framebuf.FrameBuffer(
+            palette_buffer, 2, 1, framebuf.RGB565
+        )
+        palette.pixel(0, 0, self._native_color(BLACK))
+        palette.pixel(1, 0, self._native_color(color))
+        self._palette_cache[color] = palette
+        return palette
