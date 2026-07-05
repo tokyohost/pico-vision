@@ -546,7 +546,10 @@ class HorizontalDisk4xQbStyle:
         self._frame(canvas, 106, 2, 212, 43, YELLOW)
         canvas.text(112, 7, "DISK OVERALL", YELLOW, 1)
         capacity = self._format_bytes(disk.get("used_bytes")) + "/" + self._format_bytes(disk.get("total_bytes"))
-        canvas.text(112, 20, capacity, WHITE, 1)
+        canvas.text(112, 24, capacity, WHITE, 1)
+        free_bytes = max(0, self._number(disk.get("total_bytes")) - self._number(disk.get("used_bytes")))
+        free_text = "FREE " + self._format_bytes(free_bytes)
+        canvas.text(312 - canvas.text_width(free_text), 24, free_text, GREEN, 1)
         percent_text = "{:.2f}%".format(percent)
         canvas.text(
             312 - canvas.text_width(percent_text, 2), 7,
@@ -830,7 +833,10 @@ class HorizontalDisk4xQbStyle:
             + "/"
             + self._format_bytes(disk.get("total_bytes"))
         )
-        canvas.text(112, 20, capacity, WHITE, 1)
+        canvas.text(112, 24, capacity, WHITE, 1)
+        free_bytes = max(0, self._number(disk.get("total_bytes")) - self._number(disk.get("used_bytes")))
+        free_text = "FREE " + self._format_bytes(free_bytes)
+        canvas.text(312 - canvas.text_width(free_text), 24, free_text, GREEN, 1)
         self._bar(canvas, 112, 33, 200, 8, percent, usage_color)
 
     def _draw_footer_dirty(self, canvas, snapshot):
