@@ -110,6 +110,23 @@ class DiskHealthStyleTest(unittest.TestCase):
 
         self.assertEqual(len(canvas.rounded), 2)
 
+    def test_rectangular_bar_uses_flat_low_resolution_track(self):
+        """Square bars should use a clean inset track without heavy borders."""
+        class FlatBarCanvas:
+            def __init__(self):
+                self.rectangles = []
+
+            def fill_rect(self, *args):
+                self.rectangles.append(args)
+
+        canvas = FlatBarCanvas()
+        HorizontalDisk6xStyle()._bar(
+            canvas, 112, 33, 200, 8, 50, BLUE
+        )
+
+        self.assertEqual(canvas.rectangles[0][:4], (112, 34, 200, 6))
+        self.assertEqual(canvas.rectangles[1][:4], (112, 34, 100, 6))
+
 
 class CpuHistoryColorTest(unittest.TestCase):
     """验证两种横屏样式的 CPU 峰值颜色会保留在对应历史位置。"""

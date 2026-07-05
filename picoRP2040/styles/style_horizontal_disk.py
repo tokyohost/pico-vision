@@ -301,9 +301,12 @@ class HorizontalDiskStyle:
                     x, y, filled_width, height, color, 2
                 )
             return
-        canvas.fill_rect(x, y, width, height, DARK)
-        canvas.fill_rect(x + 1, y + 1, int((width - 2) * value / 100), height - 2, color)
-        self._frame(canvas, x, y, width, height, GRAY)
+        track_y = y + 1 if height > 4 else y
+        track_height = height - 2 if height > 4 else height
+        canvas.fill_rect(x, track_y, width, track_height, DARK)
+        filled_width = int(width * value / 100)
+        if filled_width > 0:
+            canvas.fill_rect(x, track_y, filled_width, track_height, color)
 
     def _history(
         self, canvas, x, y, width, height, values, color,
