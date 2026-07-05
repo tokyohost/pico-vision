@@ -46,9 +46,9 @@ class HorizontalDisk4xQbStyle:
     def create_dirty_regions():
         """按独立数据面板创建横屏样式的动态刷新区域。"""
         return [
-            ("cpu_values", 8, 10, 92, 16),
-            ("cpu_history", 8, 31, 88, 35),
-            ("memory_dynamic", 8, 94, 88, 24),
+            ("cpu_values", 7, 7, 90, 19),
+            ("cpu_history", 7, 31, 90, 35),
+            ("memory_dynamic", 7, 80, 90, 38),
             ("network_values", 32, 132, 64, 18),
             ("network_upload_history", 8, 152, 88, 19),
             ("network_download_value", 32, 174, 64, 7),
@@ -458,18 +458,18 @@ class HorizontalDisk4xQbStyle:
         temperature = cpu.get("temperature_c")
         temperature_text = "--℃" if temperature is None else "{}℃".format(int(self._number(temperature)))
         self._frame(canvas, 2, 2, 100, 69, GREEN)
-        canvas.text(8, 7, "CPU", GREEN, 1)
+        canvas.text(7, 7, "CPU", GREEN, 1)
         canvas.text(
-            8, 19, temperature_text,
+            7, 20, temperature_text,
             self._temperature_color(temperature), 1,
         )
         percent_text = "{}%".format(percent)
         canvas.text(
-            100 - len(percent_text) * 12, 10,
+            97 - canvas.text_width(percent_text, 2), 7,
             percent_text, usage_color, 2,
         )
         self._history(
-            canvas, 8, 31, 88, 35,
+            canvas, 7, 31, 90, 35,
             cpu.get("history", ()), usage_color,
             percentage=True, filled=True, color_by_value=True,
         )
@@ -480,15 +480,19 @@ class HorizontalDisk4xQbStyle:
         percent = int(self._number(memory.get("percent")))
         usage_color = self._usage_color(percent)
         self._frame(canvas, 2, 75, 100, 48, PURPLE)
-        canvas.text(8, 80, "MEM", PURPLE, 1)
-        canvas.text(8, 94, "{}%".format(percent), usage_color, 2)
-        self._bar(canvas, 49, 95, 47, 12, percent, usage_color)
+        canvas.text(7, 80, "MEM", PURPLE, 1)
+        percent_text = "{}%".format(percent)
+        canvas.text(
+            97 - canvas.text_width(percent_text, 2), 80,
+            percent_text, usage_color, 2,
+        )
+        self._bar(canvas, 7, 96, 90, 10, percent, usage_color)
         used_text = self._format_bytes(memory.get("used_bytes"))
         total_text = self._format_bytes(memory.get("total_bytes"))
         if used_text[-1:] == total_text[-1:]:
             used_text = used_text[:-1]
         detail = used_text + "/" + total_text
-        canvas.text(8, 111, detail, WHITE, 1)
+        canvas.text(7, 111, detail, WHITE, 1)
 
     def _draw_network(self, canvas, snapshot):
         """绘制左侧上下行速率、历史趋势和标题栏延迟。"""
@@ -722,13 +726,13 @@ class HorizontalDisk4xQbStyle:
         usage_color = self._usage_color(percent)
         if key == "cpu_history":
             self._history(
-                canvas, 8, 31, 88, 35,
+                canvas, 7, 31, 90, 35,
                 cpu.get("history", ()), usage_color,
                 percentage=True, filled=True, color_by_value=True,
             )
             return
         # This viewport intersects the lower rows of the static CPU label.
-        canvas.text(8, 7, "CPU", GREEN, 1)
+        canvas.text(7, 7, "CPU", GREEN, 1)
         temperature = cpu.get("temperature_c")
         temperature_text = (
             "--℃"
@@ -736,12 +740,12 @@ class HorizontalDisk4xQbStyle:
             else "{}℃".format(int(self._number(temperature)))
         )
         canvas.text(
-            8, 19, temperature_text,
+            7, 20, temperature_text,
             self._temperature_color(temperature), 1,
         )
         percent_text = "{}%".format(percent)
         canvas.text(
-            100 - len(percent_text) * 12, 10,
+            97 - canvas.text_width(percent_text, 2), 7,
             percent_text, usage_color, 2,
         )
 
@@ -750,13 +754,18 @@ class HorizontalDisk4xQbStyle:
         memory = snapshot.get("memory", {})
         percent = int(self._number(memory.get("percent")))
         usage_color = self._usage_color(percent)
-        canvas.text(8, 94, "{}%".format(percent), usage_color, 2)
-        self._bar(canvas, 49, 95, 47, 12, percent, usage_color)
+        canvas.text(7, 80, "MEM", PURPLE, 1)
+        percent_text = "{}%".format(percent)
+        canvas.text(
+            97 - canvas.text_width(percent_text, 2), 80,
+            percent_text, usage_color, 2,
+        )
+        self._bar(canvas, 7, 96, 90, 10, percent, usage_color)
         used_text = self._format_bytes(memory.get("used_bytes"))
         total_text = self._format_bytes(memory.get("total_bytes"))
         if used_text[-1:] == total_text[-1:]:
             used_text = used_text[:-1]
-        canvas.text(8, 111, used_text + "/" + total_text, WHITE, 1)
+        canvas.text(7, 111, used_text + "/" + total_text, WHITE, 1)
 
     def _draw_network_dirty(self, canvas, key, snapshot):
         """Draw one independently changing part of the network panel."""

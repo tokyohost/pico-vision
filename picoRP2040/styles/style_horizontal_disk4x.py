@@ -421,18 +421,18 @@ class HorizontalDisk4xStyle:
         temperature = cpu.get("temperature_c")
         temperature_text = "--℃" if temperature is None else "{}℃".format(int(self._number(temperature)))
         self._frame(canvas, 2, 2, 100, 69, GREEN)
-        canvas.text(8, 7, "CPU", GREEN, 1)
+        canvas.text(7, 7, "CPU", GREEN, 1)
         canvas.text(
-            8, 19, temperature_text,
+            7, 20, temperature_text,
             self._temperature_color(temperature), 1,
         )
         percent_text = "{}%".format(percent)
         canvas.text(
-            100 - len(percent_text) * 12, 10,
+            97 - canvas.text_width(percent_text, 2), 7,
             percent_text, usage_color, 2,
         )
         self._history(
-            canvas, 8, 31, 88, 35,
+            canvas, 7, 31, 90, 35,
             cpu.get("history", ()), usage_color,
             percentage=True, filled=True, color_by_value=True,
         )
@@ -443,15 +443,19 @@ class HorizontalDisk4xStyle:
         percent = int(self._number(memory.get("percent")))
         usage_color = self._usage_color(percent)
         self._frame(canvas, 2, 75, 100, 48, PURPLE)
-        canvas.text(8, 80, "MEM", PURPLE, 1)
-        canvas.text(8, 94, "{}%".format(percent), usage_color, 2)
-        self._bar(canvas, 49, 95, 47, 12, percent, usage_color)
+        canvas.text(7, 80, "MEM", PURPLE, 1)
+        percent_text = "{}%".format(percent)
+        canvas.text(
+            97 - canvas.text_width(percent_text, 2), 80,
+            percent_text, usage_color, 2,
+        )
+        self._bar(canvas, 7, 96, 90, 10, percent, usage_color)
         used_text = self._format_bytes(memory.get("used_bytes"))
         total_text = self._format_bytes(memory.get("total_bytes"))
         if used_text[-1:] == total_text[-1:]:
             used_text = used_text[:-1]
         detail = used_text + "/" + total_text
-        canvas.text(8, 111, detail, WHITE, 1)
+        canvas.text(7, 111, detail, WHITE, 1)
 
     def _draw_network(self, canvas, snapshot):
         """绘制左侧上下行速率、历史趋势和标题栏延迟。"""
