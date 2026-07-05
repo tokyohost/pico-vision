@@ -50,9 +50,9 @@ class HorizontalDisk6xStyle:
             ("memory", 2, 75, 100, 48),
             ("network", 2, 127, 100, 82),
             ("storage_summary", 106, 2, 212, 43),
-            ("disk_row_0", 106, 49, 212, 48),
-            ("disk_row_1", 106, 101, 212, 48),
-            ("disk_row_2", 106, 153, 212, 48),
+            ("disk_row_0", 106, 49, 212, 52),
+            ("disk_row_1", 106, 103, 212, 52),
+            ("disk_row_2", 106, 157, 212, 52),
             ("footer", 2, 213, 316, 25),
         ]
 
@@ -274,9 +274,18 @@ class HorizontalDisk6xStyle:
         canvas.line(x, y, x, y + height - 1, color)
         canvas.line(x + width - 1, y, x + width - 1, y + height - 1, color)
 
-    def _bar(self, canvas, x, y, width, height, percent, color):
+    def _bar(self, canvas, x, y, width, height, percent, color, rounded=False):
         """绘制带边框的百分比进度条。"""
         value = max(0, min(100, self._number(percent)))
+        if rounded:
+            canvas.fill_round_rect(x, y, width, height, GRAY, 3)
+            canvas.fill_round_rect(x + 1, y + 1, width - 2, height - 2, DARK, 2)
+            filled_width = int((width - 2) * value / 100)
+            if filled_width > 0:
+                canvas.fill_round_rect(
+                    x + 1, y + 1, filled_width, height - 2, color, 2
+                )
+            return
         canvas.fill_rect(x, y, width, height, DARK)
         canvas.fill_rect(x + 1, y + 1, int((width - 2) * value / 100), height - 2, color)
         self._frame(canvas, x, y, width, height, GRAY)
@@ -426,7 +435,7 @@ class HorizontalDisk6xStyle:
             97 - canvas.text_width(percent_text, 2), 80,
             percent_text, usage_color, 2,
         )
-        self._bar(canvas, 7, 96, 90, 10, percent, usage_color)
+        self._bar(canvas, 7, 96, 90, 10, percent, usage_color, rounded=True)
         used_text = self._format_bytes(memory.get("used_bytes"))
         total_text = self._format_bytes(memory.get("total_bytes"))
         if used_text[-1:] == total_text[-1:]:
@@ -470,7 +479,7 @@ class HorizontalDisk6xStyle:
     def _draw_storage_summary(self, canvas, snapshot):
         """绘制右上角磁盘总容量和总体占用率。"""
         disk = snapshot.get("disk", {})
-        percent = self._number(disk.get("percent"))
+        percent = max(0, min(100, self._number(disk.get("percent"))))
         usage_color = self._disk_usage_color(percent)
         self._frame(canvas, 106, 2, 212, 43, YELLOW)
         canvas.text(112, 7, "DISK OVERALL", YELLOW, 1)
@@ -490,7 +499,7 @@ class HorizontalDisk6xStyle:
         empty_text = "EMPTY"
         canvas.text(
             x + (width - canvas.text_width(empty_text)) // 2,
-            y + 19, empty_text, GRAY, 1,
+            y + 21, empty_text, GRAY, 1,
         )
         canvas.fill_rect(x + 14, y + height - 8, width - 28, 2, DARK)
 
@@ -504,9 +513,9 @@ class HorizontalDisk6xStyle:
             if selected_row is not None and row != selected_row:
                 continue
             # 每行两张磁盘卡片共同占满 212 像素，与总体面板和底部组件的右边界对齐。
-            x, y = 106 + column * 108, 49 + row * 52
+            x, y = 106 + column * 108, 49 + row * 54
             if index >= len(disks):
-                self._draw_empty_disk(canvas, x, y, 104, 48, index)
+                self._draw_empty_disk(canvas, x, y, 104, 52, index)
                 continue
             disk = disks[index]
             percent = int(self._number(disk.get("percent")))
@@ -514,7 +523,7 @@ class HorizontalDisk6xStyle:
             frame_color, name_color, all_red, show_warning = self._health_display(
                 disk.get("health", 0), usage_color
             )
-            self._frame(canvas, x, y, 104, 48, frame_color)
+            self._frame(canvas, x, y, 104, 52, frame_color)
             name = str(
                 disk.get("name") or "DISK{}".format(index)
             ).strip().upper()
@@ -530,22 +539,22 @@ class HorizontalDisk6xStyle:
             capacity = self._format_disk_capacity(
                 disk.get("used_bytes"), disk.get("total_bytes")
             )
-            canvas.text(x + 3, y + 15, capacity[:8], RED if all_red else WHITE, 1)
+            canvas.text(x + 3, y + 16, capacity[:8], RED if all_red else WHITE, 1)
             percent_text = "{}%".format(percent)
             canvas.text(
-                x + 101 - canvas.text_width(percent_text), y + 15,
+                x + 101 - canvas.text_width(percent_text), y + 16,
                 percent_text, RED if all_red else usage_color, 1,
             )
             read_text = "R" + self._format_disk_rate(disk.get("read_bps"))
             write_text = "W" + self._format_disk_rate(disk.get("write_bps"))
-            canvas.text(x + 3, y + 27, read_text, RED if all_red else GREEN, 1)
-            canvas.text(x + 3, y + 38, write_text, RED if all_red else YELLOW, 1)
+            canvas.text(x + 3, y + 29, read_text, RED if all_red else GREEN, 1)
+            canvas.text(x + 3, y + 42, write_text, RED if all_red else YELLOW, 1)
             self._history(
-                canvas, x + 42, y + 27, 59, 8,
+                canvas, x + 42, y + 28, 59, 10,
                 disk.get("read_history", ()), RED if all_red else GREEN, filled=True,
             )
             self._history(
-                canvas, x + 42, y + 38, 59, 7,
+                canvas, x + 42, y + 41, 59, 9,
                 disk.get("write_history", ()), RED if all_red else YELLOW, filled=True,
             )
 
@@ -583,7 +592,7 @@ class HorizontalDisk6xStyle:
             self._draw_network(canvas, snapshot)
         if self._visible(canvas, 2, 45):
             self._draw_storage_summary(canvas, snapshot)
-        if self._visible(canvas, 49, 205):
+        if self._visible(canvas, 49, 209):
             self._draw_disk_cards(canvas, snapshot)
         if self._visible(canvas, 213, 238):
             self._draw_footer(canvas, snapshot)

@@ -334,9 +334,18 @@ class HorizontalDisk4xQbStyle:
         canvas.line(x, y, x, y + height - 1, color)
         canvas.line(x + width - 1, y, x + width - 1, y + height - 1, color)
 
-    def _bar(self, canvas, x, y, width, height, percent, color):
+    def _bar(self, canvas, x, y, width, height, percent, color, rounded=False):
         """绘制带边框的百分比进度条。"""
         value = max(0, min(100, self._number(percent)))
+        if rounded:
+            canvas.fill_round_rect(x, y, width, height, GRAY, 3)
+            canvas.fill_round_rect(x + 1, y + 1, width - 2, height - 2, DARK, 2)
+            filled_width = int((width - 2) * value / 100)
+            if filled_width > 0:
+                canvas.fill_round_rect(
+                    x + 1, y + 1, filled_width, height - 2, color, 2
+                )
+            return
         canvas.fill_rect(x, y, width, height, DARK)
         canvas.fill_rect(x + 1, y + 1, int((width - 2) * value / 100), height - 2, color)
         self._frame(canvas, x, y, width, height, GRAY)
@@ -486,7 +495,7 @@ class HorizontalDisk4xQbStyle:
             97 - canvas.text_width(percent_text, 2), 80,
             percent_text, usage_color, 2,
         )
-        self._bar(canvas, 7, 96, 90, 10, percent, usage_color)
+        self._bar(canvas, 7, 96, 90, 10, percent, usage_color, rounded=True)
         used_text = self._format_bytes(memory.get("used_bytes"))
         total_text = self._format_bytes(memory.get("total_bytes"))
         if used_text[-1:] == total_text[-1:]:
@@ -530,7 +539,7 @@ class HorizontalDisk4xQbStyle:
     def _draw_storage_summary(self, canvas, snapshot):
         """绘制右上角磁盘总容量和总体占用率。"""
         disk = snapshot.get("disk", {})
-        percent = self._number(disk.get("percent"))
+        percent = max(0, min(100, self._number(disk.get("percent"))))
         usage_color = self._disk_usage_color(percent)
         self._frame(canvas, 106, 2, 212, 43, YELLOW)
         canvas.text(112, 7, "DISK OVERALL", YELLOW, 1)
@@ -760,7 +769,7 @@ class HorizontalDisk4xQbStyle:
             97 - canvas.text_width(percent_text, 2), 80,
             percent_text, usage_color, 2,
         )
-        self._bar(canvas, 7, 96, 90, 10, percent, usage_color)
+        self._bar(canvas, 7, 96, 90, 10, percent, usage_color, rounded=True)
         used_text = self._format_bytes(memory.get("used_bytes"))
         total_text = self._format_bytes(memory.get("total_bytes"))
         if used_text[-1:] == total_text[-1:]:
@@ -805,7 +814,7 @@ class HorizontalDisk4xQbStyle:
     def _draw_storage_dirty(self, canvas, key, snapshot):
         """Draw changing storage totals without rebuilding the outer frame."""
         disk = snapshot.get("disk", {})
-        percent = self._number(disk.get("percent"))
+        percent = max(0, min(100, self._number(disk.get("percent"))))
         usage_color = self._disk_usage_color(percent)
         if key == "storage_percent":
             percent_text = "{:.2f}%".format(percent)

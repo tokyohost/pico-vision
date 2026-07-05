@@ -178,6 +178,27 @@ class Canvas:
             ) * 2
             self.buffer[start:start + len(row)] = row
 
+    def fill_round_rect(self, x, y, width, height, color, radius=3):
+        """Fill a small rounded rectangle without changing panel outlines."""
+        if width <= 0 or height <= 0:
+            return
+        radius = min(radius, width // 2, height // 2)
+        if radius <= 1:
+            self.fill_rect(x, y, width, height, color)
+            return
+        for row in range(radius):
+            inset = (radius - row + 1) // 2
+            self.fill_rect(
+                x + inset, y + row, width - inset * 2, 1, color
+            )
+            self.fill_rect(
+                x + inset, y + height - row - 1,
+                width - inset * 2, 1, color,
+            )
+        middle_height = height - radius * 2
+        if middle_height > 0:
+            self.fill_rect(x, y + radius, width, middle_height, color)
+
     def line(self, x0, y0, x1, y1, color):
         """使用整数 Bresenham 算法绘制线段。"""
         if self._framebuffer is not None:

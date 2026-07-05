@@ -80,6 +80,36 @@ class DiskHealthStyleTest(unittest.TestCase):
 
             self.assertIn("disk_row_2", [region[0] for region in regions])
 
+    def test_six_disk_rows_use_available_vertical_space(self):
+        """Six-disk cards should extend near the footer with two-pixel gaps."""
+        rows = [
+            region
+            for region in HorizontalDisk6xStyle.create_dirty_regions()
+            if region[0].startswith("disk_row_")
+        ]
+
+        self.assertEqual(
+            [(row[2], row[4]) for row in rows],
+            [(49, 52), (103, 52), (157, 52)],
+        )
+        self.assertEqual(rows[-1][2] + rows[-1][4], 209)
+
+    def test_memory_bar_requests_rounded_progress_style(self):
+        """The MEM progress bar should use rounded fills, not panel corners."""
+        class BarCanvas:
+            def __init__(self):
+                self.rounded = []
+
+            def fill_round_rect(self, *args):
+                self.rounded.append(args)
+
+        canvas = BarCanvas()
+        HorizontalDisk6xStyle()._bar(
+            canvas, 7, 96, 90, 10, 50, BLUE, rounded=True
+        )
+
+        self.assertEqual(len(canvas.rounded), 3)
+
 
 class CpuHistoryColorTest(unittest.TestCase):
     """验证两种横屏样式的 CPU 峰值颜色会保留在对应历史位置。"""
