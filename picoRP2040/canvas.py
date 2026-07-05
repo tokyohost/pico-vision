@@ -30,6 +30,9 @@ except ImportError:
 # 过小的缓存会在一帧内反复清空并重建字形，128 项可在较低内存开销下
 # 容纳常用字形组合。
 MAX_GLYPH_CACHE_SIZE = 128
+MAX_TEXT_CACHE_BYTES = 8 * 1024
+MAX_TEXT_BITMAP_BYTES = 1024
+MAX_TEXT_SEEN_KEYS = 64
 
 
 class Canvas:
@@ -46,6 +49,9 @@ class Canvas:
         self._framebuffers = {}
         self._framebuffer = None
         self._glyph_cache = {}
+        self._text_cache = {}
+        self._text_cache_bytes = 0
+        self._text_seen = {}
         self._font_name = "native"
         self._font = FONT_5X7
         self._polygon_supported = None
@@ -62,13 +68,16 @@ class Canvas:
         if normalized_name not in fonts:
             raise ValueError("未知点阵字体：{}".format(normalized_name))
         if normalized_name != self._font_name:
-            self._glyph_cache.clear()
+            self.clear_glyph_cache()
         self._font_name = normalized_name
         self._font = fonts[normalized_name]
 
     def clear_glyph_cache(self):
         """清空动态字形缓存，释放样式切换遗留的帧缓冲区。"""
         self._glyph_cache.clear()
+        self._text_cache.clear()
+        self._text_cache_bytes = 0
+        self._text_seen.clear()
 
     def set_origin(self, origin_y):
         """设置当前条带在完整屏幕中的纵向起点。"""
@@ -206,11 +215,8 @@ class Canvas:
                 coordinates.append(point_x)
                 coordinates.append(point_y)
             polygon_method(
-                -self.origin_x,
-                -self.origin_y,
-                coordinates,
-                self._native_color(color),
-                True,
+                -self.origin_x, -self.origin_y, coordinates,
+                self._native_color(color), True,
             )
             self._polygon_supported = True
             return True
@@ -221,6 +227,72 @@ class Canvas:
             # 不同 MicroPython 固件的 poly 签名并不一致，失败后使用扫描线。
             self._polygon_supported = False
             return False
+
+    def draw_columns(self, columns, bottom=None):
+        """Draw sampled columns, grouping equal colors into native polygons.
+
+        ``columns`` contains ``(x, y, color)`` tuples.  With ``bottom`` set,
+        each sample is filled down to that coordinate; otherwise only the
+        sampled pixels are drawn.  This keeps history-chart rendering shared
+        by styles and avoids one Python-to-framebuf call per screen column.
+        """
+        if not columns:
+            return
+        if bottom is None:
+            previous = None
+            run_start = None
+            for x, y, color in columns:
+                current = (y, color)
+                if previous is not None and current != previous:
+                    self.fill_rect(
+                        run_start, previous[0], x - run_start,
+                        1, previous[1],
+                    )
+                    run_start = x
+                elif previous is None:
+                    run_start = x
+                previous = current
+            self.fill_rect(
+                run_start, previous[0],
+                columns[-1][0] - run_start + 1, 1, previous[1],
+            )
+            return
+
+        start = 0
+        count = len(columns)
+        while start < count:
+            color = columns[start][2]
+            end = start + 1
+            while end < count and columns[end][2] == color:
+                end += 1
+            segment = columns[start:end]
+            if len(segment) == 1:
+                x, top, _ = segment[0]
+                self.fill_rect(x, top, 1, bottom - top + 1, color)
+            else:
+                polygon = [(item[0], item[1]) for item in segment]
+                polygon.append((segment[-1][0], bottom))
+                polygon.append((segment[0][0], bottom))
+                if not self.fill_polygon(polygon, color):
+                    self._draw_column_fallback(segment, bottom, color)
+            start = end
+
+    def _draw_column_fallback(self, columns, bottom, color):
+        """Draw columns on firmware without ``FrameBuffer.poly`` support."""
+        run_x, run_top = columns[0][0], columns[0][1]
+        previous_x = run_x
+        for x, top, _ in columns[1:]:
+            if top != run_top or x != previous_x + 1:
+                self.fill_rect(
+                    run_x, run_top, previous_x - run_x + 1,
+                    bottom - run_top + 1, color,
+                )
+                run_x, run_top = x, top
+            previous_x = x
+        self.fill_rect(
+            run_x, run_top, previous_x - run_x + 1,
+            bottom - run_top + 1, color,
+        )
 
     def text(self, x, y, value, color, scale=1):
         """使用内置点阵字体绘制文本，并按实际字形宽度推进光标。"""
@@ -239,10 +311,10 @@ class Canvas:
             )
             return
         if self._framebuffer is not None and scale == 1:
-            self._blit_font_text(x, y, value, color)
+            self._blit_cached_text(x, y, value, color, scale)
             return
         if self._framebuffer is not None and scale > 1:
-            self._blit_scaled_text(x, y, value, color, scale)
+            self._blit_cached_text(x, y, value, color, scale)
             return
         cursor_x = x
         for character in value:
@@ -256,6 +328,80 @@ class Canvas:
                             scale, scale, color,
                         )
             cursor_x += self._character_advance(character, scale)
+
+    def _blit_cached_text(self, x, y, value, color, scale):
+        """Blit a bounded, whole-string bitmap cache for non-native text."""
+        if len(value) < 2 or MAX_TEXT_CACHE_BYTES <= 0:
+            if scale == 1:
+                self._blit_font_text(x, y, value, color)
+            else:
+                self._blit_scaled_text(x, y, value, color, scale)
+            return
+        key = (self._font_name, value, color, scale)
+        cached = self._text_cache.pop(key, None)
+        if cached is not None:
+            self._text_cache[key] = cached
+            bitmap, _ = cached
+        else:
+            width = self.text_width(value, scale)
+            height = 7 * scale
+            size = width * height * 2
+            seen_count = self._text_seen.get(key, 0) + 1
+            if (
+                len(self._text_seen) >= MAX_TEXT_SEEN_KEYS
+                and key not in self._text_seen
+            ):
+                oldest_seen = next(iter(self._text_seen))
+                del self._text_seen[oldest_seen]
+            self._text_seen[key] = seen_count
+            dynamic_text = any("0" <= character <= "9" for character in value)
+            if (
+                size > MAX_TEXT_BITMAP_BYTES
+                or seen_count < 2
+                or dynamic_text
+                or self._text_cache_bytes + size > MAX_TEXT_CACHE_BYTES
+            ):
+                if scale == 1:
+                    self._blit_font_text(x, y, value, color)
+                else:
+                    self._blit_scaled_text(x, y, value, color, scale)
+                return
+            bitmap_buffer = None
+            try:
+                bitmap_buffer = bytearray(size)
+                bitmap = framebuf.FrameBuffer(
+                    bitmap_buffer, width, height, framebuf.RGB565
+                )
+                bitmap.fill(self._native_color(BLACK))
+                cursor_x = 0
+                transparent = self._native_color(BLACK)
+                for character in value:
+                    glyph = self._get_scaled_glyph(character, color, scale)
+                    offset = (
+                        1
+                        if scale == 1 and self._font_name == "screen_2inch"
+                        else 0
+                    )
+                    bitmap.blit(glyph, cursor_x + offset, 0, transparent)
+                    cursor_x += self._character_advance(character, scale)
+            except MemoryError:
+                bitmap_buffer = None
+                self._text_seen[key] = 0
+                try:
+                    if scale == 1:
+                        self._blit_font_text(x, y, value, color)
+                    else:
+                        self._blit_scaled_text(x, y, value, color, scale)
+                except MemoryError:
+                    # A missing label is preferable to aborting the protocol.
+                    pass
+                return
+            self._text_cache[key] = (bitmap, size)
+            self._text_cache_bytes += size
+        self._framebuffer.blit(
+            bitmap, x - self.origin_x, y - self.origin_y,
+            self._native_color(BLACK),
+        )
 
     def text_width(self, value, scale=1):
         """根据当前字体的实际字形宽度计算文本占用像素宽度。"""

@@ -340,6 +340,7 @@ class HorizontalDisk4xQbStyle:
         """按插值后的历史采样值逐列绘制颜色条带，使峰值颜色留在历史图中。"""
         bottom = y + height - 1
         previous = points[0]
+        columns = []
         for point in points[1:]:
             span = max(1, point[0] - previous[0])
             for draw_x in range(previous[0], point[0] + 1):
@@ -351,11 +352,17 @@ class HorizontalDisk4xQbStyle:
                     (point[2] - previous[2]) * offset / span
                 )
                 sample_color = self._usage_color(value)
-                if filled:
-                    canvas.line(draw_x, draw_y, draw_x, bottom, sample_color)
-                else:
-                    canvas.pixel(draw_x, draw_y, sample_color)
+                columns.append((draw_x, draw_y, sample_color))
             previous = point
+        draw_columns = getattr(canvas, "draw_columns", None)
+        if callable(draw_columns):
+            draw_columns(columns, bottom if filled else None)
+        else:
+            for draw_x, draw_y, color in columns:
+                if filled:
+                    canvas.line(draw_x, draw_y, draw_x, bottom, color)
+                else:
+                    canvas.pixel(draw_x, draw_y, color)
 
     @staticmethod
     def _fill_history_area(canvas, x, y, width, height, points, color):
