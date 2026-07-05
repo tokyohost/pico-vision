@@ -1,5 +1,11 @@
 /*
-  Simple adhesive rear-cover enclosure for Raspberry Pi Pico RP2040 USB-C + 2.4 inch ST7789 240x320 TFT
+ 如果打印后发现屏幕显示区上下偏一点，优先调这个参数：
+
+screen_window_y_offset = -4.00;
+
+数值更负，开窗往屏幕下方移动；数值变大，开窗往排针那边移动。
+
+  Simple adhesive rear-cover enclosure for Raspberry Pi Pico RP2040 USB-C + 2.0 inch ST7789 240x320 TFT
   Variant: arc bead + closed arc scoop only, no guide-slot entrance
   Unit: mm
 
@@ -48,20 +54,32 @@ fit_clearance = 0.40;      // screen PCB locator clearance
 cover_clearance = 0.40;    // total XY clearance for the glue-in rear cover
 plate_gap = 12.00;          // gap between front shell and back cover in print_plate mode
 
-// ---------- Screen module, from your 2.4 inch ST7789 drawing ----------
-screen_pcb_w = 42.72;
-screen_pcb_h = 70.30;
+// ---------- Screen module, from your 2.0 inch ST7789 drawing ----------
+// Drawing values used:
+//   PCB: 37.10 x 62.00 x 1.20
+//   Four mounting holes: diameter 2.50, X spacing 28.00
+//   Hole X offset from left edge: 4.50
+//   Top-hole Y from top edge: 9.30; bottom-hole Y from top edge: 58.00
+//   Active area AA: 30.60 x 40.80
+//   Black lens/BL reference: 35.70 x 51.20
+screen_pcb_w = 37.10;
+screen_pcb_h = 62.00;
 screen_pcb_t = 1.20;
-screen_hole_dx = 37.72;
-screen_hole_dy = 65.30;
-screen_hole_d = 2.10;
+screen_hole_d = 2.50;
 
-// Visible opening. Slightly larger than VA so the printed bezel does not cover pixels.
-screen_va_w = 37.42;
-screen_va_h = 49.66;
-screen_window_w = screen_va_w + 1.60;
-screen_window_h = screen_va_h + 2.20;
-screen_window_y_offset = -3.00;     // tune if your display active area is shifted
+// This 2.0 inch PCB's four holes are not vertically symmetric around the PCB center,
+// so the positions are defined from the PCB top/left edges instead of only using dx/dy.
+screen_hole_x_from_left = 4.50;
+screen_hole_x_spacing = 28.00;
+screen_hole_top_y_from_top = 9.30;
+screen_hole_bottom_y_from_top = 58.00;
+
+// Visible opening. Slightly larger than AA, but smaller than the black lens/BL outline.
+screen_va_w = 30.60;
+screen_va_h = 40.80;
+screen_window_w = screen_va_w + 1.60;   // 32.20
+screen_window_h = screen_va_h + 2.20;   // 43.00
+screen_window_y_offset = -4.00;         // active area is lower than the PCB/header center; tune after test print if needed
 screen_window_r = 1.20;
 
 // Screen screw bosses in the front shell. Screen is screwed from the rear into these bosses.
@@ -75,8 +93,8 @@ screen_lip_h = screen_boss_h + 1.10;
 
 // ---------- Enclosure size ----------
 // Kept close to the screen PCB size to reduce the visual border.
-body_w = 47.20;
-body_h = 76.20;
+body_w = 42.00;
+body_h = 68.00;
 shell_depth = 18.00;       // enough for screen PCB + wiring + Pico on rear cover
 
 // ---------- Recessed adhesive rear cover ----------
@@ -208,9 +226,16 @@ module side_typec_cut(w, h, depth, r, x = 0, y = 0, z = 0) {
 }
 
 module at_screen_holes() {
-  for (x = [-screen_hole_dx/2, screen_hole_dx/2])
-    for (y = [-screen_hole_dy/2, screen_hole_dy/2])
-      translate([x, y, 0]) children();
+  // Convert drawing coordinates into model coordinates.
+  // Drawing X starts at the PCB left edge.
+  // Drawing Y starts at the PCB top/header edge, which is +Y in this model.
+  xs = [screen_hole_x_from_left, screen_hole_x_from_left + screen_hole_x_spacing];
+  ys = [screen_hole_top_y_from_top, screen_hole_bottom_y_from_top];
+  for (x_from_left = xs)
+    for (y_from_top = ys)
+      translate([x_from_left - screen_pcb_w/2,
+                 screen_pcb_h/2 - y_from_top,
+                 0]) children();
 }
 
 module at_pico_tail_holes() {
