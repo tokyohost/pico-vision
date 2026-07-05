@@ -46,14 +46,19 @@ class HorizontalDisk4xQbStyle:
     def create_dirty_regions():
         """按独立数据面板创建横屏样式的动态刷新区域。"""
         return [
-            ("cpu", 2, 2, 100, 69),
-            ("memory", 2, 75, 100, 48),
-            ("network", 2, 127, 100, 82),
-            ("storage_summary", 106, 2, 212, 43),
+            ("cpu_values", 8, 10, 92, 16),
+            ("cpu_history", 8, 31, 88, 35),
+            ("memory_dynamic", 8, 94, 88, 24),
+            ("network_values", 32, 132, 64, 18),
+            ("network_upload_history", 8, 152, 88, 19),
+            ("network_download_value", 32, 174, 64, 7),
+            ("network_download_history", 8, 183, 88, 22),
+            ("storage_percent", 228, 7, 82, 14),
+            ("storage_capacity_bar", 112, 20, 198, 21),
             ("disk_row_0", 106, 49, 212, 48),
             ("disk_row_1", 106, 101, 212, 48),
             ("network_details", 106, 153, 212, 56),
-            ("footer", 2, 213, 316, 25),
+            ("footer_dynamic", 8, 217, 304, 17),
         ]
 
     @classmethod
@@ -62,24 +67,60 @@ class HorizontalDisk4xQbStyle:
         regions = cls.create_dirty_regions()
         selected = []
         region_map = {region[0]: region for region in regions}
-        if previous.get("cpu") != current.get("cpu"):
-            selected.append(region_map["cpu"])
+        previous_cpu = previous.get("cpu") or {}
+        current_cpu = current.get("cpu") or {}
+        previous_cpu_values = (
+            previous_cpu.get("percent"), previous_cpu.get("temperature_c"),
+        )
+        current_cpu_values = (
+            current_cpu.get("percent"), current_cpu.get("temperature_c"),
+        )
+        if previous_cpu_values != current_cpu_values:
+            selected.append(region_map["cpu_values"])
+        if previous_cpu.get("history") != current_cpu.get("history"):
+            selected.append(region_map["cpu_history"])
         if previous.get("memory") != current.get("memory"):
-            selected.append(region_map["memory"])
-        previous_network = (
-            previous.get("network"),
-            previous.get("display", {}).get("network_unit"),
-        )
-        current_network = (
-            current.get("network"),
-            current.get("display", {}).get("network_unit"),
-        )
-        if previous_network != current_network:
-            selected.append(region_map["network"])
+            selected.append(region_map["memory_dynamic"])
+        previous_network = previous.get("network") or {}
+        current_network = current.get("network") or {}
+        previous_unit = previous.get("display", {}).get("network_unit")
+        current_unit = current.get("display", {}).get("network_unit")
+        if (
+            previous_network.get("ping_ms"),
+            previous_network.get("upload_bps"), previous_unit,
+        ) != (
+            current_network.get("ping_ms"),
+            current_network.get("upload_bps"), current_unit,
+        ):
+            selected.append(region_map["network_values"])
+        if previous_network.get("upload_history") != current_network.get(
+            "upload_history"
+        ):
+            selected.append(region_map["network_upload_history"])
+        if (
+            previous_network.get("download_bps"), previous_unit,
+        ) != (
+            current_network.get("download_bps"), current_unit,
+        ):
+            selected.append(region_map["network_download_value"])
+        if previous_network.get("download_history") != current_network.get(
+            "download_history"
+        ):
+            selected.append(region_map["network_download_history"])
         if previous.get("qbittorrent") != current.get("qbittorrent"):
             selected.append(region_map["network_details"])
-        if previous.get("disk") != current.get("disk"):
-            selected.append(region_map["storage_summary"])
+        previous_disk = previous.get("disk") or {}
+        current_disk = current.get("disk") or {}
+        if previous_disk.get("percent") != current_disk.get("percent"):
+            selected.append(region_map["storage_percent"])
+        if (
+            previous_disk.get("percent"), previous_disk.get("used_bytes"),
+            previous_disk.get("total_bytes"),
+        ) != (
+            current_disk.get("percent"), current_disk.get("used_bytes"),
+            current_disk.get("total_bytes"),
+        ):
+            selected.append(region_map["storage_capacity_bar"])
         previous_disks = previous.get("physical_disks") or previous.get("disks", ())
         current_disks = current.get("physical_disks") or current.get("disks", ())
         for row in range(2):
@@ -97,7 +138,7 @@ class HorizontalDisk4xQbStyle:
             current.get("power"),
         )
         if previous_footer != current_footer:
-            selected.append(region_map["footer"])
+            selected.append(region_map["footer_dynamic"])
         return selected
 
     @staticmethod
@@ -485,13 +526,17 @@ class HorizontalDisk4xQbStyle:
     def _draw_storage_summary(self, canvas, snapshot):
         """绘制右上角磁盘总容量和总体占用率。"""
         disk = snapshot.get("disk", {})
-        percent = int(self._number(disk.get("percent")))
+        percent = self._number(disk.get("percent"))
         usage_color = self._disk_usage_color(percent)
         self._frame(canvas, 106, 2, 212, 43, YELLOW)
         canvas.text(112, 7, "DISK OVERALL", YELLOW, 1)
         capacity = self._format_bytes(disk.get("used_bytes")) + "/" + self._format_bytes(disk.get("total_bytes"))
         canvas.text(112, 20, capacity, WHITE, 1)
-        canvas.text(280, 7, "{}%".format(percent), usage_color, 2)
+        percent_text = "{:.2f}%".format(percent)
+        canvas.text(
+            310 - canvas.text_width(percent_text, 2), 7,
+            percent_text, usage_color, 2,
+        )
         self._bar(canvas, 112, 33, 198, 8, percent, usage_color)
 
     def _draw_empty_disk(self, canvas, x, y, width, height, index):
@@ -670,6 +715,127 @@ class HorizontalDisk4xQbStyle:
             power_text, YELLOW, 1,
         )
 
+    def _draw_cpu_dirty(self, canvas, key, snapshot):
+        """Draw only the changing CPU values or history chart."""
+        cpu = snapshot.get("cpu", {})
+        percent = int(self._number(cpu.get("percent")))
+        usage_color = self._usage_color(percent)
+        if key == "cpu_history":
+            self._history(
+                canvas, 8, 31, 88, 35,
+                cpu.get("history", ()), usage_color,
+                percentage=True, filled=True, color_by_value=True,
+            )
+            return
+        # This viewport intersects the lower rows of the static CPU label.
+        canvas.text(8, 7, "CPU", GREEN, 1)
+        temperature = cpu.get("temperature_c")
+        temperature_text = (
+            "--℃"
+            if temperature is None
+            else "{}℃".format(int(self._number(temperature)))
+        )
+        canvas.text(
+            8, 19, temperature_text,
+            self._temperature_color(temperature), 1,
+        )
+        percent_text = "{}%".format(percent)
+        canvas.text(
+            100 - len(percent_text) * 12, 10,
+            percent_text, usage_color, 2,
+        )
+
+    def _draw_memory_dirty(self, canvas, snapshot):
+        """Draw memory values while retaining the panel frame and label."""
+        memory = snapshot.get("memory", {})
+        percent = int(self._number(memory.get("percent")))
+        usage_color = self._usage_color(percent)
+        canvas.text(8, 94, "{}%".format(percent), usage_color, 2)
+        self._bar(canvas, 49, 95, 47, 12, percent, usage_color)
+        used_text = self._format_bytes(memory.get("used_bytes"))
+        total_text = self._format_bytes(memory.get("total_bytes"))
+        if used_text[-1:] == total_text[-1:]:
+            used_text = used_text[:-1]
+        canvas.text(8, 111, used_text + "/" + total_text, WHITE, 1)
+
+    def _draw_network_dirty(self, canvas, key, snapshot):
+        """Draw one independently changing part of the network panel."""
+        network = snapshot.get("network", {})
+        unit = snapshot.get("display", {}).get("network_unit", "MB")
+        if key == "network_values":
+            ping = network.get("ping_ms")
+            ping_text = (
+                "ERR"
+                if ping is None
+                else "P{}ms".format(int(self._number(ping)))
+            )
+            canvas.text(
+                96 - len(ping_text) * 8, 132,
+                ping_text, self._ping_color(ping), 1,
+            )
+            canvas.text(
+                32, 143,
+                self._format_rate(network.get("upload_bps"), unit), BLUE, 1,
+            )
+        elif key == "network_upload_history":
+            self._history(
+                canvas, 8, 152, 88, 19,
+                network.get("upload_history", ()), BLUE, filled=True,
+            )
+        elif key == "network_download_value":
+            canvas.text(
+                32, 174,
+                self._format_rate(network.get("download_bps"), unit), GREEN, 1,
+            )
+        else:
+            self._history(
+                canvas, 8, 183, 88, 22,
+                network.get("download_history", ()), GREEN, filled=True,
+            )
+
+    def _draw_storage_dirty(self, canvas, key, snapshot):
+        """Draw changing storage totals without rebuilding the outer frame."""
+        disk = snapshot.get("disk", {})
+        percent = self._number(disk.get("percent"))
+        usage_color = self._disk_usage_color(percent)
+        if key == "storage_percent":
+            percent_text = "{:.2f}%".format(percent)
+            canvas.text(
+                310 - canvas.text_width(percent_text, 2), 7,
+                percent_text, usage_color, 2,
+            )
+            return
+        capacity = (
+            self._format_bytes(disk.get("used_bytes"))
+            + "/"
+            + self._format_bytes(disk.get("total_bytes"))
+        )
+        canvas.text(112, 20, capacity, WHITE, 1)
+        self._bar(canvas, 112, 33, 198, 8, percent, usage_color)
+
+    def _draw_footer_dirty(self, canvas, snapshot):
+        """Draw footer contents and restore dividers crossing the viewport."""
+        timestamp = str(snapshot.get("timestamp", ""))
+        clock = timestamp[11:19] if len(timestamp) >= 19 else "--:--:--"
+        canvas.text(8, 221, clock, BLUE, 1)
+        canvas.line(77, 217, 77, 233, BLUE)
+        canvas.text(85, 221, "UPTIME", BLUE, 1)
+        uptime_text = self._format_uptime(snapshot.get("uptime_seconds"))
+        canvas.text(
+            231 - canvas.text_width(uptime_text), 221,
+            uptime_text, WHITE, 1,
+        )
+        canvas.line(237, 217, 237, 233, BLUE)
+        watts = snapshot.get("power", {}).get("watts")
+        power_text = (
+            "--W" if watts is None else "{:.0f}W".format(self._number(watts))
+        )
+        canvas.text(245, 221, "PWR", BLUE, 1)
+        canvas.text(
+            312 - canvas.text_width(power_text), 221,
+            power_text, YELLOW, 1,
+        )
+
     def draw_visible(self, canvas, snapshot):
         """绘制与当前条带相交的横屏仪表盘内容。"""
         snapshot = snapshot or {}
@@ -693,20 +859,20 @@ class HorizontalDisk4xQbStyle:
         """仅重绘横屏样式中指定的动态数据面板。"""
         snapshot = snapshot or {}
         canvas.clear(BLACK)
-        if key == "cpu":
-            self._draw_cpu(canvas, snapshot)
-        elif key == "memory":
-            self._draw_memory(canvas, snapshot)
-        elif key == "network":
-            self._draw_network(canvas, snapshot)
-        elif key == "storage_summary":
-            self._draw_storage_summary(canvas, snapshot)
+        if key.startswith("cpu_"):
+            self._draw_cpu_dirty(canvas, key, snapshot)
+        elif key == "memory_dynamic":
+            self._draw_memory_dirty(canvas, snapshot)
+        elif key.startswith("network_") and key != "network_details":
+            self._draw_network_dirty(canvas, key, snapshot)
+        elif key.startswith("storage_"):
+            self._draw_storage_dirty(canvas, key, snapshot)
         elif key.startswith("disk_row_"):
             self._draw_disk_cards(canvas, snapshot, int(key[-1]))
         elif key == "network_details":
             self._draw_network_details(canvas, snapshot)
         else:
-            self._draw_footer(canvas, snapshot)
+            self._draw_footer_dirty(canvas, snapshot)
 
 
 def create_horizontal_disk4x_qb_style():

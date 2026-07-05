@@ -116,6 +116,50 @@ class QbittorrentStyleTest(unittest.TestCase):
         self.assertEqual(HorizontalDisk4xQbStyle.name, "horizontal_disk4x_qb")
         self.assertIn("network_details", [region[0] for region in regions])
 
+    def test_network_rate_change_refreshes_only_its_small_region(self):
+        """A changed upload rate must not repaint both history charts."""
+        previous = {"network": {"upload_bps": 100, "download_bps": 200}}
+        current = {"network": {"upload_bps": 101, "download_bps": 200}}
+
+        regions = HorizontalDisk4xQbStyle.select_dirty_regions(
+            previous, current
+        )
+
+        self.assertEqual([region[0] for region in regions], ["network_values"])
+
+    def test_cpu_history_change_does_not_repaint_cpu_values(self):
+        """History-only changes should update only the graph viewport."""
+        previous = {"cpu": {"percent": 10, "history": [10, 11]}}
+        current = {"cpu": {"percent": 10, "history": [11, 12]}}
+
+        regions = HorizontalDisk4xQbStyle.select_dirty_regions(
+            previous, current
+        )
+
+        self.assertEqual([region[0] for region in regions], ["cpu_history"])
+
+    def test_storage_percent_uses_two_decimals_and_cpu_scale(self):
+        """The disk percentage should retain precision at CPU text scale."""
+        class TextCanvas:
+            def __init__(self):
+                self.calls = []
+
+            @staticmethod
+            def text_width(value, scale=1):
+                return len(value) * 6 * scale
+
+            def text(self, x, y, value, color, scale=1):
+                self.calls.append((x, y, value, color, scale))
+
+        canvas = TextCanvas()
+        HorizontalDisk4xQbStyle()._draw_storage_dirty(
+            canvas, "storage_percent", {"disk": {"percent": 57.126}}
+        )
+
+        self.assertEqual(canvas.calls[0][2], "57.13%")
+        self.assertEqual(canvas.calls[0][4], 2)
+        self.assertEqual(canvas.calls[0][0], 310 - 12 * len("57.13%"))
+
 
 class SimpleStyleTest(unittest.TestCase):
     """验证简洁样式的磁盘筛选和渐变面积图规则。"""
