@@ -1,11 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
 """将 Pico 系统监控程序打包为单文件 Windows EXE。"""
 
+from pathlib import Path
+
+
+optional_fps_binaries = []
+for binary_name in ("PresentMon.exe", "adlx_fps_bridge.dll"):
+    binary_path = Path("win/fps/bin") / binary_name
+    if binary_path.is_file():
+        optional_fps_binaries.append((str(binary_path), "win/fps/bin"))
+
 analysis = Analysis(
     ["pico_monitor.py"],
     pathex=[],
-    binaries=[],
-    datas=[("icon/icon.png", "icon")],
+    binaries=optional_fps_binaries,
+    datas=[("icon/icon.png", "icon"), ("win/fps/PRESENTMON_LICENSE.txt", "win/fps")],
     hiddenimports=["psutil", "serial", "serial.tools.list_ports", "pystray._win32", "PIL.Image", "pico_upgrade", "build_info"],
     hookspath=[],
     hooksconfig={},

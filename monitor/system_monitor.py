@@ -32,6 +32,11 @@ from pathlib import Path
 
 import psutil
 
+try:
+    from win.fps import FpsMonitor
+except (ImportError, OSError):
+    FpsMonitor = None
+
 
 LOGGER = logging.getLogger("pico-monitor")
 HISTORY_LENGTH = 24
@@ -433,6 +438,7 @@ class SystemInformationCollector:
         self.ping_monitor = PingMonitor(ping_target)
         self.power_monitor = PowerMonitor()
         self.gpu_monitor = GpuMonitor()
+        self.fps_monitor = FpsMonitor(HISTORY_LENGTH) if FpsMonitor is not None else None
         self.last_gpu_version = -1
         self.disk_temperature_cache = {}
         self.disk_temperature_time = 0.0
@@ -443,6 +449,8 @@ class SystemInformationCollector:
         self.disk_snapshot_lock = threading.Lock()
         self.ping_monitor.start()
         self.gpu_monitor.start()
+        if self.fps_monitor is not None:
+            self.fps_monitor.start()
         threading.Thread(
             target=self._disk_collection_loop,
             name="磁盘信息采集",
@@ -1267,8 +1275,15 @@ class SystemInformationCollector:
         network = self._network_rates(local_ip)
         power = self.power_monitor.snapshot()
         gpu_percent, gpu_version = self.gpu_monitor.snapshot()
-        ping, online = self.ping_monitor.snapshot()
         history_now = time.monotonic()
+        fps = self.fps_monitor.snapshot(history_now) if self.fps_monitor is not None else {
+            "value": None,
+            "history": [0] * HISTORY_LENGTH,
+            "source": "unavailable",
+            "process_id": None,
+            "process_name": "",
+        }
+        ping, online = self.ping_monitor.snapshot()
         for name, value in (("cpu", cpu), ("memory", memory.percent), ("upload", network[0]), ("download", network[1])):
             update_per_second(
                 self.histories[name],
@@ -1292,4 +1307,4 @@ class SystemInformationCollector:
             )
         self.last_gpu_version = gpu_version
         power["history"] = list(self.power_history)
-        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total}, "disks": disks, "physical_disks": physical_disks, "gpu": {"percent": gpu_percent, "history": list(self.gpu_history)} if gpu_percent is not None else None, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "transmit_bytes": network[2], "receive_bytes": network[3], "link_speed_mbps": self._network_link_speed(local_ip), "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": local_ip}}
+        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total}, "disks": disks, "physical_disks": physical_disks, "gpu": {"percent": gpu_percent, "history": list(self.gpu_history)} if gpu_percent is not None else None, "fps": fps, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "transmit_bytes": network[2], "receive_bytes": network[3], "link_speed_mbps": self._network_link_speed(local_ip), "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": local_ip}}
