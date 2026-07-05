@@ -59,13 +59,38 @@ class Application:
             ).encode()
         )
         self._protocol.write(b"BOOT:LCD_READY\n")
-        self._renderer = DashboardRenderer(self._lcd)
+        # Keep the dedicated boot style on screen until monitor sends its first
+        # snapshot.  It is intentionally independent from the configured data
+        # dashboard style.
+        self._renderer = DashboardRenderer(self._lcd, style_name="boot")
+        self._boot_frame = 0
+        self._boot_logs = []
+        self._next_boot_animation = time.ticks_ms()
+        self._show_boot(72, "BOOT:LCD_READY", "loading...", flush=True)
         self._cache = SnapshotCache()
+        self._show_boot(84, "BOOT:CACHE_READY", "loading...", flush=True)
         self._receiver = DataReceiver(self._protocol, self._cache, self._led)
+        self._show_boot(94, "BOOT:RECEIVER_READY", "loading...", flush=True)
         self._rendering_version = -1
         self._next_render = time.ticks_add(
             time.ticks_ms(), RENDER_INTERVAL_MS
         )
+
+    def _show_boot(self, progress, log, status, flush=False):
+        """Queue a boot frame and optionally push all of its strips now."""
+        if log and (not self._boot_logs or self._boot_logs[-1] != log):
+            self._boot_logs.append(log)
+            self._boot_logs = self._boot_logs[-4:]
+        self._renderer.request_render({
+            "boot": {
+                "progress": progress,
+                "logs": self._boot_logs,
+                "status": status,
+            }
+        }, force=True)
+        if flush:
+            while self._renderer.is_rendering():
+                self._renderer.update_pending(max_regions=1)
 
     def run(self):
         """持续推进各组件，每轮均在有限时间内返回。"""
@@ -75,8 +100,19 @@ class Application:
                 memory_used, memory_total
             ).encode()
         )
+        self._show_boot(
+            97,
+            "BOOT:MEMORY:USED={}:TOTAL={}".format(memory_used, memory_total),
+            "loading...",
+            flush=True,
+        )
         self._protocol.write(b"BOOT:PICO_LCD_READY\n")
-        self._renderer.request_render(None)
+        self._show_boot(
+            100,
+            "BOOT:PICO_LCD_READY",
+            "waiting connecting ....",
+            flush=True,
+        )
         while True:
             self._receiver.update()
             self._led.update()
@@ -87,6 +123,19 @@ class Application:
             snapshot, version = self._cache.latest()
             has_new_snapshot = version != self._rendering_version
             idle_refresh_due = time.ticks_diff(now, self._next_render) >= 0
+            if (
+                snapshot is None
+                and not self._renderer.is_rendering()
+                and time.ticks_diff(now, self._next_boot_animation) >= 0
+            ):
+                dots = "." * (self._boot_frame % 4 + 1)
+                self._show_boot(
+                    100,
+                    "BOOT:PICO_LCD_READY",
+                    "waiting connecting " + dots,
+                )
+                self._boot_frame += 1
+                self._next_boot_animation = time.ticks_add(now, 250)
             if (
                 snapshot is not None
                 and not self._renderer.is_rendering()

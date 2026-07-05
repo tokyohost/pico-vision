@@ -23,7 +23,7 @@ import winreg
 from pathlib import Path
 
 import pystray
-from PIL import Image, ImageDraw
+from PIL import Image
 
 
 APPLICATION_NAME = "Pico 系统监控"
@@ -122,12 +122,11 @@ class WindowsTrayApplication:
 
     @staticmethod
     def _create_image():
-        """绘制无需外部图标资源的 Pico 监控托盘图标。"""
-        image = Image.new("RGBA", (64, 64), (15, 23, 42, 255))
-        draw = ImageDraw.Draw(image)
-        draw.rounded_rectangle((8, 10, 56, 50), radius=7, fill=(14, 165, 233), outline=(224, 242, 254), width=3)
-        draw.line((16, 39, 25, 29, 33, 35, 47, 20), fill="white", width=4)
-        return image
+        """加载随程序打包的 Pico 监控托盘图标。"""
+        base_directory = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+        icon_path = base_directory / "icon" / "icon.png"
+        with Image.open(icon_path) as image:
+            return image.convert("RGBA")
 
     def run(self):
         """启动单实例后台监控并进入托盘消息循环。"""

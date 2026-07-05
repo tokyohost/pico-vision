@@ -42,7 +42,9 @@ class LcdDevice:
         self.cs = Pin(PIN_CS, Pin.OUT, value=1)
         self.dc = Pin(PIN_DC, Pin.OUT, value=1)
         self.rst = Pin(PIN_RST, Pin.OUT, value=1)
-        self.bl = Pin(PIN_BL, Pin.OUT, value=1)
+        # Keep the backlight dark until the controller RAM has been cleared.
+        # Otherwise the panel briefly exposes uninitialised GRAM as snow.
+        self.bl = Pin(PIN_BL, Pin.OUT, value=0)
         self.spi = SPI(
             0,
             baudrate=40_000_000,
@@ -104,7 +106,24 @@ class LcdDevice:
         time.sleep_ms(10)
         self.command(0x29)
         time.sleep_ms(100)
+        self._clear_before_first_light()
         self.bl.value(1)
+
+    def _clear_before_first_light(self):
+        """Fill controller memory with black before enabling the backlight."""
+        strip_height = 40
+        black_strip = bytes(WIDTH * strip_height * 2)
+        y = 0
+        while y < HEIGHT:
+            height = min(strip_height, HEIGHT - y)
+            self.show_region(
+                0,
+                y,
+                WIDTH,
+                height,
+                memoryview(black_strip)[:WIDTH * height * 2],
+            )
+            y += height
 
     def set_rotation(self, rotation):
         """动态设置屏幕为正常方向或旋转一百八十度。"""
