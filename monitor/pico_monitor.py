@@ -137,6 +137,13 @@ class MonitorService:
             self.qbittorrent_monitor.start()
         self.client = PicoJsonClient(arguments.port)
         self.stopping = threading.Event()
+        self.reboot_requested = threading.Event()
+
+    def request_reboot_and_stop(self):
+        """让主循环退出，并在释放串口前请求 Pico 重启。"""
+        LOGGER.info("收到托盘退出请求，将在停止监控前重启 Pico")
+        self.reboot_requested.set()
+        self.stopping.set()
 
     def stop(self, signum=None, frame=None):
         """请求主循环停止，并安全关闭当前串口连接。"""
@@ -191,6 +198,13 @@ class MonitorService:
                     self.arguments.reconnect_interval,
                 )
                 self.stopping.wait(self.arguments.reconnect_interval)
+        reboot_requested = getattr(self, "reboot_requested", None)
+        if reboot_requested is not None and reboot_requested.is_set() and self.client.is_connected:
+            try:
+                self.client.reboot()
+            except (OSError, RuntimeError, serial.SerialException) as error:
+                LOGGER.warning("Pico 重启指令下发失败：%s", error)
+        self.client.close()
         LOGGER.info("监控服务已停止")
         return 0
 
@@ -366,6 +380,18 @@ def main():
         LinuxDebUpdater(GITHUB_REPOSITORY, MONITOR_VERSION).update()
         return 0
     service = MonitorService(arguments)
+    if arguments.worker and getattr(sys, "stdin", None) is not None:
+        def listen_for_tray_commands():
+            for line in sys.stdin:
+                if line.strip() == "EXIT_REBOOT":
+                    service.request_reboot_and_stop()
+                    return
+
+        threading.Thread(
+            target=listen_for_tray_commands,
+            name="tray-control",
+            daemon=True,
+        ).start()
     signal.signal(signal.SIGINT, service.stop)
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, service.stop)

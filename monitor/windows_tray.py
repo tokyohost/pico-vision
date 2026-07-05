@@ -60,7 +60,7 @@ class WindowsTrayApplication:
         """无窗口启动工作进程，并异步将输出写入日志。"""
         environment = os.environ.copy()
         environment.update({"PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"})
-        self.worker_process = subprocess.Popen(self._worker_command(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", creationflags=0x08000000, env=environment)
+        self.worker_process = subprocess.Popen(self._worker_command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", creationflags=0x08000000, env=environment)
         threading.Thread(target=self._collect_output, name="日志收集", daemon=True).start()
 
     def _collect_output(self):
@@ -115,9 +115,15 @@ class WindowsTrayApplication:
         """停止工作进程、日志窗口和托盘消息循环。"""
         del item
         self.stopping.set()
-        for process in (self.worker_process, self.console_process):
-            if process is not None and process.poll() is None:
-                process.terminate()
+        if self.worker_process is not None and self.worker_process.poll() is None:
+            try:
+                self.worker_process.stdin.write("EXIT_REBOOT\n")
+                self.worker_process.stdin.flush()
+                self.worker_process.wait(timeout=3)
+            except (BrokenPipeError, OSError, subprocess.TimeoutExpired):
+                self.worker_process.terminate()
+        if self.console_process is not None and self.console_process.poll() is None:
+            self.console_process.terminate()
         icon.stop()
 
     @staticmethod

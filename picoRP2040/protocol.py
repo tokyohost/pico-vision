@@ -181,6 +181,12 @@ class JsonProtocol:
                     continue
                 if message_type == "PING":
                     self._write_pong()
+                elif message_type == "REBOOT":
+                    self._write_frame("ACK", b"REBOOT")
+                    time.sleep_ms(100)
+                    import machine
+
+                    machine.reset()
                 elif message_type == "JSONZ":
                     try:
                         decompress_started_ms = self._ticks_ms()

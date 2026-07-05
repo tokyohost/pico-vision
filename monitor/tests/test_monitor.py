@@ -22,7 +22,7 @@ import base64
 from unittest import mock
 from types import SimpleNamespace
 
-from pico_client import PING_COMMAND, PicoJsonClient, build_frame, parse_frame
+from pico_client import PING_COMMAND, REBOOT_COMMAND, PicoJsonClient, build_frame, parse_frame
 from pico_monitor import (
     MonitorService,
     create_argument_parser,
@@ -70,6 +70,13 @@ class FakeSerial:
         self.is_open = False
 
 
+class RebootSerial(FakeSerial):
+    """模拟确认软重启命令的 Pico。"""
+
+    def readline(self):
+        return build_frame("ACK", b"REBOOT")
+
+
 class BadJsonSerial(FakeSerial):
     """模拟 Pico 拒绝单个损坏 JSON 数据帧的串口设备。"""
 
@@ -114,6 +121,14 @@ class PicoClientTest(unittest.TestCase):
         self.assertTrue(client.serial.written.endswith(b"\n"))
         self.assertTrue(any("Monitor -> Pico" in message for message in logs.output))
         self.assertTrue(any("Pico -> Monitor" in message for message in logs.output))
+
+    def test_reboot_sends_command_and_waits_for_ack(self):
+        client = PicoJsonClient()
+        client.serial = RebootSerial()
+
+        client.reboot()
+
+        self.assertEqual(bytes(client.serial.written), REBOOT_COMMAND)
 
     def test_large_json_uses_larger_serial_chunks(self):
         """确认较大 JSON 不再拆分成大量六十四字节串口写入。"""

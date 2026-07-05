@@ -88,6 +88,7 @@ def parse_frame(line):
 
 
 PING_COMMAND = build_frame("PING")
+REBOOT_COMMAND = build_frame("REBOOT")
 SERIAL_WRITE_CHUNK_SIZE = 512
 LOGGER = logging.getLogger("pico-monitor.serial")
 
@@ -327,6 +328,27 @@ class PicoJsonClient:
                 raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
         LOGGER.error("[交互超时][%s] 5 秒内未收到 ACK:JSON", self.port_name)
         raise RuntimeError("等待 Pico JSON 接收确认超时")
+
+    def reboot(self):
+        """请求 Pico 确认命令后执行软重启。"""
+        if not self.is_connected:
+            raise RuntimeError("Pico 串口尚未连接")
+        LOGGER.info("[Monitor -> Pico][%s][REBOOT]", self.port_name)
+        self.serial.write(REBOOT_COMMAND)
+        self.serial.flush()
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            response = self.serial.readline().strip()
+            try:
+                frame = parse_frame(response)
+            except ValueError as error:
+                raise RuntimeError(f"Pico 返回损坏协议帧：{error}") from error
+            if frame == ("ACK", b"REBOOT"):
+                LOGGER.info("[Pico -> Monitor][%s][ACK:REBOOT]", self.port_name)
+                return
+            if frame and frame[0] == "ERR":
+                raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
+        raise RuntimeError("等待 Pico 重启确认超时")
 
     def close(self):
         """安全关闭串口，并恢复为未连接状态。"""
