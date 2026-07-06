@@ -98,7 +98,7 @@ class Application:
                 self._renderer.update_pending(max_regions=1)
 
     def _monitor_timed_out(self, now):
-        """判断 Monitor 是否已连续五个采集周期没有发送有效消息。"""
+        """判断 Monitor 是否已连续超过配置周期没有发送有效消息。"""
         if not self._monitor_connected:
             return False
         last_message_ms = self._protocol.last_message_ms()
@@ -110,7 +110,7 @@ class Application:
         )
 
     def _return_to_waiting_page(self):
-        """切换到系统启动等待页，并重新注册应用 USB CDC。"""
+        """切换到系统启动等待页，并尝试重新注册 USB CDC。"""
         from protocol import JsonProtocol
         from upgrade_manager import UpgradeManager
         from usb_transport import create_data_cdc
@@ -127,13 +127,23 @@ class Application:
             "waiting connecting ....",
             flush=True,
         )
-        protocol = JsonProtocol(stream=create_data_cdc(wait_for_open=False))
-        protocol._upgrade_manager = UpgradeManager(
-            protocol.write_upgrade_response
-        )
-        self._protocol = protocol
-        self._receiver.replace_protocol(protocol)
-        self._boot_logs.append("USB:CDC:READY")
+        try:
+            stream = create_data_cdc(wait_for_open=False)
+            protocol = JsonProtocol(stream=stream)
+            protocol._upgrade_manager = UpgradeManager(
+                protocol.write_upgrade_response
+            )
+        except Exception as error:
+            # Monitor 可能只是进程退出，此时原 CDC 仍可在主机重连后工作。
+            # 重新注册失败时不替换现有协议，避免进入无可用通信通道的状态。
+            self._boot_logs.append(
+                "USB:CDC:REUSE:{}".format(type(error).__name__)
+            )
+        else:
+            # 仅在新 CDC 和协议都初始化成功后原子替换接收通道。
+            self._protocol = protocol
+            self._receiver.replace_protocol(protocol)
+            self._boot_logs.append("USB:CDC:READY")
         self._next_boot_animation = time.ticks_ms()
 
     def run(self):

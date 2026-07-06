@@ -61,8 +61,8 @@ MAX_UPGRADE_LINE_SIZE = 1024
 USB_CDC_RX_BUFFER_SIZE = 4096
 USB_CDC_TX_BUFFER_SIZE = 1024
 USB_CDC_ENUMERATION_TIMEOUT_MS = 5000
-# 连续缺失多少个 Monitor 采集周期后重新枚举应用数据 CDC。
-MONITOR_TIMEOUT_INTERVALS = 5
+# 连续缺失多少个 Monitor 采集周期后返回系统启动等待页。
+MONITOR_TIMEOUT_INTERVALS = 10
 # 每接收多少份 Monitor 快照，使用主机时间重新校准一次本地推进基准。
 TIME_CALIBRATION_SNAPSHOTS = 20
 # Pico 推进时间与主机运行时间的允许误差；误差不超过该值时保持原基准。
