@@ -17,6 +17,7 @@
 from config import (
     BLACK, BLUE, DARK, GRAY, GREEN, HEIGHT, PURPLE, WHITE, WIDTH, YELLOW,
 )
+from canvas import DRAW_COMMAND_FILL_RECT, DRAW_COMMAND_RECT
 from styles.style_plugins import register_style
 
 
@@ -25,6 +26,48 @@ class DiskStyle:
 
     name = "disk"
     font_name = "native"
+
+    def __init__(self):
+        """创建磁盘样式并初始化帧级显示文本缓存。"""
+        self._prepared_text = {}
+        self._prepared_snapshot = None
+        self._command_cache = {}
+
+    def prepare_frame(self, snapshot):
+        """在渲染计时开始前预先生成当前帧所需的显示文本。"""
+        snapshot = snapshot or {}
+        disk = snapshot.get("disk", {})
+        cpu = snapshot.get("cpu", {})
+        memory = snapshot.get("memory", {})
+        network = snapshot.get("network", {})
+        unit = snapshot.get("display", {}).get("network_unit", "MB")
+        timestamp = str(snapshot.get("timestamp", ""))
+        ping = network.get("ping_ms")
+        temperature = cpu.get("temperature_c")
+        self._prepared_text = {
+            "disk_capacity": self._format_bytes(disk.get("used_bytes"))
+                + "/" + self._format_bytes(disk.get("total_bytes")),
+            "disk_percent": "{}%".format(int(self._number(disk.get("percent")))),
+            "cpu_percent": "{}%".format(int(self._number(cpu.get("percent")))),
+            "cpu_detail": "--℃" if temperature is None
+                else "{}℃".format(int(self._number(temperature))),
+            "memory_percent": "{}%".format(
+                int(self._number(memory.get("percent")))),
+            "memory_detail": self._format_bytes(memory.get("used_bytes")),
+            "upload_rate": self._format_rate(network.get("upload_bps"), unit),
+            "download_rate": self._format_rate(network.get("download_bps"), unit),
+            "clock": timestamp[11:19] if len(timestamp) >= 19 else "--:--:--",
+            "uptime": self._format_uptime(snapshot.get("uptime_seconds")),
+            "ping": "ERR" if ping is None
+                else "{}MS".format(int(self._number(ping))),
+            "host": str(snapshot.get("host", "WAITING"))[:18],
+        }
+        self._prepared_snapshot = snapshot
+
+    def _ensure_prepared(self, snapshot):
+        """确保绕过渲染器直接调用样式时仍具有完整显示文本。"""
+        if not self._prepared_text or self._prepared_snapshot is not snapshot:
+            self.prepare_frame(snapshot)
 
     @staticmethod
     def create_dirty_regions():
@@ -98,8 +141,23 @@ class DiskStyle:
     def _draw_bar(self, canvas, x, y, width, height, percent, color):
         """绘制带亮色边框的百分比进度条。"""
         value = max(0, min(100, self._number(percent)))
+        cache_key = (x, y, width, height, color)
+        commands = self._command_cache.get(cache_key)
+        if commands is None:
+            commands = [
+                [DRAW_COMMAND_FILL_RECT, x, y, width, height, DARK],
+                [DRAW_COMMAND_FILL_RECT, x + 1, y + 1, 0, height - 2, color],
+                [DRAW_COMMAND_RECT, x, y, width, height, color],
+            ]
+            self._command_cache[cache_key] = commands
+        commands[1][3] = int((width - 2) * value / 100)
+        draw_commands = getattr(canvas, "draw_commands", None)
+        if callable(draw_commands):
+            draw_commands(commands)
+            return
         canvas.fill_rect(x, y, width, height, DARK)
-        canvas.fill_rect(x + 1, y + 1, int((width - 2) * value / 100), height - 2, color)
+        canvas.fill_rect(x + 1, y + 1,
+                         int((width - 2) * value / 100), height - 2, color)
         self._draw_frame(canvas, x, y, width, height, color)
 
     def _draw_history(self, canvas, x, y, width, height, values, color):
@@ -140,59 +198,58 @@ class DiskStyle:
         """绘制磁盘容量、占用率和总进度条。"""
         disk = snapshot.get("disk", {})
         percent = int(self._number(disk.get("percent")))
-        capacity = self._format_bytes(disk.get("used_bytes")) + "/" + self._format_bytes(disk.get("total_bytes"))
+        capacity = self._prepared_text["disk_capacity"]
         canvas.text(8, 25, capacity, WHITE, 1)
-        canvas.text(184, 23, "{}%".format(percent), YELLOW, 2)
+        canvas.text(184, 23, self._prepared_text["disk_percent"], YELLOW, 2)
         self._draw_bar(canvas, 8, 43, 224, 20, percent, YELLOW)
 
     def _draw_metric_card(self, canvas, x, title, data, color, detail):
         """绘制 CPU 或内存的紧凑指标卡片内容。"""
         percent = int(self._number(data.get("percent")))
         canvas.text(x, 88, title, color, 1)
-        canvas.text(x, 101, "{}%".format(percent), color, 2)
+        text_key = "cpu_percent" if title == "CPU" else "memory_percent"
+        canvas.text(x, 101, self._prepared_text[text_key], color, 2)
         canvas.text(x + 48, 105, detail[:10], WHITE, 1)
         self._draw_bar(canvas, x, 125, 108, 10, percent, color)
 
     def _draw_network_line(self, canvas, snapshot, upload):
         """绘制上传或下载速率及其历史折线。"""
         network = snapshot.get("network", {})
-        unit = snapshot.get("display", {}).get("network_unit", "MB")
         if upload:
             y, title, color = 176, "UP", BLUE
-            rate_key, history_key = "upload_bps", "upload_history"
+            history_key = "upload_history"
         else:
             y, title, color = 224, "DOWN", GREEN
-            rate_key, history_key = "download_bps", "download_history"
+            history_key = "download_history"
         canvas.text(8, y, title, color, 1)
-        canvas.text(58, y, self._format_rate(network.get(rate_key), unit), WHITE, 1)
+        text_key = "upload_rate" if upload else "download_rate"
+        canvas.text(58, y, self._prepared_text[text_key], WHITE, 1)
         self._draw_history(canvas, 8, y + 12, 224, 27, network.get(history_key, ()), color)
 
     def _draw_footer(self, canvas, snapshot):
         """绘制时钟、运行时长、延迟和联网状态。"""
         network = snapshot.get("network", {})
-        timestamp = str(snapshot.get("timestamp", ""))
-        clock = timestamp[11:19] if len(timestamp) >= 19 else "--:--:--"
-        ping = network.get("ping_ms")
-        ping_text = "ERR" if ping is None else "{}MS".format(int(self._number(ping)))
-        canvas.text(8, 286, clock, BLUE, 1)
-        canvas.text(88, 286, self._format_uptime(snapshot.get("uptime_seconds")), WHITE, 1)
-        canvas.text(184, 286, ping_text, GREEN if network.get("online") else PURPLE, 1)
-        canvas.text(8, 301, str(snapshot.get("host", "WAITING"))[:18], GRAY, 1)
+        canvas.text(8, 286, self._prepared_text["clock"], BLUE, 1)
+        canvas.text(88, 286, self._prepared_text["uptime"], WHITE, 1)
+        canvas.text(184, 286, self._prepared_text["ping"],
+                    GREEN if network.get("online") else PURPLE, 1)
+        canvas.text(8, 301, self._prepared_text["host"], GRAY, 1)
 
     def draw_dirty(self, canvas, key, snapshot):
         """清空并重绘磁盘样式的一个动态区域。"""
         snapshot = snapshot or {}
+        self._ensure_prepared(snapshot)
         canvas.clear(BLACK)
         if key == "disk_summary":
             self._draw_disk_summary(canvas, snapshot)
         elif key == "cpu":
             cpu = snapshot.get("cpu", {})
-            temperature = cpu.get("temperature_c")
-            detail = "--℃" if temperature is None else "{}℃".format(int(self._number(temperature)))
+            detail = self._prepared_text["cpu_detail"]
             self._draw_metric_card(canvas, 8, "CPU", cpu, GREEN, detail)
         elif key == "memory":
             memory = snapshot.get("memory", {})
-            self._draw_metric_card(canvas, 124, "MEM", memory, PURPLE, self._format_bytes(memory.get("used_bytes")))
+            self._draw_metric_card(canvas, 124, "MEM", memory, PURPLE,
+                                   self._prepared_text["memory_detail"])
         elif key == "network_up":
             self._draw_network_line(canvas, snapshot, True)
         elif key == "network_down":
@@ -203,6 +260,7 @@ class DiskStyle:
     def draw_visible(self, canvas, snapshot):
         """绘制磁盘样式中与当前条带相交的全部内容。"""
         snapshot = snapshot or {}
+        self._ensure_prepared(snapshot)
         canvas.clear(BLACK)
         if self._visible(canvas, 0, 72):
             canvas.text(8, 5, "STORAGE OVERALL", YELLOW, 2)
@@ -211,12 +269,12 @@ class DiskStyle:
         if self._visible(canvas, 78, 145):
             cpu = snapshot.get("cpu", {})
             memory = snapshot.get("memory", {})
-            temperature = cpu.get("temperature_c")
-            cpu_detail = "--℃" if temperature is None else "{}℃".format(int(self._number(temperature)))
+            cpu_detail = self._prepared_text["cpu_detail"]
             self._draw_frame(canvas, 2, 78, 116, 67, GREEN)
             self._draw_frame(canvas, 122, 78, 116, 67, PURPLE)
             self._draw_metric_card(canvas, 8, "CPU", cpu, GREEN, cpu_detail)
-            self._draw_metric_card(canvas, 124, "MEM", memory, PURPLE, self._format_bytes(memory.get("used_bytes")))
+            self._draw_metric_card(canvas, 124, "MEM", memory, PURPLE,
+                                   self._prepared_text["memory_detail"])
         if self._visible(canvas, 151, 270):
             canvas.text(8, 154, "NETWORK", BLUE, 2)
             self._draw_frame(canvas, 2, 151, 236, 119, BLUE)

@@ -134,6 +134,9 @@ class DashboardRenderer:
         begin_frame = getattr(self._style, "begin_frame", None)
         if callable(begin_frame):
             begin_frame()
+        prepare_frame = getattr(self._style, "prepare_frame", None)
+        if callable(prepare_frame):
+            prepare_frame(next_snapshot)
         if self._initialized:
             self._next_y = self._height
             selector = getattr(self._style, "select_dirty_regions", None)

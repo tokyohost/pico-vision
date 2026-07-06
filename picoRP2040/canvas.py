@@ -35,6 +35,10 @@ MAX_TEXT_BITMAP_BYTES = 256
 MAX_TEXT_SEEN_KEYS = 64
 MAX_POLYGON_BUFFER_SHAPES = 8
 
+DRAW_COMMAND_FILL_RECT = 0
+DRAW_COMMAND_LINE = 1
+DRAW_COMMAND_RECT = 2
+
 
 class Canvas:
     """在小型条带缓冲区中绘图，坐标仍使用完整屏幕坐标。"""
@@ -243,6 +247,23 @@ class Canvas:
             if doubled <= delta_x:
                 error += delta_x
                 y0 += step_y
+
+    def draw_commands(self, commands):
+        """依次执行通用批量绘图命令，并为 Python 后端保持相同接口。"""
+        for operation, x, y, value_a, value_b, color in commands:
+            if operation == DRAW_COMMAND_FILL_RECT:
+                self.fill_rect(x, y, value_a, value_b, color)
+            elif operation == DRAW_COMMAND_LINE:
+                self.line(x, y, value_a, value_b, color)
+            elif operation == DRAW_COMMAND_RECT:
+                self.line(x, y, x + value_a - 1, y, color)
+                self.line(x, y + value_b - 1,
+                          x + value_a - 1, y + value_b - 1, color)
+                self.line(x, y, x, y + value_b - 1, color)
+                self.line(x + value_a - 1, y,
+                          x + value_a - 1, y + value_b - 1, color)
+            else:
+                raise ValueError("未知批量绘图命令：{}".format(operation))
 
     def fill_polygon(self, points, color):
         """优先调用原生 FrameBuffer 一次性填充多边形，并返回是否成功。"""

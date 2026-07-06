@@ -8,11 +8,18 @@ except ImportError:
     _native_canvas = None
 
 
-NATIVE_CANVAS_API_VERSION = 5
+NATIVE_CANVAS_API_VERSION = 6
 NATIVE_CANVAS_METHODS = (
     "clear", "pixel", "fill_rect", "line", "fill_polygon", "draw_columns",
     "draw_rect", "draw_grid", "draw_polyline", "draw_line_chart",
+    "draw_text", "draw_commands",
 )
+
+_FONT_KINDS = {
+    "native": 0,
+    "screen_2inch": 1,
+    "screen_2inch_compact": 2,
+}
 
 
 def native_canvas_supported():
@@ -69,6 +76,26 @@ class CanvasC(PythonCanvas):
             self.buffer, self.width, self.height,
             self.origin_x, self.origin_y, x0, y0, x1, y1, color,
         )
+
+    def text(self, x, y, value, color, scale=1):
+        """通过单次 C 调用绘制放大文字或自定义字体文字。"""
+        if self._font_name == "native" and scale == 1:
+            super().text(x, y, value, color, scale)
+            return
+        _native_canvas.draw_text(
+            self.buffer, self.width, self.height,
+            self.origin_x, self.origin_y,
+            self._font, _FONT_KINDS.get(self._font_name, 0),
+            x, y, str(value), color, scale,
+        )
+
+    def draw_commands(self, commands):
+        """通过单次 C 调用执行矩形填充、线段和边框命令。"""
+        if commands:
+            _native_canvas.draw_commands(
+                self.buffer, self.width, self.height,
+                self.origin_x, self.origin_y, commands,
+            )
 
     def fill_polygon(self, points, color):
         """通过 C 扫描线后端填充多边形并返回是否成功。"""
