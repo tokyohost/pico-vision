@@ -63,6 +63,10 @@ USB_CDC_TX_BUFFER_SIZE = 1024
 USB_CDC_ENUMERATION_TIMEOUT_MS = 5000
 # 连续缺失多少个 Monitor 采集周期后重新枚举应用数据 CDC。
 MONITOR_TIMEOUT_INTERVALS = 5
+# 每接收多少份 Monitor 快照，使用主机时间重新校准一次本地推进基准。
+TIME_CALIBRATION_SNAPSHOTS = 20
+# Pico 推进时间与主机运行时间的允许误差；误差不超过该值时保持原基准。
+TIME_CALIBRATION_TOLERANCE_SECONDS = 2
 
 # RGB565 调色板。
 BLACK = 0x0000
@@ -91,6 +95,8 @@ def _load_runtime_configuration():
         "LCD_STYLE": str,
         "RENDER_INTERVAL_MS": int,
         "MONITOR_TIMEOUT_INTERVALS": int,
+        "TIME_CALIBRATION_SNAPSHOTS": int,
+        "TIME_CALIBRATION_TOLERANCE_SECONDS": int,
         "LED_BRIGHTNESS": int,
     }
     for name, expected_type in allowed.items():

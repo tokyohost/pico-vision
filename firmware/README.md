@@ -13,7 +13,7 @@
 
 ```sh
 make BOARD=RPI_PICO \
-  USER_C_MODULES="modules/fn_canvas/micropython.cmake;modules/fn_protocol/micropython.cmake"
+  USER_C_MODULES=modules/micropython.cmake
 ```
 
 生成文件位于 `micropython/ports/rp2/build-RPI_PICO/firmware.uf2`。

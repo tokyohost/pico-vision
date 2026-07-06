@@ -14,6 +14,13 @@
 """协调非阻塞 JSON 接收与最新快照缓存。"""
 
 
+from config import (
+    TIME_CALIBRATION_SNAPSHOTS,
+    TIME_CALIBRATION_TOLERANCE_SECONDS,
+)
+from timeIncrease import TimeIncrease
+
+
 
 class SnapshotCache:
     """在单核事件循环中保存最新系统快照及版本号。"""
@@ -22,19 +29,24 @@ class SnapshotCache:
         """创建空快照缓存。"""
         self.snapshot = None
         self.version = 0
+        self._time_increase = TimeIncrease(
+            TIME_CALIBRATION_SNAPSHOTS,
+            TIME_CALIBRATION_TOLERANCE_SECONDS,
+        )
 
     def update(self, snapshot):
         """替换最新快照并递增版本号。"""
-        self.snapshot = snapshot
+        self.snapshot = self._time_increase.receive(snapshot)
         self.version += 1
 
     def latest(self):
         """返回最新快照和版本号。"""
-        return self.snapshot, self.version
+        return self._time_increase.increase(self.snapshot), self.version
 
     def clear(self):
         """清除失效快照并递增版本号。"""
         self.snapshot = None
+        self._time_increase.reset()
         self.version += 1
 
 

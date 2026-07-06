@@ -130,7 +130,10 @@ class DashboardRenderer:
 
     def request_render(self, snapshot, force=False):
         """登记快照，并按差异刷新或强制刷新动态区域。"""
-        next_snapshot = snapshot or {}
+        # 时间推进器会原地更新缓存快照。渲染器必须保存独立的帧级根字典，
+        # 否则上一帧时间也会被同步改写，差异检测无法发现每秒变化，只能
+        # 等到校准或其他区域重绘时才一次跳过多个秒数。
+        next_snapshot = dict(snapshot) if snapshot else {}
         begin_frame = getattr(self._style, "begin_frame", None)
         if callable(begin_frame):
             begin_frame()

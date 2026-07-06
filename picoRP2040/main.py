@@ -64,9 +64,7 @@ class Application:
             ).encode()
         )
         self._protocol.write(b"BOOT:LCD_READY\n")
-        # Keep the dedicated boot style on screen until monitor sends its first
-        # snapshot.  It is intentionally independent from the configured data
-        # dashboard style.
+        # 在 Monitor 发送首个快照前保持专用启动样式，该样式独立于数据看板配置。
         self._renderer = DashboardRenderer(self._lcd, style_name="boot")
         self._boot_frame = 0
         self._boot_logs = []
@@ -84,7 +82,7 @@ class Application:
         self._monitor_connected = False
 
     def _show_boot(self, progress, log, status, flush=False):
-        """Queue a boot frame and optionally push all of its strips now."""
+        """提交启动画面，并可选择立即刷新其全部条带。"""
         if log and (not self._boot_logs or self._boot_logs[-1] != log):
             self._boot_logs.append(log)
             self._boot_logs = self._boot_logs[-4:]
@@ -245,7 +243,11 @@ class Application:
                 )
             # 每绘制一个区域就返回主循环轮询 USB，避免连续绘制多个区域期间
             # 主机串口写入因 Pico 不消费数据而阻塞数百毫秒。
-            if self._renderer.update_pending(max_regions=1):
+            render_completed = self._renderer.update_pending(max_regions=1)
+            # system_boot 等待页使用尚未打开的应用 CDC；此时若发送帧完成
+            # ACK，CDC 写缓冲会持续返回零并阻塞主循环。仅在 Monitor 已
+            # 恢复连接后发送渲染性能信息，等待动画本身仍可正常推进。
+            if render_completed and self._monitor_connected:
                 canvas_us, lcd_us, region_count = self._renderer.last_profile()
                 profile = self._renderer.last_detailed_profile()
                 memory_used, memory_total = memory_usage()
