@@ -47,7 +47,7 @@ class LcdDevice:
         self.bl = Pin(PIN_BL, Pin.OUT, value=0)
         self.spi = SPI(
             0,
-            baudrate=40_000_000,
+            baudrate=62_500_000,
             polarity=0,
             phase=0,
             sck=Pin(PIN_SCK),

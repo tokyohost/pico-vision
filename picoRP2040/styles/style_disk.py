@@ -86,6 +86,10 @@ class DiskStyle:
 
     def _draw_frame(self, canvas, x, y, width, height, color):
         """绘制一像素宽的矩形边框。"""
+        draw_rect = getattr(canvas, "draw_rect", None)
+        if callable(draw_rect):
+            draw_rect(x, y, width, height, color)
+            return
         canvas.line(x, y, x + width - 1, y, color)
         canvas.line(x, y + height - 1, x + width - 1, y + height - 1, color)
         canvas.line(x, y, x, y + height - 1, color)
@@ -100,21 +104,37 @@ class DiskStyle:
 
     def _draw_history(self, canvas, x, y, width, height, values, color):
         """绘制带点阵网格的历史折线。"""
-        for grid_x in range(x, x + width, 16):
-            for grid_y in range(y, y + height, 8):
-                canvas.pixel(grid_x, grid_y, GRAY)
+        draw_grid = getattr(canvas, "draw_grid", None)
+        if callable(draw_grid):
+            draw_grid(x, y, width, height, 16, 8, GRAY)
+        else:
+            for grid_x in range(x, x + width, 16):
+                for grid_y in range(y, y + height, 8):
+                    canvas.pixel(grid_x, grid_y, GRAY)
         if not values or len(values) < 2:
             return
-        previous = None
+        points = []
         count = len(values)
-        maximum = max(1, max(self._number(value) for value in values))
-        for index, value in enumerate(values):
+        normalized_values = [self._number(value) for value in values]
+        maximum_value = max(normalized_values)
+        if maximum_value <= 0:
+            # 零值历史仍保留底部基线，保持与优化前折线图的显示效果一致。
+            canvas.fill_rect(x, y + height - 1, width, 1, color)
+            return
+        maximum = max(1, maximum_value)
+        for index, value in enumerate(normalized_values):
             point_x = x + int(index * (width - 1) / (count - 1))
-            ratio = max(0, min(1, self._number(value) / maximum))
+            ratio = max(0, min(1, value / maximum))
             point_y = y + height - 1 - int(ratio * (height - 1))
-            if previous is not None:
-                canvas.line(previous[0], previous[1], point_x, point_y, color)
-            previous = (point_x, point_y)
+            points.append((point_x, point_y))
+        draw_polyline = getattr(canvas, "draw_polyline", None)
+        if callable(draw_polyline):
+            draw_polyline(points, color)
+        else:
+            previous = points[0]
+            for point in points[1:]:
+                canvas.line(previous[0], previous[1], point[0], point[1], color)
+                previous = point
 
     def _draw_disk_summary(self, canvas, snapshot):
         """绘制磁盘容量、占用率和总进度条。"""

@@ -246,6 +246,14 @@ class Canvas:
 
     def fill_polygon(self, points, color):
         """优先调用原生 FrameBuffer 一次性填充多边形，并返回是否成功。"""
+        if len(points) >= 2:
+            baseline_y = points[0][1]
+            if all(point[1] == baseline_y for point in points[1:]):
+                # 全零面积图会退化为水平线，显式绘制以免原生填充静默丢失。
+                left = min(point[0] for point in points)
+                right = max(point[0] for point in points)
+                self.line(left, baseline_y, right, baseline_y, color)
+                return True
         if self._polygon_supported is False or self._framebuffer is None:
             return False
         polygon_method = getattr(self._framebuffer, "poly", None)
@@ -320,11 +328,8 @@ class Canvas:
                 x, top, _ = segment[0]
                 self.fill_rect(x, top, 1, bottom - top + 1, color)
             else:
-                polygon = [(item[0], item[1]) for item in segment]
-                polygon.append((segment[-1][0], bottom))
-                polygon.append((segment[0][0], bottom))
-                if not self.fill_polygon(polygon, color):
-                    self._draw_column_fallback(segment, bottom, color)
+                # 面积图按列填充，避免尖峰和深谷形成的凹多边形漏掉内部像素。
+                self._draw_column_fallback(segment, bottom, color)
             start = end
 
     def _draw_column_fallback(self, columns, bottom, color):

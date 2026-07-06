@@ -8,9 +8,10 @@ except ImportError:
     _native_canvas = None
 
 
-NATIVE_CANVAS_API_VERSION = 2
+NATIVE_CANVAS_API_VERSION = 3
 NATIVE_CANVAS_METHODS = (
     "clear", "pixel", "fill_rect", "line", "fill_polygon", "draw_columns",
+    "draw_rect", "draw_grid", "draw_polyline",
 )
 
 
@@ -71,6 +72,14 @@ class CanvasC(PythonCanvas):
 
     def fill_polygon(self, points, color):
         """通过 C 扫描线后端填充多边形并返回是否成功。"""
+        if len(points) >= 2:
+            baseline_y = points[0][1]
+            if all(point[1] == baseline_y for point in points[1:]):
+                # C 扫描线不会填充零面积多边形，改为保留一像素 X 轴基线。
+                left = min(point[0] for point in points)
+                right = max(point[0] for point in points)
+                self.line(left, baseline_y, right, baseline_y, color)
+                return True
         return _native_canvas.fill_polygon(
             self.buffer, self.width, self.height,
             self.origin_x, self.origin_y, points, color,
@@ -82,4 +91,27 @@ class CanvasC(PythonCanvas):
             _native_canvas.draw_columns(
                 self.buffer, self.width, self.height,
                 self.origin_x, self.origin_y, columns, bottom,
+            )
+
+    def draw_grid(self, x, y, width, height, step_x, step_y, color):
+        """通过单次 C 调用绘制规则点阵网格。"""
+        _native_canvas.draw_grid(
+            self.buffer, self.width, self.height,
+            self.origin_x, self.origin_y,
+            x, y, width, height, step_x, step_y, color,
+        )
+
+    def draw_rect(self, x, y, width, height, color):
+        """通过单次 C 调用绘制一像素矩形边框。"""
+        _native_canvas.draw_rect(
+            self.buffer, self.width, self.height,
+            self.origin_x, self.origin_y, x, y, width, height, color,
+        )
+
+    def draw_polyline(self, points, color):
+        """通过单次 C 调用连接已完成缩放和取整的折线坐标。"""
+        if points:
+            _native_canvas.draw_polyline(
+                self.buffer, self.width, self.height,
+                self.origin_x, self.origin_y, points, color,
             )

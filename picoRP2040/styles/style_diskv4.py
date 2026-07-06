@@ -235,9 +235,7 @@ class DiskV4Style:
             point_y = y + height - 1 - int(ratio * (height - 1))
             points.append((point_x, point_y))
         bottom = y + height - 1
-        polygon = [(x, bottom)] + points + [(x + width - 1, bottom)]
-        if canvas.fill_polygon(polygon, color):
-            return
+        columns = []
         previous = points[0]
         for point in points[1:]:
             span = max(1, point[0] - previous[0])
@@ -246,8 +244,16 @@ class DiskV4Style:
                 draw_y = previous[1] + int(
                     (point[1] - previous[1]) * offset / span
                 )
-                canvas.line(draw_x, draw_y, draw_x, bottom, color)
+                columns.append((draw_x, draw_y, color))
             previous = point
+        draw_columns = getattr(canvas, "draw_columns", None)
+        if callable(draw_columns):
+            draw_columns(columns, bottom)
+        else:
+            for draw_x, draw_y, column_color in columns:
+                canvas.line(
+                    draw_x, draw_y, draw_x, bottom, column_color
+                )
 
     def _draw_empty_disk(self, canvas, x, y, index):
         """绘制低对比度的空磁盘槽位占位卡片。"""

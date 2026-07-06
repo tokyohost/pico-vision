@@ -358,13 +358,8 @@ class HorizontalDisk6xStyle:
 
     @staticmethod
     def _fill_history_area(canvas, x, y, width, height, points, color):
-        """优先原生填充趋势图，并为旧固件选择调用次数较少的扫描方向。"""
+        """逐列连续填充趋势图，避免尖峰与深谷之间出现空白。"""
         bottom = y + height - 1
-        polygon = list(points)
-        polygon.append((points[-1][0], bottom))
-        polygon.append((points[0][0], bottom))
-        if canvas.fill_polygon(polygon, color):
-            return True
         top_by_x = [bottom] * width
         previous = points[0]
         for point in points[1:]:
@@ -377,29 +372,17 @@ class HorizontalDisk6xStyle:
                     (point[1] - previous[1]) * offset / span
                 )
             previous = point
-        scanline_runs = []
-        for fill_y in range(y, bottom + 1):
-            run_start = None
-            for offset, top in enumerate(top_by_x):
-                if top <= fill_y:
-                    if run_start is None:
-                        run_start = x + offset
-                elif run_start is not None:
-                    scanline_runs.append(
-                        (run_start, fill_y, x + offset - 1, fill_y)
-                    )
-                    run_start = None
-            if run_start is not None:
-                scanline_runs.append(
-                    (run_start, fill_y, x + width - 1, fill_y)
-                )
-        if len(scanline_runs) < width:
-            for start_x, start_y, end_x, end_y in scanline_runs:
-                canvas.line(start_x, start_y, end_x, end_y, color)
+        columns = [
+            (x + offset, top, color)
+            for offset, top in enumerate(top_by_x)
+        ]
+        draw_columns = getattr(canvas, "draw_columns", None)
+        if callable(draw_columns):
+            draw_columns(columns, bottom)
         else:
             for offset, top in enumerate(top_by_x):
                 canvas.line(x + offset, top, x + offset, bottom, color)
-        return False
+        return True
 
     def _draw_cpu(self, canvas, snapshot):
         """绘制左上角 CPU 百分比、温度与趋势。"""

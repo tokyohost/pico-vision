@@ -36,7 +36,11 @@ class DashboardRenderer:
         self._render_started = None
         self._last_render_ms = 0
         self._canvas_us = 0
+        self._view_us = 0
+        self._buffer_us = 0
         self._lcd_us = 0
+        self._gc_us = 0
+        self._slowest_region_us = 0
         self._region_count = 0
         self._initialized = False
         self._dirty_regions = []
@@ -149,7 +153,11 @@ class DashboardRenderer:
         self._render_started = time.ticks_ms()
         self._completion_pending = True
         self._canvas_us = 0
+        self._view_us = 0
+        self._buffer_us = 0
         self._lcd_us = 0
+        self._gc_us = 0
+        self._slowest_region_us = 0
         self._region_count = 0
 
     def is_rendering(self):
@@ -160,22 +168,30 @@ class DashboardRenderer:
         """仅绘制一个条带或动态区域，并在整帧完成时返回真。"""
         if not self.is_rendering():
             return False
+        region_started = time.ticks_us()
         if self._next_y < self._height:
             x, y, width = 0, self._next_y, self._width
             height = min(LCD_STRIP_HEIGHT, self._height - y)
+            view_started = time.ticks_us()
             self.canvas.set_view(x, y, width, height)
+            self._view_us += time.ticks_diff(time.ticks_us(), view_started)
             canvas_started = time.ticks_us()
             self._style.draw_visible(self.canvas, self._snapshot)
         else:
             key, x, y, width, height = self._dirty_regions[self._dirty_index]
+            view_started = time.ticks_us()
             self.canvas.set_view(x, y, width, height)
+            self._view_us += time.ticks_diff(time.ticks_us(), view_started)
             canvas_started = time.ticks_us()
             self._style.draw_dirty(self.canvas, key, self._snapshot)
         self._canvas_us += time.ticks_diff(time.ticks_us(), canvas_started)
-        lcd_started = time.ticks_us()
-        self._show_view(x, y, width, height)
-        self._lcd_us += time.ticks_diff(time.ticks_us(), lcd_started)
+        buffer_us, lcd_us = self._show_view(x, y, width, height)
+        self._buffer_us += buffer_us
+        self._lcd_us += lcd_us
         self._region_count += 1
+        region_us = time.ticks_diff(time.ticks_us(), region_started)
+        if region_us > self._slowest_region_us:
+            self._slowest_region_us = region_us
         if self._next_y < self._height:
             self._next_y += height
             if self._next_y >= self._height:
@@ -188,7 +204,9 @@ class DashboardRenderer:
             self._render_started = None
             self._completion_pending = False
             # 一帧绘制会产生较多短命对象，及时整理堆以便接收下一包 JSON。
+            gc_started = time.ticks_us()
             gc.collect()
+            self._gc_us = time.ticks_diff(time.ticks_us(), gc_started)
         return completed
 
     def update_pending(self, max_regions=8):
@@ -208,9 +226,15 @@ class DashboardRenderer:
         return False
 
     def _show_view(self, x, y, width, height):
-        """将当前视口的有效像素提交到 LCD。"""
+        """将当前视口提交到 LCD，并返回缓冲区准备和写屏耗时。"""
+        buffer_started = time.ticks_us()
         byte_count = width * height * 2
-        self.lcd.show_region(x, y, width, height, memoryview(self.canvas.buffer)[:byte_count])
+        buffer_view = memoryview(self.canvas.buffer)[:byte_count]
+        buffer_us = time.ticks_diff(time.ticks_us(), buffer_started)
+        lcd_started = time.ticks_us()
+        self.lcd.show_region(x, y, width, height, buffer_view)
+        lcd_us = time.ticks_diff(time.ticks_us(), lcd_started)
+        return buffer_us, lcd_us
 
     def last_render_ms(self):
         """返回最近一帧从开始到完成的耗时毫秒数。"""
@@ -219,3 +243,21 @@ class DashboardRenderer:
     def last_profile(self):
         """返回最近一帧画布、LCD 和区域数量性能统计。"""
         return self._canvas_us, self._lcd_us, self._region_count
+
+    def last_detailed_profile(self):
+        """返回最近一帧各渲染步骤的详细耗时统计。"""
+        measured_us = (
+            self._view_us + self._canvas_us + self._buffer_us
+            + self._lcd_us
+        )
+        total_us = self._last_render_ms * 1000
+        return {
+            "view_us": self._view_us,
+            "canvas_us": self._canvas_us,
+            "buffer_us": self._buffer_us,
+            "lcd_us": self._lcd_us,
+            "gc_us": self._gc_us,
+            "schedule_us": max(0, total_us - measured_us),
+            "slowest_region_us": self._slowest_region_us,
+            "region_count": self._region_count,
+        }

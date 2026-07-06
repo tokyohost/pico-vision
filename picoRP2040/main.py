@@ -178,9 +178,12 @@ class Application:
             # 主机串口写入因 Pico 不消费数据而阻塞数百毫秒。
             if self._renderer.update_pending(max_regions=1):
                 canvas_us, lcd_us, region_count = self._renderer.last_profile()
+                profile = self._renderer.last_detailed_profile()
                 memory_used, memory_total = memory_usage()
                 response = (
                     "ACK:LCD_FRAME:{}:TOTAL={}MS:CANVAS={}US:LCD={}US:"
+                    "VIEW={}US:BUFFER={}US:GC={}US:SCHEDULE={}US:"
+                    "SLOWEST_REGION={}US:"
                     "REGIONS={}:MEMORY_USED={}:MEMORY_TOTAL={}:"
                     "CANVAS_BACKEND={}\n"
                 ).format(
@@ -188,6 +191,11 @@ class Application:
                     self._renderer.last_render_ms(),
                     canvas_us,
                     lcd_us,
+                    profile["view_us"],
+                    profile["buffer_us"],
+                    profile["gc_us"],
+                    profile["schedule_us"],
+                    profile["slowest_region_us"],
                     region_count,
                     memory_used,
                     memory_total,
