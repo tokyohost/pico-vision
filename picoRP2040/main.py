@@ -18,7 +18,12 @@ import gc
 import sys
 import time
 
-from config import BOARD_MODEL, LCD_STYLE, RENDER_INTERVAL_MS
+from config import (
+    BOARD_MODEL,
+    LCD_STYLE,
+    MONITOR_TIMEOUT_INTERVALS,
+    RENDER_INTERVAL_MS,
+)
 from protocol import JsonProtocol
 
 
@@ -75,6 +80,8 @@ class Application:
         self._next_render = time.ticks_add(
             time.ticks_ms(), RENDER_INTERVAL_MS
         )
+        self._monitor_interval_ms = 500
+        self._monitor_connected = False
 
     def _show_boot(self, progress, log, status, flush=False):
         """Queue a boot frame and optionally push all of its strips now."""
@@ -91,6 +98,45 @@ class Application:
         if flush:
             while self._renderer.is_rendering():
                 self._renderer.update_pending(max_regions=1)
+
+    def _monitor_timed_out(self, now):
+        """判断 Monitor 是否已连续五个采集周期没有发送有效消息。"""
+        if not self._monitor_connected:
+            return False
+        last_message_ms = self._protocol.last_message_ms()
+        if last_message_ms is None:
+            return False
+        return (
+            time.ticks_diff(now, last_message_ms)
+            >= self._monitor_interval_ms * MONITOR_TIMEOUT_INTERVALS
+        )
+
+    def _return_to_waiting_page(self):
+        """切换到系统启动等待页，并重新注册应用 USB CDC。"""
+        from protocol import JsonProtocol
+        from upgrade_manager import UpgradeManager
+        from usb_transport import create_data_cdc
+
+        self._monitor_connected = False
+        self._cache.clear()
+        self._renderer.set_style("boot")
+        self._rendering_version = -1
+        self._boot_frame = 0
+        self._boot_logs = ["MONITOR:TIMEOUT", "USB:CDC:REGISTERING"]
+        self._show_boot(
+            100,
+            "SYSTEM_BOOT:WAITING_MONITOR",
+            "waiting connecting ....",
+            flush=True,
+        )
+        protocol = JsonProtocol(stream=create_data_cdc(wait_for_open=False))
+        protocol._upgrade_manager = UpgradeManager(
+            protocol.write_upgrade_response
+        )
+        self._protocol = protocol
+        self._receiver.replace_protocol(protocol)
+        self._boot_logs.append("USB:CDC:READY")
+        self._next_boot_animation = time.ticks_ms()
 
     def run(self):
         """持续推进各组件，每轮均在有限时间内返回。"""
@@ -120,6 +166,9 @@ class Application:
                 time.sleep_ms(0)
                 continue
             now = time.ticks_ms()
+            if self._monitor_timed_out(now):
+                self._return_to_waiting_page()
+                continue
             snapshot, version = self._cache.latest()
             has_new_snapshot = version != self._rendering_version
             idle_refresh_due = time.ticks_diff(now, self._next_render) >= 0
@@ -142,12 +191,32 @@ class Application:
                 and (has_new_snapshot or idle_refresh_due)
             ):
                 display = snapshot.get("display", {}) if snapshot else {}
+                requested_interval_ms = display.get(
+                    "collection_interval_ms", self._monitor_interval_ms
+                )
+                try:
+                    requested_interval_ms = int(requested_interval_ms)
+                except (TypeError, ValueError):
+                    requested_interval_ms = self._monitor_interval_ms
+                self._monitor_interval_ms = max(1, requested_interval_ms)
+                self._monitor_connected = True
                 requested_rotation = display.get("rotation", 0)
                 try:
                     requested_rotation = int(requested_rotation)
                 except (TypeError, ValueError):
                     requested_rotation = 0
                 requested_style = display.get("style", LCD_STYLE)
+                requested_brightness = display.get("brightness", 100)
+                try:
+                    requested_brightness = int(requested_brightness)
+                except (TypeError, ValueError):
+                    requested_brightness = 100
+                if self._lcd.set_backlight_brightness(requested_brightness):
+                    self._protocol.write(
+                        "CONFIG:LCD_BRIGHTNESS:{}\n".format(
+                            self._lcd.backlight_brightness()
+                        ).encode()
+                    )
                 try:
                     if self._renderer.set_style(requested_style):
                         self._protocol.write(

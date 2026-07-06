@@ -14,6 +14,7 @@
 #  This software is provided "as is", without warranty of any kind.
 
 import argparse
+import json
 import logging
 import os
 import signal
@@ -89,6 +90,7 @@ def create_argument_parser():
     parser.add_argument("--interval", type=float, default=float(os.getenv("PICO_MONITOR_INTERVAL", "0.5")), help="采集和发送间隔，单位为秒")
     parser.add_argument("--reconnect-interval", type=float, default=float(os.getenv("PICO_MONITOR_RECONNECT_INTERVAL", "3.0")), help="设备断线后的重连间隔，单位为秒")
     parser.add_argument("--screen-rotation", type=int, choices=(0, 180), default=int(os.getenv("PICO_MONITOR_SCREEN_ROTATION", "0")), help="Pico 屏幕旋转角度，可选 0 或 180")
+    parser.add_argument("--lcd-brightness", type=int, choices=range(1, 101), default=int(os.getenv("PICO_MONITOR_LCD_BRIGHTNESS", "50")), help="Pico LCD 背光亮度百分比，范围为 1 至 100")
     parser.add_argument("--network-unit", choices=("MB", "Mbps"), default=os.getenv("PICO_MONITOR_NETWORK_UNIT", "MB"), help="网络速率模式：MB 自动使用 B/KB/MB/GB，Mbps 自动使用 bps/Kbps/Mbps/Gbps")
     parser.add_argument("--lcd-style", choices=BUILTIN_LCD_STYLES, default=os.getenv("PICO_MONITOR_LCD_STYLE", "horizontal_disk6x"), help="Pico LCD 内置界面样式")
     qbittorrent_group = parser.add_mutually_exclusive_group()
@@ -144,6 +146,29 @@ class MonitorService:
         LOGGER.info("收到托盘退出请求，将在停止监控前重启 Pico")
         self.reboot_requested.set()
         self.stopping.set()
+
+    def apply_display_config(self, payload):
+        """校验并热更新 Windows 托盘下发的显示配置。"""
+        brightness = int(payload.get("lcd_brightness", self.arguments.lcd_brightness))
+        rotation = int(payload.get("screen_rotation", self.arguments.screen_rotation))
+        style = payload.get("lcd_style", self.arguments.lcd_style)
+        network_unit = payload.get("network_unit", self.arguments.network_unit)
+        if not 1 <= brightness <= 100:
+            raise ValueError("LCD 背光亮度必须为 1 至 100")
+        if rotation not in (0, 180):
+            raise ValueError("屏幕旋转角度仅支持 0 或 180")
+        if style not in BUILTIN_LCD_STYLES:
+            raise ValueError("不支持的 LCD 样式")
+        if network_unit not in ("MB", "Mbps"):
+            raise ValueError("不支持的网络速率单位")
+        self.arguments.lcd_brightness = brightness
+        self.arguments.screen_rotation = rotation
+        self.arguments.lcd_style = style
+        self.arguments.network_unit = network_unit
+        LOGGER.info(
+            "显示设置已热更新：亮度=%d%%，旋转=%d°，样式=%s，网络单位=%s",
+            brightness, rotation, style, network_unit,
+        )
 
     def stop(self, signum=None, frame=None):
         """请求主循环停止，并安全关闭当前串口连接。"""
@@ -268,6 +293,8 @@ class MonitorService:
         self._apply_disk_health_test(snapshot)
         snapshot["display"] = {
             "rotation": self.arguments.screen_rotation,
+            "brightness": getattr(self.arguments, "lcd_brightness", 100),
+            "collection_interval_ms": max(1, round(self.arguments.interval * 1000)),
             "network_unit": self.arguments.network_unit,
             "style": self.arguments.lcd_style,
         }
@@ -389,9 +416,17 @@ def main():
     if arguments.worker and getattr(sys, "stdin", None) is not None:
         def listen_for_tray_commands():
             for line in sys.stdin:
-                if line.strip() == "EXIT_REBOOT":
+                command = line.strip()
+                if command == "EXIT_REBOOT":
                     service.request_reboot_and_stop()
                     return
+                if command.startswith("DISPLAY_CONFIG:"):
+                    try:
+                        service.apply_display_config(
+                            json.loads(command[len("DISPLAY_CONFIG:"):])
+                        )
+                    except (TypeError, ValueError, json.JSONDecodeError) as error:
+                        LOGGER.warning("显示设置热更新失败：%s", error)
 
         threading.Thread(
             target=listen_for_tray_commands,

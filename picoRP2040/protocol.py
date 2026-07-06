@@ -107,6 +107,7 @@ class JsonProtocol:
         self._frame_started_ms = None
         self._frame_read_calls = 0
         self._upgrade_manager = upgrade_manager
+        self._last_message_ms = None
 
     def _write_raw(self, data):
         """向 USB 串口写入已编码 PV1 帧并立即刷新。"""
@@ -173,6 +174,7 @@ class JsonProtocol:
                 try:
                     parse_started_ms = self._ticks_ms()
                     message_type, payload = self._parse_frame(line)
+                    self._last_message_ms = receive_finished_ms
                     parse_elapsed_ms = self._elapsed_ms(
                         self._ticks_ms(), parse_started_ms
                     )
@@ -227,6 +229,10 @@ class JsonProtocol:
                     self._write_frame("ERR", b"UNKNOWN_TYPE")
                 continue
         return latest
+
+    def last_message_ms(self):
+        """返回最近一条有效 Monitor 协议消息的接收时刻。"""
+        return self._last_message_ms
 
     def _consume(self, count):
         """重建剩余缓冲区以兼容 RP2040 MicroPython。"""

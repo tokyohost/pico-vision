@@ -41,6 +41,7 @@ python pico_monitor.py
 --interval 1.0              指定采集发送间隔
 --reconnect-interval 3.0    指定断线重连间隔
 --screen-rotation 180       将 Pico 屏幕旋转一百八十度
+--lcd-brightness 80         将 LCD 背光亮度设置为 80%，范围为 1 至 100
 --network-unit MB           按 B/s、KB/s、MB/s、GB/s 自动选择单位
 --network-unit Mbps         按 bps、Kbps、Mbps、Gbps 自动选择单位
 --lcd-style default|disk|horizontal_disk|horizontal_disk4x|horizontal_disk4x_qb|horizontal_disk6x
@@ -65,7 +66,7 @@ python pico_monitor.py
 --upgrade-sha256 HASH       可选的升级包下载摘要校验值
 ```
 
-开发模式也可通过环境变量 `PICO_MONITOR_DEV=1` 开启。首次串口扫描未找到 Pico 后，程序不再重试 COM 口，而是按照 `--interval` 周期持续采集，并以 `[DEV][Monitor -> Pico][JSON]` 标识打印完整 `JSON:` 协议行，方便在没有硬件时调试采集数据。
+开发模式也可通过环境变量 `PICO_MONITOR_DEV=1` 开启。LCD 背光亮度可通过 `PICO_MONITOR_LCD_BRIGHTNESS=1..100` 配置。首次串口扫描未找到 Pico 后，程序不再重试 COM 口，而是按照 `--interval` 周期持续采集，并以 `[DEV][Monitor -> Pico][JSON]` 标识打印完整 `JSON:` 协议行，方便在没有硬件时调试采集数据。
 
 qBittorrent 也可通过环境变量 `PICO_MONITOR_QBITTORRENT_ENABLED`、`PICO_MONITOR_QBITTORRENT_ADDRESS`、`PICO_MONITOR_QBITTORRENT_USERNAME`、`PICO_MONITOR_QBITTORRENT_PASSWORD` 和 `PICO_MONITOR_QBITTORRENT_INTERVAL` 配置。启用采集后地址、账号、密码必须全部配置。建议使用环境变量或 Linux 配置文件保存密码，避免密码出现在进程命令行中。
 

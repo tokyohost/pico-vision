@@ -304,6 +304,11 @@ class PicoClientTest(unittest.TestCase):
         arguments = create_argument_parser().parse_args(["--screen-rotation", "180"])
         self.assertEqual(arguments.screen_rotation, 180)
 
+    def test_lcd_brightness_argument(self):
+        """确认 LCD 背光亮度参数接受一至一百的百分比。"""
+        arguments = create_argument_parser().parse_args(["--lcd-brightness", "35"])
+        self.assertEqual(arguments.lcd_brightness, 35)
+
     def test_development_mode_argument(self):
         """确认命令行可以显式开启开发模式。"""
         arguments = create_argument_parser().parse_args(["--dev"])

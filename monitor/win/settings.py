@@ -23,6 +23,7 @@ DEFAULT_SETTINGS = {
     "interval": 0.5,
     "reconnect_interval": 3.0,
     "screen_rotation": 0,
+    "lcd_brightness": 100,
     "network_unit": "MB",
     "lcd_style": "horizontal_disk6x",
     "qbittorrent_enabled": False,
@@ -37,6 +38,7 @@ ARGUMENT_NAMES = {
     "--interval": "interval",
     "--reconnect-interval": "reconnect_interval",
     "--screen-rotation": "screen_rotation",
+    "--lcd-brightness": "lcd_brightness",
     "--network-unit": "network_unit",
     "--lcd-style": "lcd_style",
     "--qbittorrent-address": "qbittorrent_address",
@@ -66,6 +68,12 @@ class TraySettingsStore:
             pass
         if settings["lcd_style"] not in STYLE_NAMES:
             settings["lcd_style"] = DEFAULT_SETTINGS["lcd_style"]
+        try:
+            settings["lcd_brightness"] = int(settings["lcd_brightness"])
+        except (TypeError, ValueError):
+            settings["lcd_brightness"] = DEFAULT_SETTINGS["lcd_brightness"]
+        if not 1 <= settings["lcd_brightness"] <= 100:
+            settings["lcd_brightness"] = DEFAULT_SETTINGS["lcd_brightness"]
         return settings
 
     def save(self, settings):
@@ -103,7 +111,8 @@ def settings_from_arguments(arguments, base=None):
     settings = dict(DEFAULT_SETTINGS if base is None else base)
     converters = {
         "interval": float, "reconnect_interval": float,
-        "screen_rotation": int, "qbittorrent_interval": float,
+        "screen_rotation": int, "lcd_brightness": int,
+        "qbittorrent_interval": float,
     }
     index = 0
     while index < len(arguments):

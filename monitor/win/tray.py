@@ -5,6 +5,7 @@
 """Windows 托盘、配置窗口、开机自启和后台进程管理。"""
 
 import ctypes
+import json
 import os
 import queue
 import subprocess
@@ -88,6 +89,28 @@ class WindowsTrayApplication:
         if not self.stopping.is_set():
             self._start_worker()
 
+    def _apply_display_settings(self):
+        """向运行中的 Monitor 下发显示配置，避免重启后台进程。"""
+        process = self.worker_process
+        if process is None or process.poll() is not None or process.stdin is None:
+            return False
+        payload = {
+            "lcd_style": self.settings["lcd_style"],
+            "screen_rotation": self.settings["screen_rotation"],
+            "lcd_brightness": self.settings["lcd_brightness"],
+            "network_unit": self.settings["network_unit"],
+        }
+        try:
+            process.stdin.write(
+                "DISPLAY_CONFIG:{}\n".format(
+                    json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+                )
+            )
+            process.stdin.flush()
+            return True
+        except (BrokenPipeError, OSError):
+            return False
+
     def _collect_output(self):
         process = self.worker_process
         with self.log_path.open("a", encoding="utf-8", newline="") as log_file:
@@ -140,7 +163,7 @@ class WindowsTrayApplication:
             del item
             self.settings["lcd_style"] = style
             self.settings_store.save(self.settings)
-            self._restart_worker()
+            self._apply_display_settings()
             icon.update_menu()
             icon.notify("已切换为{}".format(STYLE_NAMES[style]), APPLICATION_NAME)
         return select
@@ -173,6 +196,16 @@ class WindowsTrayApplication:
 
     def _run_settings_window(self):
         """使用原生控件绘制接近 Element Plus 的分组配置对话框。"""
+        python_root = Path(sys.base_prefix)
+        tcl_dir = python_root / "tcl" / "tcl8.6"
+        tk_dir = python_root / "tcl" / "tk8.6"
+
+        if (tcl_dir / "init.tcl").exists():
+            os.environ["TCL_LIBRARY"] = str(tcl_dir)
+
+        if (tk_dir / "tk.tcl").exists():
+            os.environ["TK_LIBRARY"] = str(tk_dir)
+
         import tkinter as tk
         from tkinter import messagebox, ttk
 
@@ -205,6 +238,7 @@ class WindowsTrayApplication:
         style.configure("Card.TLabelframe.Label", font=("Microsoft YaHei UI", 11, "bold"), foreground="#303133", background="#ffffff")
         style.configure("Card.TLabel", foreground="#606266", background="#ffffff")
         style.configure("Primary.TButton", foreground="#ffffff", background="#409eff", padding=(18, 8))
+        style.configure("Footer.TButton", foreground="#303133", padding=(18, 8))
 
         root.rowconfigure(0, weight=1)
         root.columnconfigure(0, weight=1)
@@ -238,7 +272,7 @@ class WindowsTrayApplication:
         root.bind("<MouseWheel>", scroll_with_mouse)
 
         ttk.Label(body, text="配置", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(body, text="保存后监控服务会自动重启并应用新设置", style="Hint.TLabel").pack(anchor="w", pady=(2, 18))
+        ttk.Label(body, text="显示设置可即时应用，其他配置保存后会重启监控服务", style="Hint.TLabel").pack(anchor="w", pady=(2, 18))
 
         variables = {
             "port": tk.StringVar(value=self.settings["port"]),
@@ -246,6 +280,7 @@ class WindowsTrayApplication:
             "interval": tk.StringVar(value=self.settings["interval"]),
             "reconnect_interval": tk.StringVar(value=self.settings["reconnect_interval"]),
             "screen_rotation": tk.StringVar(value=str(self.settings["screen_rotation"])),
+            "lcd_brightness": tk.IntVar(value=self.settings["lcd_brightness"]),
             "network_unit": tk.StringVar(value=self.settings["network_unit"]),
             "lcd_style": tk.StringVar(value=style_label(self.settings["lcd_style"])),
             "qbittorrent_enabled": tk.BooleanVar(value=False),
@@ -269,7 +304,56 @@ class WindowsTrayApplication:
         styles = [style_label(name) for name in STYLE_NAMES]
         field(display, 0, "界面样式", ttk.Combobox(display, textvariable=variables["lcd_style"], values=styles, state="readonly"))
         field(display, 1, "屏幕旋转", ttk.Combobox(display, textvariable=variables["screen_rotation"], values=("0", "180"), state="readonly"))
-        field(display, 2, "网络速率单位", ttk.Combobox(display, textvariable=variables["network_unit"], values=("MB", "Mbps"), state="readonly"))
+        brightness_control = ttk.Frame(display)
+        brightness_control.columnconfigure(0, weight=1)
+        brightness_slider = tk.Scale(
+            brightness_control,
+            variable=variables["lcd_brightness"],
+            from_=1,
+            to=100,
+            orient="horizontal",
+            showvalue=True,
+            resolution=1,
+            bg="#ffffff",
+            highlightthickness=0,
+        )
+        brightness_slider.grid(row=0, column=0, sticky="ew")
+        field(display, 2, "背光亮度（1-100%）", brightness_control)
+        field(display, 3, "网络速率单位", ttk.Combobox(display, textvariable=variables["network_unit"], values=("MB", "Mbps"), state="readonly"))
+
+        def save_display_settings():
+            """保存显示设置并通知运行中的 Monitor 在下一帧应用。"""
+            try:
+                selected_style = next(
+                    name for name in STYLE_NAMES
+                    if style_label(name) == variables["lcd_style"].get()
+                )
+                brightness = int(variables["lcd_brightness"].get())
+                if not 1 <= brightness <= 100:
+                    raise ValueError
+            except (ValueError, StopIteration):
+                messagebox.showerror("配置错误", "背光亮度必须为 1 至 100。", parent=root)
+                return
+            self.settings.update({
+                "lcd_style": selected_style,
+                "screen_rotation": int(variables["screen_rotation"].get()),
+                "lcd_brightness": brightness,
+                "network_unit": variables["network_unit"].get(),
+            })
+            self.settings_store.save(self.settings)
+            if not self._apply_display_settings():
+                messagebox.showerror("应用失败", "Monitor 未运行，显示设置暂未应用。", parent=root)
+                return
+            if self.icon is not None:
+                self.icon.update_menu()
+                self.icon.notify("显示设置已保存并即时应用", APPLICATION_NAME)
+
+        ttk.Button(
+            display,
+            text="保存并应用",
+            command=save_display_settings,
+            width=14,
+        ).grid(row=4, column=1, sticky="e", pady=(10, 0))
 
         monitor = card("监控连接")
         port_control = ttk.Frame(monitor)
@@ -311,7 +395,7 @@ class WindowsTrayApplication:
 
         verified_qbittorrent_credentials = [None]
         verification_results = queue.Queue()
-        verification_button = ttk.Button(qb, text="验证账号密码")
+        verification_button = ttk.Button(qb, text="验证账号密码", width=14)
         verification_button.grid(row=5, column=1, sticky="e", pady=(6, 0))
 
         def current_qbittorrent_credentials():
@@ -379,6 +463,7 @@ class WindowsTrayApplication:
                     "interval": float(variables["interval"].get()),
                     "reconnect_interval": float(variables["reconnect_interval"].get()),
                     "screen_rotation": int(variables["screen_rotation"].get()),
+                    "lcd_brightness": int(variables["lcd_brightness"].get()),
                     "network_unit": variables["network_unit"].get(),
                     "lcd_style": selected_style,
                     "qbittorrent_enabled": variables["qbittorrent_enabled"].get(),
@@ -387,7 +472,9 @@ class WindowsTrayApplication:
                     "qbittorrent_password": variables["qbittorrent_password"].get(),
                     "qbittorrent_interval": float(variables["qbittorrent_interval"].get()),
                 }
-                if not updated["ping_target"] or min(updated["interval"], updated["reconnect_interval"], updated["qbittorrent_interval"]) <= 0:
+                if (not updated["ping_target"]
+                        or min(updated["interval"], updated["reconnect_interval"], updated["qbittorrent_interval"]) <= 0
+                        or not 1 <= updated["lcd_brightness"] <= 100):
                     raise ValueError
                 if updated["qbittorrent_enabled"] and not all((updated["qbittorrent_address"], updated["qbittorrent_username"], updated["qbittorrent_password"])):
                     messagebox.showerror("配置错误", "启用 qBittorrent 后，请填写地址、用户名和密码。", parent=root)
@@ -408,8 +495,20 @@ class WindowsTrayApplication:
 
         buttons = ttk.Frame(root, padding=(24, 12))
         buttons.grid(row=1, column=0, sticky="ew")
-        ttk.Button(buttons, text="取消", command=root.destroy).pack(side="right")
-        ttk.Button(buttons, text="保存配置", command=save, style="Primary.TButton").pack(side="right", padx=(0, 10))
+        ttk.Button(
+            buttons,
+            text="取消",
+            command=root.destroy,
+            width=12,
+            style="Footer.TButton",
+        ).pack(side="right")
+        ttk.Button(
+            buttons,
+            text="保存配置",
+            command=save,
+            width=12,
+            style="Footer.TButton",
+        ).pack(side="right", padx=(0, 10))
 
         def closed():
             root.destroy()
@@ -463,7 +562,7 @@ class WindowsTrayApplication:
             del item
             self.settings["screen_rotation"] = rotation
             self.settings_store.save(self.settings)
-            self._restart_worker()
+            self._apply_display_settings()
             icon.update_menu()
         return select
 

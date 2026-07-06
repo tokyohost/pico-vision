@@ -40,14 +40,41 @@ class WindowsTraySettingsTest(unittest.TestCase):
             self.assertNotEqual(STYLE_NAMES[name], name)
             self.assertIn(name, style_label(name))
 
+    def test_display_settings_are_sent_without_restarting_worker(self):
+        """确认显示配置通过标准输入热更新，不重启 Monitor。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.settings = dict(
+            DEFAULT_SETTINGS,
+            lcd_style="simple",
+            screen_rotation=180,
+            lcd_brightness=35,
+            network_unit="Mbps",
+        )
+        application.worker_process = mock.Mock()
+        application.worker_process.poll.return_value = None
+
+        self.assertTrue(application._apply_display_settings())
+
+        written = application.worker_process.stdin.write.call_args.args[0]
+        self.assertTrue(written.startswith("DISPLAY_CONFIG:"))
+        payload = json.loads(written.removeprefix("DISPLAY_CONFIG:"))
+        self.assertEqual(payload["lcd_brightness"], 35)
+        application.worker_process.stdin.flush.assert_called_once_with()
+
     def test_managed_arguments_are_replaced_without_losing_worker_flag(self):
-        settings = dict(DEFAULT_SETTINGS, lcd_style="simple", screen_rotation=180)
+        settings = dict(
+            DEFAULT_SETTINGS,
+            lcd_style="simple",
+            screen_rotation=180,
+            lcd_brightness=35,
+        )
         result = apply_worker_arguments(
             ["--lcd-style", "default", "--screen-rotation", "0", "--worker"],
             settings,
         )
         self.assertEqual(result.count("--lcd-style"), 1)
         self.assertEqual(result[result.index("--lcd-style") + 1], "simple")
+        self.assertEqual(result[result.index("--lcd-brightness") + 1], "35")
         self.assertIn("--worker", result)
 
     def test_first_run_imports_existing_arguments(self):

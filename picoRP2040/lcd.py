@@ -14,7 +14,7 @@
 """封装 ST7789 LCD 的硬件初始化和整帧输出。"""
 
 
-from machine import Pin, SPI
+from machine import Pin, PWM, SPI
 import struct
 import time
 
@@ -44,10 +44,13 @@ class LcdDevice:
         self.rst = Pin(PIN_RST, Pin.OUT, value=1)
         # Keep the backlight dark until the controller RAM has been cleared.
         # Otherwise the panel briefly exposes uninitialised GRAM as snow.
-        self.bl = Pin(PIN_BL, Pin.OUT, value=0)
+        self.bl = PWM(Pin(PIN_BL, Pin.OUT, value=0))
+        self.bl.freq(1000)
+        self.bl.duty_u16(0)
+        self._backlight_brightness = 100
         self.spi = SPI(
             0,
-            baudrate=62_500_000,
+            baudrate=40_000_000,
             polarity=0,
             phase=0,
             sck=Pin(PIN_SCK),
@@ -107,7 +110,20 @@ class LcdDevice:
         self.command(0x29)
         time.sleep_ms(100)
         self._clear_before_first_light()
-        self.bl.value(1)
+        self.set_backlight_brightness(self._backlight_brightness)
+
+    def set_backlight_brightness(self, brightness):
+        """将 LCD 背光亮度设置为一至一百的百分比。"""
+        normalized = max(1, min(100, int(brightness)))
+        if normalized == self._backlight_brightness and self.bl.duty_u16():
+            return False
+        self._backlight_brightness = normalized
+        self.bl.duty_u16(round(65535 * normalized / 100))
+        return True
+
+    def backlight_brightness(self):
+        """返回当前 LCD 背光亮度百分比。"""
+        return self._backlight_brightness
 
     def _clear_before_first_light(self):
         """Fill controller memory with black before enabling the backlight."""

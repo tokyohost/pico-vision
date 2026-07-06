@@ -32,6 +32,11 @@ class SnapshotCache:
         """返回最新快照和版本号。"""
         return self.snapshot, self.version
 
+    def clear(self):
+        """清除失效快照并递增版本号。"""
+        self.snapshot = None
+        self.version += 1
+
 
 class DataReceiver:
     """在主循环中轮询协议，不创建 RP2040 第二核心线程。"""
@@ -54,3 +59,7 @@ class DataReceiver:
     def is_busy(self):
         """返回协议层是否仍在接收一条未完成的数据包。"""
         return self._protocol.is_busy()
+
+    def replace_protocol(self, protocol):
+        """在 USB CDC 重新注册后切换到新的协议实例。"""
+        self._protocol = protocol

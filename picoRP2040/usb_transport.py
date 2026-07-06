@@ -10,8 +10,11 @@ from config import (
 )
 
 
-def create_data_cdc(timeout_ms=USB_CDC_ENUMERATION_TIMEOUT_MS):
-    """Keep the built-in REPL CDC and add a buffered application CDC port."""
+def create_data_cdc(
+    timeout_ms=USB_CDC_ENUMERATION_TIMEOUT_MS,
+    wait_for_open=True,
+):
+    """注册应用数据 CDC，并可选择是否等待主机打开端口。"""
     try:
         import usb.device
         from usb.device.cdc import CDCInterface
@@ -30,10 +33,11 @@ def create_data_cdc(timeout_ms=USB_CDC_ENUMERATION_TIMEOUT_MS):
         product_str="Pico Vision REPL + Data",
     )
 
-    deadline = time.ticks_add(time.ticks_ms(), timeout_ms)
-    while not cdc.is_open():
-        if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
-            raise RuntimeError("USB_DATA_CDC_ENUMERATION_TIMEOUT")
-        time.sleep_ms(20)
+    if wait_for_open:
+        deadline = time.ticks_add(time.ticks_ms(), timeout_ms)
+        while not cdc.is_open():
+            if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
+                raise RuntimeError("USB_DATA_CDC_ENUMERATION_TIMEOUT")
+            time.sleep_ms(20)
     gc.collect()
     return cdc
