@@ -25,6 +25,8 @@ class DiskStyle:
     """封装磁盘主视图的布局、格式化和增量绘制规则。"""
 
     name = "disk"
+    zh_name = "磁盘概览"
+    type = "builtin"
     font_name = "native"
 
     def __init__(self):

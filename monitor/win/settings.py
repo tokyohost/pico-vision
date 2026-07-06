@@ -17,6 +17,10 @@ STYLE_NAMES = {
     "horizontal_disk6x": "六盘均衡版",
     "simple": "三盘简洁版",
 }
+DEFAULT_STYLE_CATALOG = [
+    {"name": name, "chinese_name": chinese_name, "type": "builtin"}
+    for name, chinese_name in STYLE_NAMES.items()
+]
 DEFAULT_SETTINGS = {
     "port": "",
     "ping_target": "www.baidu.com",
@@ -26,6 +30,7 @@ DEFAULT_SETTINGS = {
     "lcd_brightness": 100,
     "network_unit": "MB",
     "lcd_style": "horizontal_disk6x",
+    "styles": DEFAULT_STYLE_CATALOG,
     "qbittorrent_enabled": False,
     "qbittorrent_address": "",
     "qbittorrent_username": "",
@@ -48,14 +53,44 @@ ARGUMENT_NAMES = {
 }
 
 
-def style_label(style):
-    return "{}（{}）".format(STYLE_NAMES.get(style, style), style)
+def style_names(settings=None):
+    """从配置中的样式清单构建名称到中文名称的映射。"""
+    catalog = (settings or {}).get("styles", DEFAULT_STYLE_CATALOG)
+    return {
+        item["name"]: item["chinese_name"]
+        for item in catalog
+        if isinstance(item, dict) and item.get("name") and item.get("chinese_name")
+    } or dict(STYLE_NAMES)
+
+
+def style_label(style, settings=None):
+    """返回包含中文名称和程序名称的样式显示文本。"""
+    names = style_names(settings)
+    return "{}（{}）".format(names.get(style, style), style)
+
+
+def normalize_style_catalog(catalog):
+    """校验 Pico 下发的样式清单并去除重复项目。"""
+    normalized = []
+    seen = set()
+    for item in catalog if isinstance(catalog, list) else ():
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        chinese_name = str(item.get("chinese_name") or "").strip()
+        style_type = item.get("type")
+        if not name or not chinese_name or name in seen or style_type not in ("builtin", "custom"):
+            continue
+        normalized.append({"name": name, "chinese_name": chinese_name, "type": style_type})
+        seen.add(name)
+    return normalized
 
 
 class TraySettingsStore:
     """在当前用户目录持久化托盘配置。"""
 
     def __init__(self, path):
+        """绑定一个 JSON 配置文件路径。"""
         self.path = Path(path)
 
     def load(self):
@@ -66,7 +101,8 @@ class TraySettingsStore:
                 settings.update({key: payload[key] for key in settings if key in payload})
         except (OSError, ValueError, TypeError):
             pass
-        if settings["lcd_style"] not in STYLE_NAMES:
+        settings["styles"] = normalize_style_catalog(settings.get("styles")) or list(DEFAULT_STYLE_CATALOG)
+        if settings["lcd_style"] not in style_names(settings):
             settings["lcd_style"] = DEFAULT_SETTINGS["lcd_style"]
         try:
             settings["lcd_brightness"] = int(settings["lcd_brightness"])
@@ -77,6 +113,7 @@ class TraySettingsStore:
         return settings
 
     def save(self, settings):
+        """以无 BOM 的 UTF-8 JSON 原子保存配置。"""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(".tmp")
         temporary.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")

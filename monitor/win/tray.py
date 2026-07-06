@@ -18,11 +18,11 @@ from qbittorrent_monitor import QbittorrentApiClient
 
 from .settings import (
     DEFAULT_SETTINGS,
-    STYLE_NAMES,
     TraySettingsStore,
     apply_worker_arguments,
     settings_from_arguments,
     style_label,
+    style_names,
 )
 
 APPLICATION_NAME = "Pico 系统监控"
@@ -67,6 +67,7 @@ class WindowsTrayApplication:
     def _start_worker(self):
         environment = os.environ.copy()
         environment.update({"PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"})
+        environment["PICO_MONITOR_SETTINGS_PATH"] = str(self.settings_store.path)
         self.worker_process = subprocess.Popen(
             self._worker_command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
@@ -117,6 +118,11 @@ class WindowsTrayApplication:
             for line in process.stdout:
                 log_file.write(line)
                 log_file.flush()
+                if "STYLE_CATALOG_UPDATED" in line:
+                    self.settings = self.settings_store.load()
+                    if self.icon is not None:
+                        self.icon.menu = self._build_menu()
+                        self.icon.update_menu()
         return_code = process.wait()
         if not self.stopping.is_set() and process is self.worker_process and self.icon is not None:
             self.icon.notify("后台监控已退出，返回码：{}".format(return_code), APPLICATION_NAME)
@@ -165,7 +171,7 @@ class WindowsTrayApplication:
             self.settings_store.save(self.settings)
             self._apply_display_settings()
             icon.update_menu()
-            icon.notify("已切换为{}".format(STYLE_NAMES[style]), APPLICATION_NAME)
+            icon.notify("已切换为{}".format(style_names(self.settings)[style]), APPLICATION_NAME)
         return select
 
     def _style_checked(self, style):
@@ -282,7 +288,9 @@ class WindowsTrayApplication:
             "screen_rotation": tk.StringVar(value=str(self.settings["screen_rotation"])),
             "lcd_brightness": tk.IntVar(value=self.settings["lcd_brightness"]),
             "network_unit": tk.StringVar(value=self.settings["network_unit"]),
-            "lcd_style": tk.StringVar(value=style_label(self.settings["lcd_style"])),
+            "lcd_style": tk.StringVar(
+                value=style_label(self.settings["lcd_style"], self.settings)
+            ),
             "qbittorrent_enabled": tk.BooleanVar(value=False),
             "qbittorrent_address": tk.StringVar(value=self.settings["qbittorrent_address"]),
             "qbittorrent_username": tk.StringVar(value=self.settings["qbittorrent_username"]),
@@ -301,7 +309,7 @@ class WindowsTrayApplication:
             widget.grid(row=row, column=1, sticky="ew", pady=6)
 
         display = card("显示设置")
-        styles = [style_label(name) for name in STYLE_NAMES]
+        styles = [style_label(name, self.settings) for name in style_names(self.settings)]
         field(display, 0, "界面样式", ttk.Combobox(display, textvariable=variables["lcd_style"], values=styles, state="readonly"))
         field(display, 1, "屏幕旋转", ttk.Combobox(display, textvariable=variables["screen_rotation"], values=("0", "180"), state="readonly"))
         brightness_control = ttk.Frame(display)
@@ -325,8 +333,8 @@ class WindowsTrayApplication:
             """保存显示设置并通知运行中的 Monitor 在下一帧应用。"""
             try:
                 selected_style = next(
-                    name for name in STYLE_NAMES
-                    if style_label(name) == variables["lcd_style"].get()
+                    name for name in style_names(self.settings)
+                    if style_label(name, self.settings) == variables["lcd_style"].get()
                 )
                 brightness = int(variables["lcd_brightness"].get())
                 if not 1 <= brightness <= 100:
@@ -456,7 +464,7 @@ class WindowsTrayApplication:
 
         def save():
             try:
-                selected_style = next(name for name in STYLE_NAMES if style_label(name) == variables["lcd_style"].get())
+                selected_style = next(name for name in style_names(self.settings) if style_label(name, self.settings) == variables["lcd_style"].get())
                 updated = {
                     "port": variables["port"].get().strip(),
                     "ping_target": variables["ping_target"].get().strip(),
@@ -541,8 +549,8 @@ class WindowsTrayApplication:
         import pystray
 
         style_menu = pystray.Menu(*(
-            pystray.MenuItem(style_label(name), self._select_style(name), checked=self._style_checked(name), radio=True)
-            for name in STYLE_NAMES
+            pystray.MenuItem(style_label(name, self.settings), self._select_style(name), checked=self._style_checked(name), radio=True)
+            for name in style_names(self.settings)
         ))
         return pystray.Menu(
             pystray.MenuItem("配置...", self._show_settings, default=True),

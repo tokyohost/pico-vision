@@ -17,6 +17,8 @@ class SimpleStyle(HorizontalDiskStyle):
     """绘制最多三块磁盘并使用渐变面积折线图的简洁横屏样式。"""
 
     name = "simple"
+    zh_name = "三盘简洁版"
+    type = "builtin"
     font_name = "screen_2inch_compact"
 
     @staticmethod

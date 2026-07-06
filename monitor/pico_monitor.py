@@ -92,7 +92,7 @@ def create_argument_parser():
     parser.add_argument("--screen-rotation", type=int, choices=(0, 180), default=int(os.getenv("PICO_MONITOR_SCREEN_ROTATION", "0")), help="Pico 屏幕旋转角度，可选 0 或 180")
     parser.add_argument("--lcd-brightness", type=int, choices=range(1, 101), default=int(os.getenv("PICO_MONITOR_LCD_BRIGHTNESS", "50")), help="Pico LCD 背光亮度百分比，范围为 1 至 100")
     parser.add_argument("--network-unit", choices=("MB", "Mbps"), default=os.getenv("PICO_MONITOR_NETWORK_UNIT", "MB"), help="网络速率模式：MB 自动使用 B/KB/MB/GB，Mbps 自动使用 bps/Kbps/Mbps/Gbps")
-    parser.add_argument("--lcd-style", choices=BUILTIN_LCD_STYLES, default=os.getenv("PICO_MONITOR_LCD_STYLE", "horizontal_disk6x"), help="Pico LCD 内置界面样式")
+    parser.add_argument("--lcd-style", default=os.getenv("PICO_MONITOR_LCD_STYLE", "horizontal_disk6x"), help="Pico LCD 界面样式名称")
     qbittorrent_group = parser.add_mutually_exclusive_group()
     qbittorrent_group.add_argument("--qbittorrent-enabled", dest="qbittorrent_enabled", action="store_true", help="开启 qBittorrent 指标采集")
     qbittorrent_group.add_argument("--no-qbittorrent", dest="qbittorrent_enabled", action="store_false", help="关闭 qBittorrent 指标采集")
@@ -140,6 +140,34 @@ class MonitorService:
         self.client = PicoJsonClient(arguments.port)
         self.stopping = threading.Event()
         self.reboot_requested = threading.Event()
+        self.available_styles = set(BUILTIN_LCD_STYLES)
+
+    def _synchronize_style_catalog(self):
+        """接收 Pico 样式清单并更新 monitor 的 JSON 配置文件。"""
+        catalog = getattr(self.client, "styles", None) or []
+        if not catalog:
+            return
+        names = {
+            item.get("name") for item in catalog
+            if isinstance(item, dict) and item.get("name")
+        }
+        if not names:
+            return
+        self.available_styles = names
+        settings_path = os.getenv("PICO_MONITOR_SETTINGS_PATH")
+        if settings_path:
+            from win.settings import TraySettingsStore, normalize_style_catalog
+
+            normalized = normalize_style_catalog(catalog)
+            if normalized:
+                store = TraySettingsStore(settings_path)
+                settings = store.load()
+                settings["styles"] = normalized
+                if settings["lcd_style"] not in names:
+                    settings["lcd_style"] = normalized[0]["name"]
+                    self.arguments.lcd_style = settings["lcd_style"]
+                store.save(settings)
+        LOGGER.info("STYLE_CATALOG_UPDATED：已同步 %d 个 Pico 样式", len(names))
 
     def request_reboot_and_stop(self):
         """让主循环退出，并在释放串口前请求 Pico 重启。"""
@@ -157,7 +185,7 @@ class MonitorService:
             raise ValueError("LCD 背光亮度必须为 1 至 100")
         if rotation not in (0, 180):
             raise ValueError("屏幕旋转角度仅支持 0 或 180")
-        if style not in BUILTIN_LCD_STYLES:
+        if style not in self.available_styles:
             raise ValueError("不支持的 LCD 样式")
         if network_unit not in ("MB", "Mbps"):
             raise ValueError("不支持的网络速率单位")
@@ -194,6 +222,7 @@ class MonitorService:
                             return self._run_development_loop()
                         raise
                     LOGGER.info("Pico LCD 已连接：%s", self.client.port_name)
+                    self._synchronize_style_catalog()
                 if self.arguments.upgrade_pico:
                     return self._upgrade_pico()
                 started = time.monotonic()
@@ -307,9 +336,16 @@ class MonitorService:
             return
         health = int(getattr(self.arguments, "disk_health_test_level", 3))
         physical_disks = snapshot.get("physical_disks") or snapshot.get("disks", ())
-        if disk_index > len(physical_disks):
-            LOGGER.warning("磁盘健康测试序号超出范围：index=%d，磁盘数量=%d", disk_index, len(physical_disks))
+        # 后台磁盘采集尚未完成时列表为空，此时不能判定测试序号配置错误。
+        if not physical_disks:
             return
+        if disk_index > len(physical_disks):
+            warning_key = (disk_index, len(physical_disks))
+            if getattr(self, "_disk_health_test_warning_key", None) != warning_key:
+                LOGGER.warning("磁盘健康测试序号超出范围：index=%d，磁盘数量=%d", disk_index, len(physical_disks))
+                self._disk_health_test_warning_key = warning_key
+            return
+        self._disk_health_test_warning_key = None
         selected = physical_disks[disk_index - 1]
         selected["health"] = health
         selected_name = selected.get("name")

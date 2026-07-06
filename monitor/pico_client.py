@@ -106,6 +106,7 @@ class PicoJsonClient:
         self.board_model = None
         self.screen_color_profile = None
         self.firmware_version = None
+        self.styles = []
 
     @property
     def is_connected(self):
@@ -167,6 +168,7 @@ class PicoJsonClient:
         self.board_model = None
         self.screen_color_profile = None
         self.firmware_version = None
+        self.styles = []
         for attempt in range(1, 4):
             LOGGER.info(
                 "[Monitor -> Pico][%s][握手 %d/3][PV1 %d 字节] repr=%r hex=%s",
@@ -215,6 +217,9 @@ class PicoJsonClient:
         self.board_model = information.get("board_model") or None
         self.screen_color_profile = information.get("screen_color_profile") or None
         self.firmware_version = information.get("firmware_version") or None
+        styles = information.get("styles")
+        if isinstance(styles, list):
+            self.styles = [item for item in styles if isinstance(item, dict)]
 
     def device_information(self):
         """返回当前已连接 Pico 的硬件配置与固件版本。"""

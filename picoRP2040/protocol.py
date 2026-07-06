@@ -69,6 +69,7 @@ from config import (
     SERIAL_READ_BUDGET,
     WIDTH,
 )
+import protocolC
 
 
 def _build_crc16_byte_table():
@@ -110,16 +111,45 @@ class JsonProtocol:
         self._command_registry = None
         self._last_message_ms = None
 
+    @staticmethod
+    def protocol_backend():
+        """返回当前 PV1 帧解析所使用的协议后端名称。"""
+        return "C" if protocolC.native_protocol_supported() else "PYTHON"
+
     def _write_raw(self, data):
         """向 USB 串口写入已编码 PV1 帧并立即刷新。"""
-        try:
-            self._output.write(data)
-        except TypeError:
-            self._output.write(data.decode("ascii"))
-        try:
-            self._output.flush()
-        except Exception:
-            pass
+        data = bytes(data)
+        offset = 0
+        while offset < len(data):
+            # 避免写满 64 字节 USB 端点后立即继续写入导致 CDC 暂时返回零。
+            remaining = data[offset:offset + 63]
+            try:
+                written = self._output.write(remaining)
+            except TypeError:
+                self._output.write(remaining.decode("utf-8"))
+                written = len(remaining)
+            # 部分流实现成功写入全部数据后返回 None，按完整写入处理。
+            if written is None:
+                written = len(remaining)
+            if written < 0:
+                raise OSError("SERIAL_WRITE_FAILED")
+            if written == 0:
+                # CDC 发送缓冲区已满属于临时背压，刷新并短暂让出执行时间后重试。
+                try:
+                    self._output.flush()
+                except Exception:
+                    pass
+                sleep_ms = getattr(time, "sleep_ms", None)
+                sleep_ms(2) if sleep_ms else time.sleep(0.002)
+                continue
+            offset += written
+            try:
+                self._output.flush()
+            except Exception:
+                pass
+            if offset < len(data):
+                sleep_ms = getattr(time, "sleep_ms", None)
+                sleep_ms(2) if sleep_ms else time.sleep(0.002)
 
     def write(self, data):
         """把应用诊断消息封装为 PV1 EVENT 帧。"""
@@ -290,6 +320,8 @@ class JsonProtocol:
 
     def _write_pong(self):
         """返回设备能力、硬件型号、屏幕方案及固件版本。"""
+        from styles.style_plugins import style_catalog
+
         payload = json.dumps({
             "board_model": BOARD_MODEL,
             "screen_color_profile": SCREEN_COLOR_PROFILE,
@@ -299,6 +331,7 @@ class JsonProtocol:
             "width": WIDTH,
             "height": HEIGHT,
             "pixel_format": PIXEL_FORMAT,
+            "styles": style_catalog(),
         }).encode("utf-8")
         self._write_frame("PONG", payload)
 
@@ -323,6 +356,14 @@ class JsonProtocol:
 
     @classmethod
     def _parse_frame(cls, line):
+        """优先使用固件原生模块解析 PV1 帧，不支持时回退 Python。"""
+        if protocolC.native_protocol_supported():
+            return protocolC.parse_frame_native(line, MAX_JSON_SIZE)
+        return cls._parse_frame_python(line)
+
+    @classmethod
+    def _parse_frame_python(cls, line):
+        """使用兼容旧 UF2 的纯 Python 路径校验并解析 PV1 帧。"""
         parts = bytes(line).split(b":", 4)
         if len(parts) != 5 or parts[0] != b"PV1":
             raise ValueError("BAD_FRAME_HEADER")

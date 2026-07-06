@@ -15,6 +15,7 @@
 
 
 import gc
+import os
 import sys
 
 
@@ -38,6 +39,10 @@ def create_style(name):
     if factory is None:
         raise ValueError("未找到 LCD 样式插件：{}".format(normalized_name))
     style = factory()
+    if not str(getattr(style, "zh_name", "")).strip():
+        raise TypeError("样式插件缺少中文名称：{}".format(normalized_name))
+    if getattr(style, "type", None) not in ("builtin", "custom"):
+        raise TypeError("样式插件类型必须为 builtin 或 custom：{}".format(normalized_name))
     for method_name in ("create_dirty_regions", "draw_visible", "draw_dirty"):
         if not callable(getattr(style, method_name, None)):
             raise TypeError("样式插件缺少方法：{}".format(method_name))
@@ -52,6 +57,60 @@ def normalize_style_name(name):
 def available_styles():
     """返回当前已经注册的样式名称元组。"""
     return tuple(sorted(_STYLE_FACTORIES))
+
+
+def style_catalog():
+    """从各样式类声明中读取名称、中文名称和类型。"""
+    directory = "/styles"
+    try:
+        filenames = os.listdir(directory)
+    except OSError:
+        directory = "styles"
+        try:
+            filenames = os.listdir(directory)
+        except OSError:
+            return ()
+    catalog = []
+    for filename in sorted(filenames):
+        if not filename.startswith("style_") or not filename.endswith(".py"):
+            continue
+        metadata = _read_style_metadata(directory + "/" + filename)
+        if metadata and metadata["name"] != "boot":
+            catalog.append(metadata)
+    return tuple(catalog)
+
+
+def _read_style_metadata(path):
+    """轻量读取样式类常量，避免握手阶段导入全部绘图模块。"""
+    values = {}
+    try:
+        try:
+            source = open(path, "r", encoding="utf-8")
+        except TypeError:
+            source = open(path, "r")
+        with source:
+            for line in source:
+                stripped = line.strip()
+                if "=" in stripped:
+                    attribute, value = stripped.split("=", 1)
+                    attribute = attribute.strip()
+                    value = value.strip()
+                    if attribute in ("name", "zh_name", "type"):
+                        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                            values[attribute] = value[1:-1]
+                if len(values) == 3:
+                    break
+    except OSError:
+        return None
+    if not all(values.get(attribute) for attribute in ("name", "zh_name", "type")):
+        return None
+    if values["type"] not in ("builtin", "custom"):
+        return None
+    return {
+        "name": _normalize_name(values["name"]),
+        "chinese_name": values["zh_name"],
+        "type": values["type"],
+    }
 
 
 def release_style(name):

@@ -254,7 +254,7 @@ class Application:
                     "VIEW={}US:BUFFER={}US:GC={}US:SCHEDULE={}US:"
                     "SLOWEST_REGION={}US:"
                     "REGIONS={}:MEMORY_USED={}:MEMORY_TOTAL={}:"
-                    "CANVAS_BACKEND={}\n"
+                    "CANVAS_BACKEND={}:PROTOCOL_BACKEND={}\n"
                 ).format(
                     self._rendering_version,
                     self._renderer.last_render_ms(),
@@ -269,6 +269,7 @@ class Application:
                     memory_used,
                     memory_total,
                     self._renderer.canvas_backend().upper(),
+                    self._protocol.protocol_backend(),
                 )
                 self._protocol.write(response.encode())
             time.sleep_ms(1)

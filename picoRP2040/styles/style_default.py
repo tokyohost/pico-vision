@@ -25,6 +25,8 @@ class DefaultStyle:
     """封装默认仪表盘的布局、配色和数据格式化规则。"""
 
     name = "default"
+    zh_name = "经典概览"
+    type = "builtin"
     font_name = "native"
 
     @staticmethod

@@ -1,15 +1,19 @@
-# Canvas 原生加速固件
+# 原生加速固件
 
 `fn_canvas` 是可选的 MicroPython 用户 C 模块。业务代码通过
 `canvas_backend.Canvas` 使用策略选择器：`canvasC.native_canvas_supported()` 会校验
 模块版本和完整方法集合；匹配时选择 C 适配器，不匹配或不存在时选择未经修改的
 `canvas.Canvas` Python/FrameBuffer 实现。
 
+`fn_protocol` 是可选的 PV1 帧解析与 CRC 原生模块。`protocolC.py` 会校验
+接口版本；匹配时使用 C 完成帧头、长度、填充及 CRC 校验，不匹配或不存在时自动
+回退到原有 Python 解析器。JSON 仍由固件自带的 `ujson` 解析。
+
 在 `micropython/ports/rp2` 目录构建 Raspberry Pi Pico UF2：
 
 ```sh
 make BOARD=RPI_PICO \
-  USER_C_MODULES=modules/fn_canvas/micropython.cmake
+  USER_C_MODULES="modules/fn_canvas/micropython.cmake;modules/fn_protocol/micropython.cmake"
 ```
 
 生成文件位于 `micropython/ports/rp2/build-RPI_PICO/firmware.uf2`。
@@ -21,6 +25,9 @@ from canvasC import native_canvas_supported
 from canvas_backend import canvas_backend_name
 
 print(native_canvas_supported(), canvas_backend_name())
+
+from protocolC import native_protocol_supported
+print(native_protocol_supported())
 ```
 
 返回 `True` 表示当前 UF2 已启用且接口版本兼容；返回 `False` 表示会自动回退。

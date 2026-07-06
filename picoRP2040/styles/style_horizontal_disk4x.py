@@ -29,6 +29,8 @@ class HorizontalDisk4xStyle:
     """封装每行双磁盘、最多显示四块磁盘的横向仪表盘绘制规则。"""
 
     name = "horizontal_disk4x"
+    zh_name = "四盘清晰版"
+    type = "builtin"
     width = 320
     height = 240
     landscape = True

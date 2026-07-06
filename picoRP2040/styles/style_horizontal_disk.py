@@ -29,6 +29,8 @@ class HorizontalDiskStyle:
     """封装三百二十乘二百四十横向磁盘统计仪表盘的绘制规则。"""
 
     name = "horizontal_disk"
+    zh_name = "九盘横屏版"
+    type = "builtin"
     width = 320
     height = 240
     landscape = True

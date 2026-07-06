@@ -53,6 +53,8 @@ class BootStyle:
     """Pixel-art splash screen shown until the first monitor snapshot arrives."""
 
     name = "boot"
+    zh_name = "系统启动页"
+    type = "builtin"
     font_name = "native"
     width = 320
     height = 240

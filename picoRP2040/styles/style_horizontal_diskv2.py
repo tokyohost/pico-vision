@@ -14,6 +14,8 @@ class HorizontalDiskV2Style(HorizontalDiskStyle):
     """继承原横向磁盘布局，并使用二寸屏紧凑点阵字体。"""
 
     name = "horizontal_diskv2"
+    zh_name = "九盘紧凑版"
+    type = "builtin"
     font_name = "screen_2inch_compact"
 
 

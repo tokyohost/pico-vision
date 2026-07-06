@@ -477,6 +477,32 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual([item["health"] for item in snapshot["physical_disks"]], [1, 4])
         self.assertEqual([item["health"] for item in snapshot["disks"]], [1, 4])
 
+    def test_disk_health_display_test_ignores_collection_not_ready(self):
+        """验证后台磁盘采集尚未完成时不会误报测试序号越界。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(
+            disk_health_test_index=2,
+            disk_health_test_level=4,
+        )
+
+        with self.assertNoLogs("pico-monitor", level="WARNING"):
+            service._apply_disk_health_test({"physical_disks": [], "disks": []})
+
+    def test_disk_health_display_test_warns_real_out_of_range_once(self):
+        """验证采集完成后的真实越界只记录一次警告，避免周期性刷屏。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(
+            disk_health_test_index=2,
+            disk_health_test_level=4,
+        )
+        snapshot = {"physical_disks": [{"name": "DISK0", "health": 1}]}
+
+        with self.assertLogs("pico-monitor", level="WARNING") as messages:
+            service._apply_disk_health_test(snapshot)
+            service._apply_disk_health_test(snapshot)
+
+        self.assertEqual(1, len(messages.output))
+
 
 class SystemCollectorTest(unittest.TestCase):
     """验证系统采集器输出 Pico 仪表盘需要的字段。"""

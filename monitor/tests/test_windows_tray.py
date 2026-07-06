@@ -15,6 +15,7 @@ from windows_tray import (
     apply_worker_arguments,
     settings_from_arguments,
     style_label,
+    style_names,
 )
 
 
@@ -94,6 +95,20 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertEqual(settings["lcd_style"], "simple")
         self.assertEqual(settings["ping_target"], DEFAULT_SETTINGS["ping_target"])
         self.assertNotIn("unknown", settings)
+
+    def test_store_persists_pico_style_catalog(self):
+        """确认 Pico 清单中的中文名称和样式类型能够持久化。"""
+        catalog = [
+            {"name": "custom_clock", "chinese_name": "自定义时钟", "type": "custom"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            store = TraySettingsStore(Path(directory) / "settings.json")
+            settings = dict(DEFAULT_SETTINGS, styles=catalog, lcd_style="custom_clock")
+            store.save(settings)
+            loaded = store.load()
+        self.assertEqual(loaded["styles"], catalog)
+        self.assertEqual(style_names(loaded), {"custom_clock": "自定义时钟"})
+        self.assertEqual(style_label("custom_clock", loaded), "自定义时钟（custom_clock）")
 
 
 if __name__ == "__main__":

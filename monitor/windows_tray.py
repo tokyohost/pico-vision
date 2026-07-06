@@ -8,10 +8,11 @@ from win import (
     apply_worker_arguments,
     settings_from_arguments,
     style_label,
+    style_names,
 )
 
 __all__ = (
     "DEFAULT_SETTINGS", "STYLE_NAMES", "TraySettingsStore",
     "WindowsTrayApplication", "apply_worker_arguments",
-    "settings_from_arguments", "style_label",
+    "settings_from_arguments", "style_label", "style_names",
 )

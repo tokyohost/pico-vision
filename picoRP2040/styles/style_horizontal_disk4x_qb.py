@@ -29,6 +29,8 @@ class HorizontalDisk4xQbStyle:
     """封装保留四磁盘布局并增加 qBittorrent 面板的横向绘制规则。"""
 
     name = "horizontal_disk4x_qb"
+    zh_name= "四盘下载版（qBittorrent）"
+    type= "builtin"
     width = 320
     height = 240
     landscape = True

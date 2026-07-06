@@ -20,6 +20,8 @@ class DiskV4Style:
     """按截图布局绘制顶部状态栏、侧边指标和十五块磁盘卡片。"""
 
     name = "diskv4"
+    zh_name = "十五盘趋势版"
+    type = "builtin"
     width = 320
     height = 240
     landscape = True
