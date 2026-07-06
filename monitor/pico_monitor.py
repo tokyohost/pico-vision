@@ -38,7 +38,7 @@ BUILTIN_LCD_STYLES = (
     "default", "disk", "diskv2", "diskv3", "diskv4", "horizontal_disk",
     "horizontal_diskv2",
     "horizontal_disk4x",
-    "horizontal_disk4x_qb", "horizontal_disk6x", "simple",
+    "horizontal_disk4x_qb", "horizontal_disk6x", "simple", "fpstest",
 )
 
 
@@ -92,7 +92,7 @@ def create_argument_parser():
     parser.add_argument("--screen-rotation", type=int, choices=(0, 180), default=int(os.getenv("PICO_MONITOR_SCREEN_ROTATION", "0")), help="Pico 屏幕旋转角度，可选 0 或 180")
     parser.add_argument("--lcd-brightness", type=int, choices=range(1, 101), default=int(os.getenv("PICO_MONITOR_LCD_BRIGHTNESS", "50")), help="Pico LCD 背光亮度百分比，范围为 1 至 100")
     parser.add_argument("--network-unit", choices=("MB", "Mbps"), default=os.getenv("PICO_MONITOR_NETWORK_UNIT", "MB"), help="网络速率模式：MB 自动使用 B/KB/MB/GB，Mbps 自动使用 bps/Kbps/Mbps/Gbps")
-    parser.add_argument("--lcd-style", default=os.getenv("PICO_MONITOR_LCD_STYLE", "horizontal_disk6x"), help="Pico LCD 界面样式名称")
+    parser.add_argument("--lcd-style", default=os.getenv("PICO_MONITOR_LCD_STYLE", "fpstest"), help="Pico LCD 界面样式名称")
     qbittorrent_group = parser.add_mutually_exclusive_group()
     qbittorrent_group.add_argument("--qbittorrent-enabled", dest="qbittorrent_enabled", action="store_true", help="开启 qBittorrent 指标采集")
     qbittorrent_group.add_argument("--no-qbittorrent", dest="qbittorrent_enabled", action="store_false", help="关闭 qBittorrent 指标采集")
@@ -437,6 +437,8 @@ def main():
         and getattr(sys, "frozen", False)
         and not arguments.worker
         and not arguments.pico_info
+        and not arguments.upgrade_pico
+        and not arguments.update
     ):
         from windows_tray import WindowsTrayApplication
 

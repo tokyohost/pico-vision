@@ -8,7 +8,7 @@ except ImportError:
     _native_canvas = None
 
 
-NATIVE_CANVAS_API_VERSION = 6
+NATIVE_CANVAS_API_VERSION = 7
 NATIVE_CANVAS_METHODS = (
     "clear", "pixel", "fill_rect", "line", "fill_polygon", "draw_columns",
     "draw_rect", "draw_grid", "draw_polyline", "draw_line_chart",
@@ -149,11 +149,12 @@ class CanvasC(PythonCanvas):
             x, y, width, height, step_x, step_y, color,
         )
 
-    def draw_rect(self, x, y, width, height, color):
-        """通过单次 C 调用绘制一像素矩形边框。"""
+    def draw_rect(self, x, y, width, height, color, thickness=1):
+        """通过单次 C 调用绘制指定像素粗细的矩形边框。"""
         _native_canvas.draw_rect(
             self.buffer, self.width, self.height,
-            self.origin_x, self.origin_y, x, y, width, height, color,
+            self.origin_x, self.origin_y,
+            x, y, width, height, color, thickness,
         )
 
     def draw_polyline(self, points, color):

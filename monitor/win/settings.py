@@ -37,6 +37,7 @@ DEFAULT_SETTINGS = {
     "qbittorrent_username": "",
     "qbittorrent_password": "",
     "qbittorrent_interval": 2.0,
+    "update_url": "",
 }
 ARGUMENT_NAMES = {
     "--port": "port",

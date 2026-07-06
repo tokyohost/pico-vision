@@ -17,6 +17,7 @@ from windows_tray import (
     style_label,
     style_names,
 )
+from win.tray import APPLICATION_NAME
 
 
 class WindowsTraySettingsTest(unittest.TestCase):
@@ -79,6 +80,20 @@ class WindowsTraySettingsTest(unittest.TestCase):
         thread_class.return_value.start.assert_called_once_with()
         self.assertTrue(application.settings_window_restore_requested.is_set())
         icon.notify.assert_not_called()
+
+    @mock.patch("win.tray.threading.Thread")
+    def test_about_window_can_only_be_opened_once(self, thread_class):
+        """确认关于应用窗口不能被重复创建。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.about_window_lock = threading.Lock()
+        application.about_window_open = False
+
+        application._show_about()
+        application._show_about()
+
+        thread_class.assert_called_once()
+        thread_class.return_value.start.assert_called_once_with()
+        self.assertTrue(application.about_window_open)
 
     def test_every_style_has_a_chinese_label(self):
         for name in STYLE_NAMES:
@@ -146,7 +161,7 @@ class WindowsTraySettingsTest(unittest.TestCase):
         application.settings_store.save.assert_called_once_with(application.settings)
         application._restart_worker.assert_called_once_with()
         icon.update_menu.assert_called_once_with()
-        icon.notify.assert_called_once_with("开发模式已开启", "Pico 系统监控")
+        icon.notify.assert_called_once_with("开发模式已开启", APPLICATION_NAME)
 
     def test_windows_exit_stops_monitor_without_rebooting_pico(self):
         """确认退出 Windows Monitor 时不会向 Pico 发送重启指令。"""
@@ -163,6 +178,68 @@ class WindowsTraySettingsTest(unittest.TestCase):
         application._stop_worker.assert_called_once_with()
         application.worker_process.stdin.write.assert_not_called()
         icon.stop.assert_called_once_with()
+
+    @mock.patch("win.tray.threading.Thread")
+    def test_check_update_starts_only_one_background_task(self, thread_class):
+        """确认连续点击检查更新时只启动一个后台任务。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.update_lock = threading.Lock()
+        application.settings = dict(DEFAULT_SETTINGS)
+        application.settings_store = mock.Mock()
+        application._ask_update_url = mock.Mock(return_value="https://updates.example/latest")
+        icon = mock.Mock()
+
+        application._check_for_updates(icon)
+        application._check_for_updates(icon)
+
+        thread_class.assert_called_once()
+        thread_class.return_value.start.assert_called_once_with()
+        icon.notify.assert_called_once_with("更新任务正在执行，请稍候", APPLICATION_NAME)
+
+    def test_cancel_update_dialog_releases_task_lock(self):
+        """确认关闭更新地址窗口后可以再次执行检查。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.update_lock = threading.Lock()
+        application.update_lock.acquire()
+        application._ask_update_url = mock.Mock(return_value=None)
+        icon = mock.Mock()
+
+        application._prompt_and_perform_update(icon)
+
+        self.assertTrue(application.update_lock.acquire(blocking=False))
+
+    def test_confirm_update_dialog_passes_address_to_updater(self):
+        """确认地址窗口确定后保存配置并进入更新流程。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.update_lock = threading.Lock()
+        application.update_lock.acquire()
+        application.settings = dict(DEFAULT_SETTINGS)
+        application.settings_store = mock.Mock()
+        application._ask_update_url = mock.Mock(return_value="https://updates.example/latest")
+        application._perform_update = mock.Mock()
+        icon = mock.Mock()
+
+        application._prompt_and_perform_update(icon)
+
+        application.settings_store.save.assert_called_once_with(application.settings)
+        application._perform_update.assert_called_once_with(icon, "https://updates.example/latest")
+
+    def test_empty_update_address_uses_default(self):
+        """确认更新地址留空时使用正式构建内置的默认地址。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.settings = dict(DEFAULT_SETTINGS, update_url="")
+        updater = mock.Mock()
+        updater.default_update_url.return_value = "https://updates.example/default"
+
+        application._show_update_url_input = mock.Mock(return_value="")
+        with mock.patch("win.tray.WindowsReleaseUpdater", return_value=updater), mock.patch(
+            "tkinter.Tk"
+        ) as tk_class:
+            self.assertEqual(
+                "https://updates.example/default",
+                application._ask_update_url(),
+            )
+        tk_class.return_value.destroy.assert_called_once_with()
 
     def test_first_run_imports_existing_arguments(self):
         settings = settings_from_arguments([

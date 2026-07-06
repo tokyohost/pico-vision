@@ -80,7 +80,7 @@ qBittorrent 也可通过环境变量 `PICO_MONITOR_QBITTORRENT_ENABLED`、`PICO_
 build-exe.bat
 ```
 
-输出文件为 `dist\pico-monitor.exe`。双击后驻留系统托盘，运行日志位于 `%LOCALAPPDATA%\PicoMonitor\pico-monitor.log`。右键托盘图标选择“日志导出”，可导出最近 1 MB 日志并打开导出文件目录；勾选“Dev 模式”会保存配置并重启后台监控，使开发模式立即生效。
+输出文件为 `dist\pico-monitor.exe`。双击后驻留系统托盘，运行日志位于 `%LOCALAPPDATA%\PicoMonitor\pico-monitor.log`。右键托盘图标选择“日志导出”，可导出最近 1 MB 日志并打开导出文件目录；勾选“Dev 模式”会保存配置并重启后台监控，使开发模式立即生效。选择“检查更新”可在弹窗中确认或修改更新地址，程序会先更新 Pico 固件，再替换 Monitor 程序并自动重启。
 
 日志使用 `[Monitor -> Pico]` 和 `[Pico -> Monitor]` 标识通信方向。Linux 服务可通过 `journalctl -u pico-monitor -f` 实时查看相同内容。
 
