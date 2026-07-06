@@ -42,6 +42,7 @@ class FakeFrameBuffer:
     def fill_rect(self, x, y, width, height, color):
         """接收字形像素块填充操作。"""
         del x, y, width, height, color
+        FakeFrameBufferModule.rectangle_calls += 1
 
     def blit(self, source, x, y, transparent=-1, palette=None):
         """Accept cached glyph and whole-string bitmap copies."""
@@ -72,6 +73,7 @@ class FakeFrameBufferModule:
     MONO_HLSB = 2
     FrameBuffer = FakeFrameBuffer
     polygon_calls = 0
+    rectangle_calls = 0
 
 
 class CanvasGlyphCacheTest(unittest.TestCase):
@@ -118,18 +120,20 @@ class CanvasGlyphCacheTest(unittest.TestCase):
         finally:
             canvas_module.framebuf = original_framebuf
 
-    def test_filled_columns_group_same_color_into_polygon(self):
-        """A continuous same-color history segment should use one polygon."""
+    def test_filled_columns_cover_every_peak_and_valley(self):
+        """实心历史图应逐列填充，避免多边形在尖峰和深谷处漏画。"""
         original_framebuf = canvas_module.framebuf
         canvas_module.framebuf = FakeFrameBufferModule()
         FakeFrameBufferModule.polygon_calls = 0
+        FakeFrameBufferModule.rectangle_calls = 0
         try:
             drawing_canvas = canvas_module.Canvas(20, 20)
             drawing_canvas.draw_columns(
                 [(1, 5, 0xFFFF), (2, 4, 0xFFFF), (3, 6, 0xFFFF)],
                 bottom=10,
             )
-            self.assertEqual(FakeFrameBufferModule.polygon_calls, 1)
+            self.assertEqual(FakeFrameBufferModule.polygon_calls, 0)
+            self.assertEqual(FakeFrameBufferModule.rectangle_calls, 3)
         finally:
             canvas_module.framebuf = original_framebuf
 

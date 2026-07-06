@@ -24,6 +24,7 @@ if str(PICO_SOURCE) not in sys.path:
     sys.path.insert(0, str(PICO_SOURCE))
 
 from config import BLUE, GRAY, RED, YELLOW  # noqa: E402
+from canvas import Canvas  # noqa: E402
 from styles.style_horizontal_disk import HorizontalDiskStyle  # noqa: E402
 from styles.style_horizontal_disk4x_qb import HorizontalDisk4xQbStyle  # noqa: E402
 from styles.style_horizontal_disk6x import (  # noqa: E402
@@ -49,6 +50,19 @@ class HistoryCanvas:
     def line(self, x1, y1, x2, y2, color):
         """记录面积图每一列的坐标和颜色。"""
         self.lines.append((x1, y1, x2, y2, color))
+
+    def draw_grid(self, x, y, width, height, step_x, step_y, color):
+        """忽略图表组件生成的点阵背景。"""
+        del x, y, width, height, step_x, step_y, color
+
+    def draw_columns(self, columns, bottom=None):
+        """记录图表组件生成的连续采样列。"""
+        for x, y, color in columns:
+            self.line(x, y, x, y if bottom is None else bottom, color)
+
+    def draw_line_chart(self, definition, values):
+        """复用 Python 兼容策略验证图表定义和颜色区间。"""
+        Canvas.draw_line_chart(self, definition, values)
 
 
 class DiskHealthStyleTest(unittest.TestCase):
@@ -148,6 +162,26 @@ class CpuHistoryColorTest(unittest.TestCase):
             red_columns = {line[0] for line in canvas.lines if line[-1] == ELEMENT_DANGER}
             all_columns = {line[0] for line in canvas.lines}
             self.assertLess(len(red_columns), len(all_columns))
+
+    def test_chart_color_callback_uses_hash_cache(self):
+        """验证同一数值区间只调用一次颜色回调并复用哈希缓存。"""
+        canvas = HistoryCanvas()
+        callback_values = []
+
+        def color_callback(value):
+            """记录回调数值并返回测试颜色。"""
+            callback_values.append(value)
+            return ELEMENT_DANGER if value >= 50 else ELEMENT_SUCCESS
+
+        canvas.draw_line_chart({
+            "x": 0, "y": 0, "width": 10, "height": 10,
+            "maximum": 100, "color": ELEMENT_SUCCESS, "filled": True,
+            "color_callback": color_callback, "color_cache_step": 100,
+            "grid_step_x": 0, "grid_step_y": 0, "grid_color": 0,
+        }, [10, 90])
+
+        self.assertEqual(len(callback_values), 1)
+        self.assertEqual(len(canvas.lines), 10)
 
 
 class QbittorrentStyleTest(unittest.TestCase):

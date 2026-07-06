@@ -24,7 +24,7 @@ from machine import Pin, SPI
 # LCD 分辨率和 SPI 参数。
 LCD_WIDTH = 240
 LCD_HEIGHT = 320
-SPI_BAUDRATE = 40_000_000
+SPI_BAUDRATE = 62_500_000
 
 # RP2040 与 ST7789 的连接引脚。
 PIN_SCK = 18
