@@ -2,6 +2,8 @@
 
 本目录提供独立电脑端监控程序，使用 PV1 协议经 Pico 的独立 USB CDC 数据接口传输系统快照。内置 USB CDC 仅保留给 MicroPython REPL，不承载监控数据。
 
+Windows 可选用 PresentMon/ETW 采集前台程序 FPS，JSON 顶层 `fps` 包含 `value`、24 点 `history`、`source`、`process_id` 和 `process_name`。PresentMon 不可用时保持字段结构并返回空值；AMD ADLX 可作为可选回退。部署说明见 [win/fps/README.md](win/fps/README.md)。
+
 本程序不安装自定义内核驱动：Windows 使用系统性能接口和串口驱动，Linux 使用 `/proc`、`/sys` 及系统串口驱动。这样无需驱动签名，也不会绑定特定内核版本。
 
 磁盘明细通过 JSON 顶层 `disks` 数组发送。同一物理盘的多个分区会合并，字段包括 `name`、`devices`、`mountpoints`、`filesystems`、`used_bytes`、`total_bytes`、`percent`、`temperature_c` 和 `health`。同时，面向 Pico 显示的物理磁盘统计通过顶层 `physical_disks` 数组发送，每块物理盘也包含 `health`、温度、容量、占用率、实时读写速度 `read_bps`/`write_bps`，以及固定长度的读写速度历史 `read_history`/`write_history`。程序在启动时检查 SMART，之后每 30 分钟复查；Linux 需要安装 `smartmontools`。`health` 取值为：`0` 未知、`1` 健康、`2` 注意、`3` 警告、`4` 严重、`5` 失败。分级以 smartmontools 总体自检结论为最高优先级，并结合 NVMe Critical Warning、寿命百分比和 ATA 重映射、待映射及不可校正扇区等公开指标；无法读取 SMART、USB 硬盘盒不支持或权限不足时返回 `0`。
