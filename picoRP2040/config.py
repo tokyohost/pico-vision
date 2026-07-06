@@ -16,12 +16,12 @@
 
 # 开发板型号：多色 WS2812 灯版本使用 rp2040_usb；GP25 单色灯版本使用
 # rp2040_typec。具体引脚由开发板硬件档案统一管理。
-BOARD_MODEL = "rp2040_typec"
+BOARD_MODEL = "rp2040_usb"
 # 开发源码使用 development；正式升级包由打包工具写入发布版本。
 FIRMWARE_VERSION = "development"
 # 屏幕色彩方案：旧款 ST7789VW 二英寸屏使用 st7789vw_2inch；新款
 # 二点四英寸屏使用 st7789_2_4inch。当前默认选择新款屏幕。
-SCREEN_COLOR_PROFILE = "st7789_2_4inch"
+SCREEN_COLOR_PROFILE = "st7789vw_2inch"
 
 
 # ST7789 显示参数。

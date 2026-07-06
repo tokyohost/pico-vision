@@ -181,7 +181,8 @@ class Application:
                 memory_used, memory_total = memory_usage()
                 response = (
                     "ACK:LCD_FRAME:{}:TOTAL={}MS:CANVAS={}US:LCD={}US:"
-                    "REGIONS={}:MEMORY_USED={}:MEMORY_TOTAL={}\n"
+                    "REGIONS={}:MEMORY_USED={}:MEMORY_TOTAL={}:"
+                    "CANVAS_BACKEND={}\n"
                 ).format(
                     self._rendering_version,
                     self._renderer.last_render_ms(),
@@ -190,6 +191,7 @@ class Application:
                     region_count,
                     memory_used,
                     memory_total,
+                    self._renderer.canvas_backend().upper(),
                 )
                 self._protocol.write(response.encode())
             time.sleep_ms(1)

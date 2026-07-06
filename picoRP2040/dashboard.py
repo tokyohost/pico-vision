@@ -17,7 +17,7 @@
 import gc
 import time
 
-from canvas import Canvas
+from canvas_backend import Canvas, canvas_backend_name
 from config import HEIGHT, LCD_STRIP_HEIGHT, LCD_STYLE, WIDTH
 from styles.style_plugins import create_style, normalize_style_name, release_style
 
@@ -46,6 +46,10 @@ class DashboardRenderer:
     def style_name(self):
         """返回当前生效的样式插件名称。"""
         return self._style_name
+
+    def canvas_backend(self):
+        """返回当前渲染器使用的 Canvas 后端名称。"""
+        return canvas_backend_name()
 
     def set_style(self, style_name):
         """切换样式插件，并要求下一次渲染执行完整刷新。"""

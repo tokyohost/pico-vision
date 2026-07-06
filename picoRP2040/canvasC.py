@@ -1,0 +1,85 @@
+"""提供兼容原 Canvas 接口的固件 C 加速适配器。"""
+
+from canvas import Canvas as PythonCanvas
+
+try:
+    import fn_canvas as _native_canvas
+except ImportError:
+    _native_canvas = None
+
+
+NATIVE_CANVAS_API_VERSION = 2
+NATIVE_CANVAS_METHODS = (
+    "clear", "pixel", "fill_rect", "line", "fill_polygon", "draw_columns",
+)
+
+
+def native_canvas_supported():
+    """检查当前 UF2 是否完整提供兼容版本的 Canvas C 接口。"""
+    if _native_canvas is None:
+        return False
+    try:
+        return (
+            _native_canvas.api_version() == NATIVE_CANVAS_API_VERSION
+            and all(
+                callable(getattr(_native_canvas, method_name, None))
+                for method_name in NATIVE_CANVAS_METHODS
+            )
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+class CanvasC(PythonCanvas):
+    """通过适配器模式将原 Canvas 图元操作转发给固件 C 模块。"""
+
+    native_accelerated = True
+
+    def __init__(self, width, height):
+        """创建与原 Canvas 具有相同缓冲区和缓存结构的加速画布。"""
+        if not native_canvas_supported():
+            raise RuntimeError("当前 UF2 不支持兼容版本的 Canvas C 后端")
+        super().__init__(width, height)
+
+    def clear(self, color=0):
+        """通过 C 后端使用指定 RGB565 颜色清空当前视口。"""
+        _native_canvas.clear(
+            self.buffer, self.width, self.height,
+            self.origin_x, self.origin_y, color,
+        )
+
+    def pixel(self, x, y, color):
+        """通过 C 后端绘制经过视口裁剪的单个像素。"""
+        _native_canvas.pixel(
+            self.buffer, self.width, self.height,
+            self.origin_x, self.origin_y, x, y, color,
+        )
+
+    def fill_rect(self, x, y, width, height, color):
+        """通过 C 后端绘制经过视口裁剪的实心矩形。"""
+        _native_canvas.fill_rect(
+            self.buffer, self.width, self.height,
+            self.origin_x, self.origin_y, x, y, width, height, color,
+        )
+
+    def line(self, x0, y0, x1, y1, color):
+        """通过 C 后端绘制整数 Bresenham 线段。"""
+        _native_canvas.line(
+            self.buffer, self.width, self.height,
+            self.origin_x, self.origin_y, x0, y0, x1, y1, color,
+        )
+
+    def fill_polygon(self, points, color):
+        """通过 C 扫描线后端填充多边形并返回是否成功。"""
+        return _native_canvas.fill_polygon(
+            self.buffer, self.width, self.height,
+            self.origin_x, self.origin_y, points, color,
+        )
+
+    def draw_columns(self, columns, bottom=None):
+        """通过 C 后端批量绘制历史图采样列。"""
+        if columns:
+            _native_canvas.draw_columns(
+                self.buffer, self.width, self.height,
+                self.origin_x, self.origin_y, columns, bottom,
+            )
