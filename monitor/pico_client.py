@@ -88,7 +88,7 @@ def parse_frame(line):
 
 
 PING_COMMAND = build_frame("PING")
-SERIAL_WRITE_CHUNK_SIZE = 512
+SERIAL_WRITE_CHUNK_SIZE = 511
 LOGGER = logging.getLogger("pico-monitor.serial")
 
 
