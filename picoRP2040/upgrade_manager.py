@@ -71,6 +71,28 @@ class UpgradeManager:
             self._close_file()
             self._respond("ERR:UPGRADE:{}".format(error))
 
+    def handle_json(self, params):
+        """执行 JSON 命令参数表示的升级动作并保留原有状态响应。"""
+        action = params["action"]
+        if action == "begin":
+            self._begin(str(params["version"]), int(params["file_count"]))
+        elif action == "file":
+            self._begin_file(
+                str(params["path"]),
+                int(params["size"]),
+                str(params["sha256"]),
+            )
+        elif action == "data":
+            self._write_data(int(params["sequence"]), str(params["data"]))
+        elif action == "file_end":
+            self._finish_file()
+        elif action == "commit":
+            self._commit()
+        elif action == "abort":
+            self._abort()
+        else:
+            raise ValueError("BAD_ACTION")
+
     def _begin(self, version, file_count):
         """清理遗留临时区并开始新的升级会话。"""
         if file_count <= 0:

@@ -24,7 +24,7 @@ import time
 import urllib.request
 import zipfile
 
-from pico_client import build_frame, parse_frame
+from pico_client import parse_frame
 
 
 LOGGER = logging.getLogger("pico-monitor.upgrade")
@@ -100,21 +100,21 @@ class PicoFirmwareUpgrader:
     def upgrade(self, package):
         """依次发送升级会话、文件数据和提交命令。"""
         serial_device = self.client.serial
-        self._command("UPGRADE:BEGIN:{}:{}".format(package.version, len(package.files)), "ACK:UPGRADE:BEGIN:")
+        self._command({"action": "begin", "version": package.version, "file_count": len(package.files)}, "ACK:UPGRADE:BEGIN:")
         sent_total = 0
         package_total = sum(item["size"] for item in package.files)
         for item in package.files:
             path = item["path"]
             data = package.archive.read(path)
-            self._command("UPGRADE:FILE:{}:{}:{}".format(path, len(data), item["sha256"]), "ACK:UPGRADE:FILE:")
+            self._command({"action": "file", "path": path, "size": len(data), "sha256": item["sha256"]}, "ACK:UPGRADE:FILE:")
             for sequence, position in enumerate(range(0, len(data), UPGRADE_CHUNK_SIZE)):
                 encoded = base64.b64encode(data[position:position + UPGRADE_CHUNK_SIZE]).decode("ascii")
-                self._command("UPGRADE:DATA:{}:{}".format(sequence, encoded), "ACK:UPGRADE:DATA:{}".format(sequence))
+                self._command({"action": "data", "sequence": sequence, "data": encoded}, "ACK:UPGRADE:DATA:{}".format(sequence))
                 sent_total += min(UPGRADE_CHUNK_SIZE, len(data) - position)
                 LOGGER.info("[升级发送] %s，整体进度 %d%%", path, int(sent_total * 100 / package_total))
-            self._command("UPGRADE:FILE_END", "ACK:UPGRADE:FILE_END:")
+            self._command({"action": "file_end"}, "ACK:UPGRADE:FILE_END:")
         LOGGER.info("[升级安装] Pico 正在校验并替换内部文件")
-        serial_device.write(self._build_command_packet("UPGRADE:COMMIT"))
+        serial_device.write(self._build_command_packet({"action": "commit"}))
         serial_device.flush()
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
@@ -129,11 +129,11 @@ class PicoFirmwareUpgrader:
                 raise RuntimeError(response)
         raise RuntimeError("等待 Pico 安装升级包超时")
 
-    def _command(self, command, expected_prefix):
+    def _command(self, params, expected_prefix):
         """发送单条升级命令并等待对应确认响应。"""
         device = self.client.serial
-        LOGGER.debug("[Monitor -> Pico][升级] %s", command[:120])
-        device.write(self._build_command_packet(command))
+        LOGGER.debug("[Monitor -> Pico][升级] %s", params)
+        device.write(self._build_command_packet(params))
         device.flush()
         for _ in range(100):
             response = self._response_text(device.readline())
@@ -144,12 +144,11 @@ class PicoFirmwareUpgrader:
                 return
             if response.startswith("ERR:"):
                 raise RuntimeError(response)
-        raise RuntimeError("等待 Pico 升级确认超时：{}".format(command.split(":", 2)[:2]))
+        raise RuntimeError("等待 Pico 升级确认超时：{}".format(params.get("action")))
 
-    def _build_command_packet(self, command):
-        """把升级命令编码为 PV1 帧。"""
-        payload = command.removeprefix("UPGRADE:").encode("ascii")
-        return build_frame("UPGRADE", payload)
+    def _build_command_packet(self, params):
+        """把升级参数编码为统一 JSON 命令帧。"""
+        return self.client.build_command_packet("upgrade", params)
 
     @staticmethod
     def _response_text(data):

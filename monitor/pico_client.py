@@ -88,7 +88,6 @@ def parse_frame(line):
 
 
 PING_COMMAND = build_frame("PING")
-REBOOT_COMMAND = build_frame("REBOOT")
 SERIAL_WRITE_CHUNK_SIZE = 512
 LOGGER = logging.getLogger("pico-monitor.serial")
 
@@ -243,11 +242,37 @@ class PicoJsonClient:
     @staticmethod
     def build_packet(snapshot):
         """把 JSON 编码为带长度与 CRC 的 PV1 数据帧。"""
-        payload = PicoJsonClient.build_json_payload(snapshot)
+        snapshot_payload = PicoJsonClient.build_json_payload(snapshot)
+        payload = json.dumps({
+            "mode": "snapshot",
+            "data": json.loads(snapshot_payload.decode("utf-8")),
+        }, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+        return PicoJsonClient._build_jsonz_packet(payload)
+
+    @staticmethod
+    def _build_jsonz_packet(payload):
+        """压缩 JSON 字节并构建统一的 JSONZ 帧。"""
         # 使用 512 字节 zlib 窗口，避免 RP2040 解压时申请默认的 32KB 连续堆。
         compressor = zlib.compressobj(level=6, wbits=ZLIB_WINDOW_BITS)
         compressed = compressor.compress(payload) + compressor.flush()
         return build_frame("JSONZ", base64.b64encode(compressed))
+
+    @staticmethod
+    def build_command_packet(command, params=None, request_id=None):
+        """把命令策略名称和参数编码为 JSONZ 命令信封。"""
+        message = {
+            "mode": "command",
+            "command": command,
+            "params": params or {},
+        }
+        if request_id is not None:
+            message["request_id"] = request_id
+        payload = json.dumps(
+            message,
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return PicoJsonClient._build_jsonz_packet(payload)
 
     def send(self, snapshot):
         """分块发送单行 JSON 数据，并等待 Pico 返回接收确认。"""
@@ -333,8 +358,8 @@ class PicoJsonClient:
         """请求 Pico 确认命令后执行软重启。"""
         if not self.is_connected:
             raise RuntimeError("Pico 串口尚未连接")
-        LOGGER.info("[Monitor -> Pico][%s][REBOOT]", self.port_name)
-        self.serial.write(REBOOT_COMMAND)
+        LOGGER.info("[Monitor -> Pico][%s][命令 reboot]", self.port_name)
+        self.serial.write(self.build_command_packet("reboot", request_id="reboot"))
         self.serial.flush()
         deadline = time.monotonic() + 1.0
         while time.monotonic() < deadline:
@@ -343,9 +368,11 @@ class PicoJsonClient:
                 frame = parse_frame(response)
             except ValueError as error:
                 raise RuntimeError(f"Pico 返回损坏协议帧：{error}") from error
-            if frame == ("ACK", b"REBOOT"):
-                LOGGER.info("[Pico -> Monitor][%s][ACK:REBOOT]", self.port_name)
-                return
+            if frame and frame[0] == "COMMAND":
+                result = json.loads(frame[1].decode("utf-8"))
+                if result.get("command") == "reboot" and result.get("status") == "ok":
+                    LOGGER.info("[Pico -> Monitor][%s][命令成功 reboot]", self.port_name)
+                    return
             if frame and frame[0] == "ERR":
                 raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
         raise RuntimeError("等待 Pico 重启确认超时")
@@ -359,3 +386,6 @@ class PicoJsonClient:
                 device.close()
             except (OSError, serial.SerialException):
                 LOGGER.exception("[串口异常] 关闭 %s 失败", device.port)
+
+
+REBOOT_COMMAND = PicoJsonClient.build_command_packet("reboot", request_id="reboot")

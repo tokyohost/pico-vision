@@ -74,3 +74,28 @@ GREEN = 0x46E9
 YELLOW = 0xFE00
 PURPLE = 0x9ADF
 RED = 0xF9C7
+
+
+def _load_runtime_configuration():
+    """从持久化文件加载允许覆盖的运行配置。"""
+    try:
+        import ujson as runtime_json
+    except ImportError:
+        import json as runtime_json
+    try:
+        with open("runtime_config.json", "r") as source:
+            values = runtime_json.loads(source.read())
+    except (OSError, ValueError):
+        return
+    allowed = {
+        "LCD_STYLE": str,
+        "RENDER_INTERVAL_MS": int,
+        "MONITOR_TIMEOUT_INTERVALS": int,
+        "LED_BRIGHTNESS": int,
+    }
+    for name, expected_type in allowed.items():
+        if name in values:
+            globals()[name] = expected_type(values[name])
+
+
+_load_runtime_configuration()

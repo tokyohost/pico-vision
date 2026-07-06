@@ -74,7 +74,11 @@ class RebootSerial(FakeSerial):
     """模拟确认软重启命令的 Pico。"""
 
     def readline(self):
-        return build_frame("ACK", b"REBOOT")
+        return build_frame("COMMAND", json.dumps({
+            "status": "ok",
+            "command": "reboot",
+            "request_id": "reboot",
+        }).encode("utf-8"))
 
 
 class BadJsonSerial(FakeSerial):
@@ -181,7 +185,9 @@ class PicoClientTest(unittest.TestCase):
         payload = PicoJsonClient.build_json_payload(snapshot)
         _, compressed_payload = parse_frame(PicoJsonClient.build_packet(snapshot))
 
-        self.assertEqual(payload, zlib.decompress(base64.b64decode(compressed_payload)))
+        envelope = json.loads(zlib.decompress(base64.b64decode(compressed_payload)))
+        self.assertEqual(json.loads(payload), envelope["data"])
+        self.assertEqual(envelope["mode"], "snapshot")
         self.assertNotIn(b'"disks"', payload)
 
     def test_wire_packet_omits_duplicate_logical_disks(self):
@@ -192,7 +198,7 @@ class PicoClientTest(unittest.TestCase):
         }
 
         _, payload = parse_frame(PicoJsonClient.build_packet(snapshot))
-        decoded = json.loads(zlib.decompress(base64.b64decode(payload)))
+        decoded = json.loads(zlib.decompress(base64.b64decode(payload)))["data"]
         self.assertNotIn("disks", decoded)
         self.assertEqual(decoded["physical_disks"], snapshot["physical_disks"])
         self.assertIn("disks", snapshot)

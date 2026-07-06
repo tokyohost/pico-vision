@@ -14,15 +14,17 @@
 """验证 Pico 升级包校验和串口分块发送流程。"""
 
 
+import base64
 import hashlib
 import json
 import pathlib
 import tempfile
 import unittest
+import zlib
 import zipfile
 
 from pico_upgrade import PicoFirmwareUpgrader, PicoUpgradePackage
-from pico_client import build_frame, parse_frame
+from pico_client import PicoJsonClient, build_frame, parse_frame
 
 
 class FakeUpgradeSerial:
@@ -39,18 +41,21 @@ class FakeUpgradeSerial:
         self.packets.append(bytes(data))
         frame = parse_frame(data)
         self.assert_frame = frame
-        command = "UPGRADE:" + frame[1].decode("ascii")
+        compressed = base64.b64decode(frame[1])
+        message = json.loads(zlib.decompress(compressed))
+        params = message["params"]
+        command = params["action"]
         self.commands.append(command)
-        if command.startswith("UPGRADE:BEGIN:"):
+        if command == "begin":
             self.responses.append(build_frame("STATUS", b"ACK:UPGRADE:BEGIN:1.0.0"))
-        elif command.startswith("UPGRADE:FILE:"):
+        elif command == "file":
             self.responses.append(build_frame("STATUS", b"ACK:UPGRADE:FILE:main.py"))
-        elif command.startswith("UPGRADE:DATA:"):
-            sequence = command.split(":", 3)[2]
+        elif command == "data":
+            sequence = str(params["sequence"])
             self.responses.append(build_frame("STATUS", ("ACK:UPGRADE:DATA:" + sequence).encode()))
-        elif command == "UPGRADE:FILE_END":
+        elif command == "file_end":
             self.responses.append(build_frame("STATUS", b"ACK:UPGRADE:FILE_END:main.py"))
-        elif command == "UPGRADE:COMMIT":
+        elif command == "commit":
             self.responses.extend((
                 build_frame("STATUS", b"PROGRESS:UPGRADE:INSTALL:100"),
                 build_frame("STATUS", b"ACK:UPGRADE:COMPLETE:1.0.0"),
@@ -71,6 +76,8 @@ class FakeClient:
     def __init__(self):
         """创建模拟串口设备。"""
         self.serial = FakeUpgradeSerial()
+
+    build_command_packet = staticmethod(PicoJsonClient.build_command_packet)
 
 
 class PicoUpgradeTests(unittest.TestCase):
@@ -101,10 +108,10 @@ class PicoUpgradeTests(unittest.TestCase):
                 PicoFirmwareUpgrader(client).upgrade(package)
             finally:
                 package.close()
-            self.assertEqual(client.serial.commands[0], "UPGRADE:BEGIN:1.0.0:1")
-            self.assertEqual(client.serial.commands[-1], "UPGRADE:COMMIT")
-            self.assertEqual(sum(command.startswith("UPGRADE:DATA:") for command in client.serial.commands), 3)
-            self.assertTrue(all(parse_frame(packet)[0] == "UPGRADE" for packet in client.serial.packets))
+            self.assertEqual(client.serial.commands[0], "begin")
+            self.assertEqual(client.serial.commands[-1], "commit")
+            self.assertEqual(client.serial.commands.count("data"), 3)
+            self.assertTrue(all(parse_frame(packet)[0] == "JSONZ" for packet in client.serial.packets))
             self.assertTrue(all(packet.endswith(b"\n") for packet in client.serial.packets))
 
 

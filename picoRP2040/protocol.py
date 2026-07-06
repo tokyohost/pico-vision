@@ -107,6 +107,7 @@ class JsonProtocol:
         self._frame_started_ms = None
         self._frame_read_calls = 0
         self._upgrade_manager = upgrade_manager
+        self._command_registry = None
         self._last_message_ms = None
 
     def _write_raw(self, data):
@@ -183,12 +184,6 @@ class JsonProtocol:
                     continue
                 if message_type == "PING":
                     self._write_pong()
-                elif message_type == "REBOOT":
-                    self._write_frame("ACK", b"REBOOT")
-                    time.sleep_ms(100)
-                    import machine
-
-                    machine.reset()
                 elif message_type == "JSONZ":
                     try:
                         decompress_started_ms = self._ticks_ms()
@@ -200,7 +195,7 @@ class JsonProtocol:
                         if len(json_payload) > MAX_JSON_SIZE:
                             raise ValueError("JSON_TOO_LARGE")
                         json_started_ms = self._ticks_ms()
-                        latest = json.loads(json_payload.decode("utf-8"))
+                        message = json.loads(json_payload.decode("utf-8"))
                         json_elapsed_ms = self._elapsed_ms(
                             self._ticks_ms(), json_started_ms
                         )
@@ -217,18 +212,67 @@ class JsonProtocol:
                             json_elapsed_ms,
                         )
                         self._write_frame("EVENT", timing.encode("ascii"))
-                        self._write_frame("ACK", b"JSON")
+                        latest = self._handle_json_message(message)
                     except (ValueError, UnicodeError, OSError, MemoryError, ZLIB_ERROR):
                         self._write_frame("ERR", b"BAD_JSON")
-                elif message_type == "UPGRADE":
-                    if self._upgrade_manager is None:
-                        self._write_frame("ERR", b"UPGRADE_UNAVAILABLE")
-                    else:
-                        self._upgrade_manager.handle(payload)
                 else:
                     self._write_frame("ERR", b"UNKNOWN_TYPE")
                 continue
         return latest
+
+    def _handle_json_message(self, message):
+        """按 JSON 信封模式分发快照或命令，并兼容旧裸快照。"""
+        if not isinstance(message, dict):
+            raise ValueError("JSON_OBJECT_REQUIRED")
+        mode = message.get("mode")
+        if mode == "command":
+            self._dispatch_command(message)
+            return None
+        if mode == "snapshot":
+            snapshot = message.get("data")
+            if not isinstance(snapshot, dict):
+                raise ValueError("SNAPSHOT_DATA_REQUIRED")
+        elif mode is None:
+            snapshot = message
+        else:
+            raise ValueError("UNKNOWN_JSON_MODE")
+        self._write_frame("ACK", b"JSON")
+        return snapshot
+
+    def _dispatch_command(self, message):
+        """延迟创建策略注册表并执行一条 JSON 命令。"""
+        from command import create_command_registry
+        from command.base import CommandError
+
+        if self._command_registry is None:
+            services = {"upgrade_manager": self._upgrade_manager}
+            self._command_registry = create_command_registry(
+                self._write_command_response,
+                services,
+            )
+        try:
+            self._command_registry.dispatch(message)
+        except CommandError as error:
+            self._write_command_response({
+                "status": "error",
+                "command": message.get("command"),
+                "error": str(error),
+                "request_id": message.get("request_id"),
+            })
+        except Exception as error:
+            self._write_command_response({
+                "status": "error",
+                "command": message.get("command"),
+                "error": "COMMAND_FAILED:{}".format(error),
+                "request_id": message.get("request_id"),
+            })
+
+    def _write_command_response(self, response):
+        """把命令结果编码为 COMMAND 类型的 JSON 响应帧。"""
+        self._write_frame(
+            "COMMAND",
+            json.dumps(response).encode("utf-8"),
+        )
 
     def last_message_ms(self):
         """返回最近一条有效 Monitor 协议消息的接收时刻。"""
