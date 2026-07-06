@@ -20,6 +20,50 @@ from windows_tray import (
 
 
 class WindowsTraySettingsTest(unittest.TestCase):
+    def setUp(self):
+        """创建测试使用的临时目录。"""
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary_directory.cleanup)
+
+    def _create_log_application(self):
+        """创建仅包含日志导出状态的托盘应用实例。"""
+        data_directory = Path(self.temporary_directory.name)
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.data_directory = data_directory
+        application.log_path = data_directory / "pico-monitor.log"
+        return application
+
+    def test_recent_log_export_is_limited_to_one_megabyte(self):
+        """确认日志导出只读取末尾一兆字节。"""
+        application = self._create_log_application()
+        expected = b"b" * (1024 * 1024)
+        application.log_path.write_bytes(b"a" * 64 + expected)
+
+        self.assertEqual(expected, application._read_recent_log())
+
+    def test_recent_log_export_keeps_complete_chinese_characters(self):
+        """确认日志截取位置位于中文字符中间时不会产生乱码。"""
+        application = self._create_log_application()
+        application.log_path.write_bytes("甲乙丙".encode("utf-8"))
+
+        self.assertEqual("乙丙".encode("utf-8"), application._read_recent_log(7))
+
+    @mock.patch("win.tray.subprocess.Popen")
+    def test_export_log_creates_file_and_opens_directory(self, popen):
+        """确认托盘导出日志后使用资源管理器选中导出文件。"""
+        application = self._create_log_application()
+        application.log_path.write_text("测试日志", encoding="utf-8")
+
+        application._export_log()
+
+        exported_files = list((application.data_directory / "exports").glob("*.log"))
+        self.assertEqual(1, len(exported_files))
+        self.assertEqual("测试日志", exported_files[0].read_text(encoding="utf-8"))
+        popen.assert_called_once_with(
+            ["explorer.exe", "/select,", str(exported_files[0])],
+            creationflags=0x08000000,
+        )
+
     @mock.patch("win.tray.threading.Thread")
     def test_settings_window_can_only_be_opened_once(self, thread_class):
         application = WindowsTrayApplication.__new__(WindowsTrayApplication)
