@@ -24,6 +24,7 @@ python pico_monitor.py --lcd-style simple
 | `horizontal_disk4x_qb` | `styles/style_horizontal_disk4x_qb.py` | 横屏 320×240 | 紧凑字体 | 四磁盘与 qBittorrent 状态 |
 | `horizontal_disk6x` | `styles/style_horizontal_disk6x.py` | 横屏 320×240 | 紧凑字体 | 均衡显示最多六块磁盘 |
 | `simple` | `styles/style_simple.py` | 横屏 320×240 | 紧凑字体 | 健康优先的三磁盘简洁视图 |
+| `fps_simple` | `styles/style_fps_simple.py` | 横屏 320×240 | 紧凑字体 | 深色简约 FPS 实时监控与趋势统计 |
 
 ## default
 
@@ -92,6 +93,12 @@ NAS 或家庭服务器。
 CPU、内存、GPU、网络及网络延迟，右侧显示磁盘总览和磁盘读写信息。CPU、内存、GPU、
 网络及磁盘读写历史使用低开销实心渐变面积图。磁盘卡片显示占用率、已用/总容量、
 H0 至 H5 健康等级、温度和实时读写速率，适合优先观察异常磁盘及快速刷新。
+
+## fps_simple
+
+参考深色青紫仪表盘设计，顶部显示 FPS 标题和当前时间，主区域显示当前帧率与最近
+二十四个采样点的趋势，底部集中展示平均值、最低值、最高值、FPS 抖动、
+采集来源和前台进程。无可用采集源时会明确显示 `N/A` 与不可用状态。
 
 ## 健康等级
 

@@ -16,6 +16,7 @@ STYLE_NAMES = {
     "horizontal_disk4x_qb": "四盘下载版(qBittorrent)",
     "horizontal_disk6x": "六盘均衡版",
     "simple": "三盘简洁版",
+    "fps_simple": "FPS 监控简约",
 }
 DEFAULT_STYLE_CATALOG = [
     {"name": name, "chinese_name": chinese_name, "type": "builtin"}
