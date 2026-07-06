@@ -35,6 +35,22 @@ class PresentMonBackendTest(unittest.TestCase):
         self.assertFalse(backend.consume_csv_line(["Application", "ProcessID"], "game.exe,invalid"))
         self.assertIsNone(backend.snapshot())
 
+    def test_counts_chromium_child_process_for_foreground_application(self):
+        """验证 Chromium 渲染子进程的帧可归属到前台浏览器应用。"""
+        backend = PresentMonBackend(executable=__file__, window_seconds=1.0, clock=lambda: 10.0)
+        header = ["Application", "ProcessID", "SwapChainAddress"]
+        for index in range(60):
+            backend.consume_csv_line(header, "chrome.exe,33916,0x1", 9.01 + index * 0.016)
+
+        with mock.patch("win.fps.presentmon.foreground_process_id", return_value=10040), mock.patch(
+            "win.fps.presentmon.related_process_ids", return_value={10040}
+        ), mock.patch("win.fps.presentmon.process_name", return_value="chrome.exe"):
+            snapshot = backend.snapshot()
+
+        self.assertEqual(snapshot["value"], 60.0)
+        self.assertEqual(snapshot["process_id"], 33916)
+        self.assertEqual(snapshot["process_name"], "chrome.exe")
+
     def test_command_disables_expensive_metrics_and_file_output(self):
         command = PresentMonBackend.command(Path("PresentMon.exe"))
         self.assertIn("--output_stdout", command)

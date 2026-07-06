@@ -110,40 +110,22 @@ class Application:
         )
 
     def _return_to_waiting_page(self):
-        """切换到系统启动等待页，并尝试重新注册 USB CDC。"""
-        from protocol import JsonProtocol
-        from upgrade_manager import UpgradeManager
-        from usb_transport import create_data_cdc
-
+        """切换到系统启动等待页，并保留现有 USB CDC 等待主机重连。"""
         self._monitor_connected = False
         self._cache.clear()
         self._renderer.set_style("boot")
         self._rendering_version = -1
         self._boot_frame = 0
-        self._boot_logs = ["MONITOR:TIMEOUT", "USB:CDC:REGISTERING"]
+        self._boot_logs = ["MONITOR:TIMEOUT", "USB:CDC:WAITING"]
         self._show_boot(
             100,
             "SYSTEM_BOOT:WAITING_MONITOR",
             "waiting connecting ....",
             flush=True,
         )
-        try:
-            stream = create_data_cdc(wait_for_open=False)
-            protocol = JsonProtocol(stream=stream)
-            protocol._upgrade_manager = UpgradeManager(
-                protocol.write_upgrade_response
-            )
-        except Exception as error:
-            # Monitor 可能只是进程退出，此时原 CDC 仍可在主机重连后工作。
-            # 重新注册失败时不替换现有协议，避免进入无可用通信通道的状态。
-            self._boot_logs.append(
-                "USB:CDC:REUSE:{}".format(type(error).__name__)
-            )
-        else:
-            # 仅在新 CDC 和协议都初始化成功后原子替换接收通道。
-            self._protocol = protocol
-            self._receiver.replace_protocol(protocol)
-            self._boot_logs.append("USB:CDC:READY")
+        # Monitor 进程退出只会关闭主机侧串口，不会销毁 Pico 已注册的 CDC。
+        # 运行中再次调用 usb.device.init() 可能等待未完成的 USB 传输，导致
+        # 主循环永久停顿；继续轮询原协议即可在 Monitor 重启后自动恢复。
         self._next_boot_animation = time.ticks_ms()
 
     def run(self):
@@ -170,12 +152,15 @@ class Application:
         while True:
             self._receiver.update()
             self._led.update()
-            if self._receiver.is_busy():
-                time.sleep_ms(0)
-                continue
             now = time.ticks_ms()
+            # Monitor 被强制结束后，USB CDC 可能持续报告端点可读或遗留半包，
+            # 此时接收器会一直处于忙状态。超时判断必须先于忙状态短路，
+            # 否则主循环永远无法切换回 SYSTEM BOOT 等待页。
             if self._monitor_timed_out(now):
                 self._return_to_waiting_page()
+                continue
+            if self._receiver.is_busy():
+                time.sleep_ms(0)
                 continue
             snapshot, version = self._cache.latest()
             has_new_snapshot = version != self._rendering_version

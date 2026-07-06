@@ -117,9 +117,10 @@ class JsonProtocol:
         return "C" if protocolC.native_protocol_supported() else "PYTHON"
 
     def _write_raw(self, data):
-        """向 USB 串口写入已编码 PV1 帧并立即刷新。"""
+        """向 USB 串口写入 PV1 帧，主机断开时放弃发送以免阻塞主循环。"""
         data = bytes(data)
         offset = 0
+        stalled_since_ms = None
         while offset < len(data):
             # 避免写满 64 字节 USB 端点后立即继续写入导致 CDC 暂时返回零。
             remaining = data[offset:offset + 63]
@@ -128,13 +129,30 @@ class JsonProtocol:
             except TypeError:
                 self._output.write(remaining.decode("utf-8"))
                 written = len(remaining)
+            except OSError:
+                # 独立 CDC 在主机进程被强制结束时可能直接报告写入失败。
+                # 诊断帧允许丢弃，不能让通信异常终止固件主循环。
+                if self._dedicated_stream:
+                    return False
+                raise
             # 部分流实现成功写入全部数据后返回 None，按完整写入处理。
             if written is None:
                 written = len(remaining)
             if written < 0:
+                if self._dedicated_stream:
+                    return False
                 raise OSError("SERIAL_WRITE_FAILED")
             if written == 0:
-                # CDC 发送缓冲区已满属于临时背压，刷新并短暂让出执行时间后重试。
+                # CDC 断开和发送缓冲区已满都会返回零。主机已关闭端口时立即
+                # 放弃；端口仍打开时最多等待 100 毫秒，避免永久卡死。
+                is_open = getattr(self._output, "is_open", None)
+                if self._dedicated_stream and callable(is_open) and not is_open():
+                    return False
+                now = self._ticks_ms()
+                if stalled_since_ms is None:
+                    stalled_since_ms = now
+                elif self._elapsed_ms(now, stalled_since_ms) >= 100:
+                    return False
                 try:
                     self._output.flush()
                 except Exception:
@@ -142,6 +160,7 @@ class JsonProtocol:
                 sleep_ms = getattr(time, "sleep_ms", None)
                 sleep_ms(2) if sleep_ms else time.sleep(0.002)
                 continue
+            stalled_since_ms = None
             offset += written
             try:
                 self._output.flush()
@@ -150,6 +169,7 @@ class JsonProtocol:
             if offset < len(data):
                 sleep_ms = getattr(time, "sleep_ms", None)
                 sleep_ms(2) if sleep_ms else time.sleep(0.002)
+        return True
 
     def write(self, data):
         """把应用诊断消息封装为 PV1 EVENT 帧。"""
