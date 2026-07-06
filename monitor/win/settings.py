@@ -31,6 +31,7 @@ DEFAULT_SETTINGS = {
     "network_unit": "MB",
     "lcd_style": "horizontal_disk6x",
     "styles": DEFAULT_STYLE_CATALOG,
+    "dev": False,
     "qbittorrent_enabled": False,
     "qbittorrent_address": "",
     "qbittorrent_username": "",
@@ -129,7 +130,7 @@ def apply_worker_arguments(arguments, settings):
         if argument in ARGUMENT_NAMES:
             index += 2
             continue
-        if argument in ("--qbittorrent-enabled", "--no-qbittorrent"):
+        if argument in ("--dev", "--no-dev", "--qbittorrent-enabled", "--no-qbittorrent"):
             index += 1
             continue
         retained.append(argument)
@@ -140,6 +141,8 @@ def apply_worker_arguments(arguments, settings):
             continue
         retained.extend((option, str(value)))
     retained.append("--qbittorrent-enabled" if settings["qbittorrent_enabled"] else "--no-qbittorrent")
+    if settings["dev"]:
+        retained.append("--dev")
     return retained
 
 
@@ -166,5 +169,9 @@ def settings_from_arguments(arguments, base=None):
             settings["qbittorrent_enabled"] = True
         elif argument == "--no-qbittorrent":
             settings["qbittorrent_enabled"] = False
+        elif argument == "--dev":
+            settings["dev"] = True
+        elif argument == "--no-dev":
+            settings["dev"] = False
         index += 1
     return settings

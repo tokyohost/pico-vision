@@ -209,6 +209,21 @@ class WindowsTrayApplication:
                 winreg.SetValueEx(key, AUTOSTART_NAME, 0, winreg.REG_SZ, self._autostart_command())
         icon.update_menu()
 
+    def _is_dev_mode(self, item=None):
+        """返回托盘配置中的开发模式开关状态。"""
+        del item
+        return bool(self.settings.get("dev"))
+
+    def _toggle_dev_mode(self, icon, item):
+        """切换开发模式并重启后台监控进程，使新配置立即生效。"""
+        del item
+        self.settings["dev"] = not self._is_dev_mode()
+        self.settings_store.save(self.settings)
+        self._restart_worker()
+        icon.update_menu()
+        state = "开启" if self.settings["dev"] else "关闭"
+        icon.notify("开发模式已{}".format(state), APPLICATION_NAME)
+
     def _select_style(self, style):
         def select(icon, item):
             del item
@@ -569,15 +584,10 @@ class WindowsTrayApplication:
         root.mainloop()
 
     def _exit(self, icon, item):
+        """退出 Windows Monitor，不向 Pico 发送重启指令。"""
         del item
         self.stopping.set()
-        if self.worker_process is not None and self.worker_process.poll() is None:
-            try:
-                self.worker_process.stdin.write("EXIT_REBOOT\n")
-                self.worker_process.stdin.flush()
-                self.worker_process.wait(timeout=3)
-            except (BrokenPipeError, OSError, subprocess.TimeoutExpired):
-                self.worker_process.terminate()
+        self._stop_worker()
         if self.console_process is not None and self.console_process.poll() is None:
             self.console_process.terminate()
         icon.stop()
@@ -606,6 +616,7 @@ class WindowsTrayApplication:
             )),
             pystray.MenuItem("打开日志", self._show_log),
             pystray.MenuItem("日志导出", self._export_log),
+            pystray.MenuItem("Dev 模式", self._toggle_dev_mode, checked=self._is_dev_mode),
             pystray.MenuItem("开机自动启动", self._toggle_autostart, checked=self._is_autostart),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("退出", self._exit),

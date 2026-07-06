@@ -122,6 +122,48 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertEqual(result[result.index("--lcd-brightness") + 1], "35")
         self.assertIn("--worker", result)
 
+    def test_dev_mode_is_applied_to_worker_arguments(self):
+        """确认托盘开发模式配置会替换已有参数并传递给工作进程。"""
+        enabled = apply_worker_arguments(["--no-dev", "--worker"], dict(DEFAULT_SETTINGS, dev=True))
+        disabled = apply_worker_arguments(["--dev", "--worker"], dict(DEFAULT_SETTINGS, dev=False))
+
+        self.assertIn("--dev", enabled)
+        self.assertNotIn("--no-dev", enabled)
+        self.assertNotIn("--dev", disabled)
+        self.assertIn("--worker", disabled)
+
+    def test_toggle_dev_mode_persists_and_restarts_worker(self):
+        """确认托盘切换开发模式后保存配置并重启后台进程。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.settings = dict(DEFAULT_SETTINGS, dev=False)
+        application.settings_store = mock.Mock()
+        application._restart_worker = mock.Mock()
+        icon = mock.Mock()
+
+        application._toggle_dev_mode(icon, None)
+
+        self.assertTrue(application.settings["dev"])
+        application.settings_store.save.assert_called_once_with(application.settings)
+        application._restart_worker.assert_called_once_with()
+        icon.update_menu.assert_called_once_with()
+        icon.notify.assert_called_once_with("开发模式已开启", "Pico 系统监控")
+
+    def test_windows_exit_stops_monitor_without_rebooting_pico(self):
+        """确认退出 Windows Monitor 时不会向 Pico 发送重启指令。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.stopping = threading.Event()
+        application.worker_process = mock.Mock()
+        application.console_process = None
+        application._stop_worker = mock.Mock()
+        icon = mock.Mock()
+
+        application._exit(icon, None)
+
+        self.assertTrue(application.stopping.is_set())
+        application._stop_worker.assert_called_once_with()
+        application.worker_process.stdin.write.assert_not_called()
+        icon.stop.assert_called_once_with()
+
     def test_first_run_imports_existing_arguments(self):
         settings = settings_from_arguments([
             "--lcd-style", "diskv4", "--interval", "1.5",
@@ -130,6 +172,10 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertEqual(settings["lcd_style"], "diskv4")
         self.assertEqual(settings["interval"], 1.5)
         self.assertTrue(settings["qbittorrent_enabled"])
+
+    def test_first_run_imports_dev_argument(self):
+        """确认首次运行时从已有启动参数导入开发模式。"""
+        self.assertTrue(settings_from_arguments(["--dev"])["dev"])
 
     def test_store_ignores_unknown_fields_and_keeps_defaults(self):
         with tempfile.TemporaryDirectory() as directory:
