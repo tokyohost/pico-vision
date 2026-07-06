@@ -8,10 +8,10 @@ except ImportError:
     _native_canvas = None
 
 
-NATIVE_CANVAS_API_VERSION = 3
+NATIVE_CANVAS_API_VERSION = 5
 NATIVE_CANVAS_METHODS = (
     "clear", "pixel", "fill_rect", "line", "fill_polygon", "draw_columns",
-    "draw_rect", "draw_grid", "draw_polyline",
+    "draw_rect", "draw_grid", "draw_polyline", "draw_line_chart",
 )
 
 
@@ -92,6 +92,27 @@ class CanvasC(PythonCanvas):
                 self.buffer, self.width, self.height,
                 self.origin_x, self.origin_y, columns, bottom,
             )
+
+    def draw_line_chart(self, definition, values):
+        """将图表定义和原始数据一次性交给 C 组件完成绘制。"""
+        _native_canvas.draw_line_chart(
+            self.buffer, self.width, self.height,
+            self.origin_x, self.origin_y,
+            int(definition.get("x", 0)),
+            int(definition.get("y", 0)),
+            int(definition.get("width", 0)),
+            int(definition.get("height", 0)),
+            values,
+            definition.get("maximum", 0),
+            int(definition.get("color", 0xFFFF)),
+            bool(definition.get("filled", False)),
+            definition.get("regions") or None,
+            int(definition.get("grid_step_x", 0)),
+            int(definition.get("grid_step_y", 0)),
+            int(definition.get("grid_color", 0)),
+            definition.get("color_callback"),
+            definition.get("color_cache_step", 1),
+        )
 
     def draw_grid(self, x, y, width, height, step_x, step_y, color):
         """通过单次 C 调用绘制规则点阵网格。"""

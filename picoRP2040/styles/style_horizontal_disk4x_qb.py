@@ -356,37 +356,19 @@ class HorizontalDisk4xQbStyle:
         self, canvas, x, y, width, height, values, color,
         percentage=False, filled=False, color_by_value=False,
     ):
-        """绘制历史趋势图，并可按照每个采样值保留独立的状态颜色。"""
-        for grid_x in range(x, x + width, 12):
-            for grid_y in range(y, y + height, 7):
-                canvas.pixel(grid_x, grid_y, GRAY)
-        if not values or len(values) < 2:
-            return
-        maximum = 100 if percentage else max(1, max(self._number(item) for item in values))
-        points = []
-        for index, value in enumerate(values):
-            point_x = x + int(index * (width - 1) / (len(values) - 1))
-            numeric_value = self._number(value)
-            ratio = max(0, min(1, numeric_value / maximum))
-            point_y = y + height - 1 - int(ratio * (height - 1))
-            points.append((point_x, point_y, numeric_value))
-        if color_by_value:
-            self._draw_value_colored_history(
-                canvas, y, height, points, filled
-            )
-            return
-        plain_points = [(point[0], point[1]) for point in points]
-        native_filled = False
-        if filled:
-            native_filled = self._fill_history_area(
-                canvas, x, y, width, height, plain_points, color
-            )
-        if native_filled:
-            return
-        previous = plain_points[0]
-        for point in plain_points[1:]:
-            canvas.line(previous[0], previous[1], point[0], point[1], color)
-            previous = point
+        """提交图表定义和原始数据，由当前 Canvas 策略完成全部计算。"""
+        regions = (
+            ((50, ELEMENT_SUCCESS), (80, ELEMENT_WARNING),
+             (101, ELEMENT_DANGER))
+            if color_by_value else ()
+        )
+        canvas.draw_line_chart({
+            "x": x, "y": y, "width": width, "height": height,
+            "maximum": 100 if percentage else 0,
+            "color": color, "filled": filled, "regions": regions,
+            "grid_step_x": 12, "grid_step_y": 7,
+            "grid_color": GRAY,
+        }, values)
 
     def _draw_value_colored_history(self, canvas, y, height, points, filled):
         """按插值后的历史采样值逐列绘制颜色条带，使峰值颜色留在历史图中。"""

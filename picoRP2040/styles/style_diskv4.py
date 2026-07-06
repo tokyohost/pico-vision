@@ -225,35 +225,13 @@ class DiskV4Style:
 
     @classmethod
     def _history(cls, canvas, x, y, width, height, values, color):
-        """在侧栏中绘制资源使用率的紧凑实心面积图。"""
-        if not values or len(values) < 2:
-            return
-        points = []
-        for index, item in enumerate(values):
-            point_x = x + int(index * (width - 1) / (len(values) - 1))
-            ratio = max(0, min(100, cls._number(item))) / 100
-            point_y = y + height - 1 - int(ratio * (height - 1))
-            points.append((point_x, point_y))
-        bottom = y + height - 1
-        columns = []
-        previous = points[0]
-        for point in points[1:]:
-            span = max(1, point[0] - previous[0])
-            for draw_x in range(previous[0], point[0] + 1):
-                offset = draw_x - previous[0]
-                draw_y = previous[1] + int(
-                    (point[1] - previous[1]) * offset / span
-                )
-                columns.append((draw_x, draw_y, color))
-            previous = point
-        draw_columns = getattr(canvas, "draw_columns", None)
-        if callable(draw_columns):
-            draw_columns(columns, bottom)
-        else:
-            for draw_x, draw_y, column_color in columns:
-                canvas.line(
-                    draw_x, draw_y, draw_x, bottom, column_color
-                )
+        """提交紧凑实心图定义，由 Canvas 后端完成缩放与连续填充。"""
+        canvas.draw_line_chart({
+            "x": x, "y": y, "width": width, "height": height,
+            "maximum": 100, "color": color, "filled": True,
+            "regions": (), "grid_step_x": 0, "grid_step_y": 0,
+            "grid_color": 0,
+        }, values)
 
     def _draw_empty_disk(self, canvas, x, y, index):
         """绘制低对比度的空磁盘槽位占位卡片。"""

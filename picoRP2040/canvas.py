@@ -332,6 +332,76 @@ class Canvas:
                 self._draw_column_fallback(segment, bottom, color)
             start = end
 
+    def draw_line_chart(self, definition, values):
+        """按照图表定义绘制折线图，作为原生 C 组件的兼容策略。"""
+        x = int(definition.get("x", 0))
+        y = int(definition.get("y", 0))
+        width = int(definition.get("width", 0))
+        height = int(definition.get("height", 0))
+        grid_step_x = int(definition.get("grid_step_x", 0))
+        grid_step_y = int(definition.get("grid_step_y", 0))
+        grid_color = int(definition.get("grid_color", 0))
+        if grid_step_x > 0 and grid_step_y > 0:
+            self.draw_grid(
+                x, y, width, height,
+                grid_step_x, grid_step_y, grid_color,
+            )
+        if width <= 0 or height <= 0 or not values or len(values) < 2:
+            return
+        normalized_values = []
+        for value in values:
+            try:
+                normalized_values.append(float(value))
+            except (TypeError, ValueError):
+                normalized_values.append(0.0)
+        maximum = float(definition.get("maximum", 0) or 0)
+        if maximum <= 0:
+            maximum = max(1, max(normalized_values))
+        default_color = int(definition.get("color", 0xFFFF))
+        regions = definition.get("regions") or ()
+        color_callback = definition.get("color_callback")
+        color_cache_step = float(definition.get("color_cache_step", 1) or 0)
+        color_cache = {}
+        filled = bool(definition.get("filled", False))
+        bottom = y + height - 1
+        columns = []
+        last_index = len(normalized_values) - 1
+        divisor = max(1, width - 1)
+        for offset_x in range(width):
+            scaled = offset_x * last_index
+            left_index = min(last_index, scaled // divisor)
+            right_index = min(last_index, left_index + 1)
+            remainder = scaled % divisor
+            value = normalized_values[left_index] + (
+                normalized_values[right_index] - normalized_values[left_index]
+            ) * remainder / divisor
+            value = max(0, min(maximum, value))
+            point_y = bottom - int(value * (height - 1) / maximum)
+            color = default_color
+            if callable(color_callback):
+                if color_cache_step > 0:
+                    cache_bucket = int(value / color_cache_step)
+                    if cache_bucket not in color_cache:
+                        color_cache[cache_bucket] = int(color_callback(value))
+                    color = color_cache[cache_bucket]
+                else:
+                    color = int(color_callback(value))
+            else:
+                for upper_limit, region_color in regions:
+                    if value < upper_limit:
+                        color = region_color
+                        break
+            columns.append((x + offset_x, point_y, color))
+        if filled:
+            self.draw_columns(columns, bottom)
+            return
+        previous = columns[0]
+        for point in columns[1:]:
+            self.line(
+                previous[0], previous[1], point[0], point[1], point[2]
+            )
+            previous = point
+
     def _draw_column_fallback(self, columns, bottom, color):
         """Draw columns on firmware without ``FrameBuffer.poly`` support."""
         run_x, run_top = columns[0][0], columns[0][1]
