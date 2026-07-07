@@ -20,6 +20,7 @@ import threading
 import unittest
 import zlib
 import base64
+import serial
 from unittest import mock
 from types import SimpleNamespace
 
@@ -187,6 +188,24 @@ class PicoClientTest(unittest.TestCase):
         self.assertTrue(client.serial.written.endswith(b"\n"))
         self.assertTrue(any("Monitor -> Pico" in message for message in logs.output))
         self.assertTrue(any("Pico -> Monitor" in message for message in logs.output))
+
+    def test_concurrent_serial_close_is_converted_to_disconnect_error(self):
+        """确认 Windows 读取期间串口被关闭时不会泄漏 ctypes TypeError。"""
+        client = PicoJsonClient()
+        device = mock.Mock()
+        device.is_open = True
+
+        def fail_after_close():
+            """模拟 serialwin32 在读取期间被其他线程释放句柄。"""
+            device.is_open = False
+            client.serial = None
+            raise TypeError("byref() argument must be a ctypes instance, not 'NoneType'")
+
+        device.readline.side_effect = fail_after_close
+        client.serial = device
+
+        with self.assertRaisesRegex(serial.SerialException, "串口已关闭"):
+            client._read_protocol_frame("JSONZ")
 
     def test_reboot_sends_command_and_waits_for_ack(self):
         client = PicoJsonClient()
@@ -471,6 +490,17 @@ class PicoClientTest(unittest.TestCase):
                 log_monitor_version()
 
         self.assertIn("Pico Monitor 启动：版本=1.2.3", logs.output[0])
+
+    def test_stop_does_not_close_serial_from_control_thread(self):
+        """确认停止请求仅唤醒主循环，避免控制线程与串口读取并发关闭。"""
+        service = MonitorService.__new__(MonitorService)
+        service.stopping = mock.Mock()
+        service.client = mock.Mock()
+
+        service.stop()
+
+        service.stopping.set.assert_called_once_with()
+        service.client.close.assert_not_called()
 
     def test_sending_uses_latest_snapshot_without_waiting_for_next_collection(self):
         """确认后台采集尚未发布新结果时，发送链路立即复用最近成功快照。"""

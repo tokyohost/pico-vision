@@ -373,11 +373,12 @@ class MonitorService:
         )
 
     def stop(self, signum=None, frame=None):
-        """请求主循环停止，并安全关闭当前串口连接。"""
+        """请求主循环停止，由通信线程在退出阶段统一关闭串口。"""
         del signum, frame
         LOGGER.info("收到停止请求，正在关闭监控程序")
+        # Windows 的 PySerial 正在 ReadFile 时不能由其他线程执行 close，
+        # 否则内部 OVERLAPPED 事件会被置空并触发 ctypes.byref(None) 异常。
         self.stopping.set()
-        self.client.close()
 
     def run(self):
         """持续连接设备、采集指标并发送最新系统快照。"""
@@ -692,6 +693,8 @@ def validate_arguments(arguments):
 
 def main():
     """校验参数并按当前平台启动后台工作进程或 Windows 托盘。"""
+    # 参数解析器会在 --help 场景直接输出中文，必须先于 parse_args 配置编码。
+    _configure_standard_streams()
     arguments = create_argument_parser().parse_args()
     validate_arguments(arguments)
     if (

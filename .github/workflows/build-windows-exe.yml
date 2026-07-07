@@ -70,6 +70,9 @@ jobs:
 
       - name: 构建并验证安装包
         shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
         run: |
           python -m PyInstaller --clean --noconfirm pico_monitor.spec
           Move-Item -LiteralPath "dist/pico-monitor.exe" -Destination "dist/${{ matrix.exe_name }}"

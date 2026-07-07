@@ -450,7 +450,17 @@ class PicoJsonClient:
 
     def _read_protocol_frame(self, label):
         """读取并解析一条 Pico 返回帧，同时输出原始响应日志。"""
-        response = self.serial.readline().strip()
+        device = self.serial
+        if device is None:
+            raise serial.SerialException("Pico 串口已关闭")
+        try:
+            response = device.readline().strip()
+        except TypeError as error:
+            # PySerial serialwin32 在其他线程恰好关闭句柄时可能对空的
+            # OVERLAPPED 事件执行 ctypes.byref；将其归一化为可重连异常。
+            if self.serial is not device or not getattr(device, "is_open", False):
+                raise serial.SerialException("读取 Pico 响应时串口已关闭") from error
+            raise
         if response:
             LOGGER.info(
                 "[Pico -> Monitor][%s][%s 响应] %s",

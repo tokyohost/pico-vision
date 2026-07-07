@@ -33,7 +33,8 @@ ArchitecturesInstallIn64BitMode=x64compatible
 #endif
 
 [Languages]
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+; 将简体中文翻译随源码发布，避免 CI 构建机未安装外部语言包时编译失败。
+Name: "chinesesimplified"; MessagesFile: "packaging\languages\ChineseSimplified.isl"
 
 [Files]
 Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "pico-monitor.exe"; Flags: ignoreversion
