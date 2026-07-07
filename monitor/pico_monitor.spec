@@ -4,6 +4,7 @@
 from pathlib import Path
 
 
+MONITOR_ROOT = Path.cwd()
 optional_fps_binaries = []
 for binary_name in ("PresentMon.exe", "adlx_fps_bridge.dll"):
     binary_path = Path("win/fps/bin") / binary_name
@@ -31,7 +32,8 @@ executable = EXE(
     analysis.datas,
     [],
     name="pico-monitor",
-    icon="icon/icon.png",
+    icon=str(MONITOR_ROOT / "icon" / "icon.png"),
+    version=str(MONITOR_ROOT / "windows_version_info.txt"),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -591,7 +591,7 @@ def main():
     ):
         from windows_tray import WindowsTrayApplication
 
-        return WindowsTrayApplication([*sys.argv[1:], "--worker"]).run()
+        return WindowsTrayApplication.start([*sys.argv[1:], "--worker"])
     configure_logging()
     log_monitor_version()
     if arguments.pico_info:
@@ -602,6 +602,7 @@ def main():
     service = MonitorService(arguments)
     if arguments.worker and getattr(sys, "stdin", None) is not None:
         def listen_for_tray_commands():
+            """处理托盘命令，并在托盘管道关闭时停止后台监控服务。"""
             for line in sys.stdin:
                 command = line.strip()
                 if command == "EXIT_REBOOT":
@@ -632,6 +633,9 @@ def main():
                         )
                     except (TypeError, ValueError, json.JSONDecodeError) as error:
                         LOGGER.warning("自定义样式删除请求无效：%s", error)
+            # 托盘崩溃或被强制结束后，Windows 会关闭其持有的管道写端；
+            # 此处收到 EOF 后主动停止服务，避免遗留孤立的 monitor 进程。
+            service.stop()
 
         threading.Thread(
             target=listen_for_tray_commands,

@@ -51,6 +51,61 @@ class WindowsTraySettingsTest(unittest.TestCase):
 
         self.assertEqual("乙丙".encode("utf-8"), application._read_recent_log(7))
 
+    @mock.patch("win.tray.WindowsTrayApplication._show_copyable_error_dialog")
+    @mock.patch("win.tray.WindowsTrayApplication._configure_tk_runtime")
+    def test_unhandled_crash_is_logged_and_shown_in_copyable_dialog(
+        self,
+        configure_tk_runtime,
+        show_dialog,
+    ):
+        """确认未捕获异常会写入完整堆栈并弹出可复制窗口。"""
+        del configure_tk_runtime
+        application = self._create_log_application()
+        application.crash_dialog_lock = threading.Lock()
+
+        try:
+            raise RuntimeError("测试崩溃")
+        except RuntimeError as error:
+            exception_type, exception, traceback_object = (
+                type(error), error, error.__traceback__
+            )
+            application._report_unhandled_crash(
+                exception_type,
+                exception,
+                traceback_object,
+                "测试线程",
+            )
+
+        crash_files = list((application.data_directory / "crash").glob("*.log"))
+        self.assertEqual(1, len(crash_files))
+        crash_text = crash_files[0].read_text(encoding="utf-8")
+        self.assertIn("测试线程", crash_text)
+        self.assertIn("RuntimeError: 测试崩溃", crash_text)
+        self.assertIn("test_unhandled_crash_is_logged", crash_text)
+        show_dialog.assert_called_once()
+        self.assertIn("RuntimeError: 测试崩溃", show_dialog.call_args.kwargs["detail"])
+
+    @mock.patch("win.tray.WindowsTrayApplication._report_unhandled_crash")
+    @mock.patch(
+        "win.tray.WindowsTrayApplication.__init__",
+        side_effect=RuntimeError("初始化失败"),
+    )
+    def test_startup_crash_uses_emergency_crash_reporter(
+        self,
+        initialize,
+        report_crash,
+    ):
+        """确认托盘构造阶段失败时仍会显示崩溃报告。"""
+        del initialize
+
+        result = WindowsTrayApplication.start(["--worker"])
+
+        self.assertEqual(1, result)
+        report_crash.assert_called_once()
+        self.assertIs(RuntimeError, report_crash.call_args.args[0])
+        self.assertEqual("初始化失败", str(report_crash.call_args.args[1]))
+        self.assertEqual("托盘启动线程", report_crash.call_args.args[3])
+
     @mock.patch("win.tray.subprocess.Popen")
     def test_export_log_creates_file_and_opens_directory(self, popen):
         """确认托盘导出日志后使用资源管理器选中导出文件。"""

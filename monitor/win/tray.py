@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import threading
+import traceback
 import winreg
 from datetime import datetime
 from pathlib import Path
@@ -43,6 +44,28 @@ LOGGER = logging.getLogger("pico-monitor.windows-update")
 class WindowsTrayApplication:
     """管理 Windows 托盘图标、配置界面和无窗口监控工作进程。"""
 
+    @classmethod
+    def start(cls, worker_arguments):
+        """在启动保护边界内构造并运行托盘，捕获初始化阶段异常。"""
+        try:
+            application = cls(worker_arguments)
+        except Exception:
+            exception_type, exception, traceback_object = sys.exc_info()
+            application = cls.__new__(cls)
+            application.data_directory = Path(
+                os.getenv("LOCALAPPDATA", Path.home())
+            ) / "PicoMonitor"
+            application.settings_window = None
+            application.crash_dialog_lock = threading.Lock()
+            application._report_unhandled_crash(
+                exception_type,
+                exception,
+                traceback_object,
+                "托盘启动线程",
+            )
+            return 1
+        return application.run()
+
     def __init__(self, worker_arguments):
         """初始化托盘状态、窗口互斥量、配置存储和后台进程参数。"""
         self.worker_arguments = list(worker_arguments)
@@ -70,6 +93,7 @@ class WindowsTrayApplication:
         self.custom_style_upload_active = threading.Event()
         self.custom_style_delete_messages = queue.Queue()
         self.update_lock = threading.Lock()
+        self.crash_dialog_lock = threading.Lock()
         data_directory = Path(os.getenv("LOCALAPPDATA", Path.home())) / "PicoMonitor"
         data_directory.mkdir(parents=True, exist_ok=True)
         self.data_directory = data_directory
@@ -1142,6 +1166,74 @@ class WindowsTrayApplication:
         dialog.focus_force()
         dialog.wait_window()
 
+    def _report_unhandled_crash(
+        self,
+        exception_type,
+        exception,
+        traceback_object,
+        thread_name="托盘主线程",
+    ):
+        """保存未捕获异常，并显示能够复制完整堆栈的崩溃弹框。"""
+        report = "".join(traceback.format_exception(
+            exception_type,
+            exception,
+            traceback_object,
+        ))
+        crash_directory = self.data_directory / "crash"
+        crash_path = crash_directory / datetime.now().strftime(
+            "crash_%Y%m%d_%H%M%S_%f.log"
+        )
+        try:
+            crash_directory.mkdir(parents=True, exist_ok=True)
+            crash_path.write_text(
+                "线程：{}\n版本：{}\n时间：{}\n\n{}".format(
+                    thread_name,
+                    MONITOR_VERSION,
+                    datetime.now().isoformat(timespec="seconds"),
+                    report,
+                ),
+                encoding="utf-8",
+            )
+        except OSError:
+            crash_path = None
+
+        detail = "线程：{}\n{}".format(thread_name, report)
+        if crash_path is not None:
+            detail = "崩溃日志：{}\n\n{}".format(crash_path, detail)
+        LOGGER.critical("Windows 托盘发生未捕获异常\n%s", report)
+
+        # 多个后台线程同时失败时只显示一个模态窗口，避免 Tk 根窗口互相争用。
+        if not self.crash_dialog_lock.acquire(False):
+            return
+        try:
+            self._configure_tk_runtime()
+            self._show_copyable_error_dialog(
+                None,
+                "OmniWatch USB监控屏崩溃",
+                "应用发生未处理异常，请复制下方崩溃信息并反馈。",
+                detail=detail,
+            )
+        except Exception:
+            LOGGER.exception("显示托盘崩溃弹框失败")
+        finally:
+            self.crash_dialog_lock.release()
+
+    def _install_thread_crash_handler(self):
+        """安装后台线程未捕获异常处理器，并返回原处理器。"""
+        original_hook = threading.excepthook
+
+        def handle_thread_crash(arguments):
+            """把后台线程异常转交给统一崩溃日志与弹框流程。"""
+            self._report_unhandled_crash(
+                arguments.exc_type,
+                arguments.exc_value,
+                arguments.exc_traceback,
+                getattr(arguments.thread, "name", "后台线程"),
+            )
+
+        threading.excepthook = handle_thread_crash
+        return original_hook
+
     @staticmethod
     def _should_use_copyable_custom_style_error(title):
         """判断自定义屏幕弹框中的错误是否需要可复制错误详情。"""
@@ -1639,10 +1731,24 @@ class WindowsTrayApplication:
         """配置 Windows 应用标识并启动后台工作进程与托盘消息循环。"""
         import pystray
 
-        self._configure_windows_taskbar()
-        if not self._acquire_single_instance():
+        original_thread_hook = self._install_thread_crash_handler()
+        try:
+            self._configure_windows_taskbar()
+            if not self._acquire_single_instance():
+                return 0
+            self._start_worker()
+            self.icon = pystray.Icon("pico-monitor", self._create_image(), APPLICATION_NAME, self._build_menu())
+            self.icon.run()
             return 0
-        self._start_worker()
-        self.icon = pystray.Icon("pico-monitor", self._create_image(), APPLICATION_NAME, self._build_menu())
-        self.icon.run()
-        return 0
+        except Exception:
+            exception_type, exception, traceback_object = sys.exc_info()
+            self._report_unhandled_crash(
+                exception_type,
+                exception,
+                traceback_object,
+            )
+            return 1
+        finally:
+            self.stopping.set()
+            self._stop_worker()
+            threading.excepthook = original_thread_hook

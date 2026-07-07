@@ -1,0 +1,31 @@
+# Windows 可执行文件版本资源，用于任务管理器和文件属性展示应用身份。
+VSVersionInfo(
+    ffi=FixedFileInfo(
+        filevers=(1, 0, 0, 0),
+        prodvers=(1, 0, 0, 0),
+        mask=0x3F,
+        flags=0x0,
+        OS=0x40004,
+        fileType=0x1,
+        subtype=0x0,
+        date=(0, 0),
+    ),
+    kids=[
+        StringFileInfo([
+            StringTable(
+                "080404B0",
+                [
+                    StringStruct("CompanyName", "OmniWatch"),
+                    StringStruct("FileDescription", "OmniWatch"),
+                    StringStruct("FileVersion", "1.0.0.0"),
+                    StringStruct("InternalName", "OmniWatch"),
+                    StringStruct("LegalCopyright", "Copyright (c) 2026 xuehui_li"),
+                    StringStruct("OriginalFilename", "pico-monitor.exe"),
+                    StringStruct("ProductName", "OmniWatch"),
+                    StringStruct("ProductVersion", "1.0.0.0"),
+                ],
+            )
+        ]),
+        VarFileInfo([VarStruct("Translation", [2052, 1200])]),
+    ],
+)
