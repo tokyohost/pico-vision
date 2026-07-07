@@ -99,6 +99,7 @@ class ProtocolBackendTest(unittest.TestCase):
         stream = PartialWriteStream(64)
         instance = protocol.JsonProtocol.__new__(protocol.JsonProtocol)
         instance._output = stream
+        instance._dedicated_stream = True
         payload = b'{"device_name":"PICO_LCD","styles":[]}' * 40
         frame = protocol.JsonProtocol._build_frame("PONG", payload)
 
@@ -113,6 +114,7 @@ class ProtocolBackendTest(unittest.TestCase):
         stream = BackpressureStream(63)
         instance = protocol.JsonProtocol.__new__(protocol.JsonProtocol)
         instance._output = stream
+        instance._dedicated_stream = True
         frame = protocol.JsonProtocol._build_frame("PONG", b'{"device_name":"PICO_LCD"}')
 
         instance._write_raw(frame)
