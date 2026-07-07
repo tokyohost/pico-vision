@@ -38,11 +38,12 @@ class WindowsReleaseUpdater:
         """判断最新 Release 是否与当前版本不同。"""
         return str(latest_version) != self.current_version
 
-    def select_monitor_asset(self, assets):
-        """按当前 Python 进程位数选择 Windows Monitor 安装包。"""
+    def select_monitor_asset(self, assets, version):
+        """按当前 Python 进程位数和发布版本选择 Windows Monitor 安装包。"""
         architecture = "x64" if platform.architecture()[0] == "64bit" else "x86"
         return self._required_asset(
-            assets, "OmniWatch-windows-{}-setup.exe".format(architecture)
+            assets,
+            "OmniWatch-windows-{}-setup-v{}.exe".format(architecture, version),
         )
 
     @classmethod

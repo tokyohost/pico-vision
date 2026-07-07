@@ -20,5 +20,5 @@ if errorlevel 1 (
 )
 "%ISCC%" /DAppVersion=development /DArchitecture=x64 /DSourceExe=dist\pico-monitor.exe pico_monitor_setup.iss
 if errorlevel 1 exit /b 1
-echo Windows 安装包已生成：dist\OmniWatch-windows-x64-setup.exe
+echo Windows 安装包已生成：dist\OmniWatch-windows-x64-setup-vdevelopment.exe
 endlocal

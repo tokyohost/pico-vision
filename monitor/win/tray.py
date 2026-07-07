@@ -858,7 +858,7 @@ class WindowsTrayApplication:
                 icon.notify("当前已是最新版本：{}".format(MONITOR_VERSION), APPLICATION_NAME)
                 return
             pico_asset = updater.select_pico_asset(assets, latest_version)
-            monitor_asset = updater.select_monitor_asset(assets)
+            monitor_asset = updater.select_monitor_asset(assets, latest_version)
             icon.notify("发现版本 {}，正在下载更新".format(latest_version), APPLICATION_NAME)
             pico_path = updater.download(pico_asset, ".zip")
             monitor_path = updater.download(monitor_asset, ".exe")

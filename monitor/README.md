@@ -85,7 +85,7 @@ build-exe.bat
 
 安装包和生成的 Windows EXE 清单均要求管理员权限，启动时系统会显示 UAC 提权确认窗口；用户拒绝提权时程序不会运行。
 
-最终发布文件为 `dist\OmniWatch-windows-x64-setup.exe`，`dist\pico-monitor.exe` 仅作为安装包构建的中间产物。安装完成后从开始菜单或桌面快捷方式启动，程序会驻留系统托盘，运行日志位于 `%LOCALAPPDATA%\PicoMonitor\pico-monitor.log`。右键托盘图标选择“日志导出”，可导出最近 1 MB 日志并打开导出文件目录；勾选“Dev 模式”会保存配置并重启后台监控，使开发模式立即生效。选择“检查更新”可在弹窗中确认或修改更新地址，程序会先更新 Pico 固件，再运行 Monitor 安装包并自动重启。
+最终发布文件为 `dist\OmniWatch-windows-x64-setup-v<版本>.exe`，`dist\pico-monitor.exe` 仅作为安装包构建的中间产物。安装完成后从开始菜单或桌面快捷方式启动，程序会驻留系统托盘，运行日志位于 `%LOCALAPPDATA%\PicoMonitor\pico-monitor.log`。右键托盘图标选择“日志导出”，可导出最近 1 MB 日志并打开导出文件目录；勾选“Dev 模式”会保存配置并重启后台监控，使开发模式立即生效。选择“检查更新”可在弹窗中确认或修改更新地址，程序会先更新 Pico 固件，再运行 Monitor 安装包并自动重启。
 
 日志使用 `[Monitor -> Pico]` 和 `[Pico -> Monitor]` 标识通信方向。Linux 服务可通过 `journalctl -u pico-monitor -f` 实时查看相同内容。
 
@@ -230,8 +230,8 @@ python pico_monitor.py `
 
 `pico-project/.github/workflows` 提供 Windows 安装包与 Linux DEB 两套工作流。手动运行工作流时只生成 Actions Artifact；推送 `v` 开头的标签时会自动创建或更新 GitHub Release，并上传以下产物：
 
-- `OmniWatch-windows-x86-setup.exe`
-- `OmniWatch-windows-x64-setup.exe`
+- `OmniWatch-windows-x86-setup-v<版本>.exe`
+- `OmniWatch-windows-x64-setup-v<版本>.exe`
 - `OmniWatch_<版本>_amd64.deb`：Intel/AMD 64 位电脑
 - `OmniWatch_<版本>_arm64.deb`：ARM 64 位设备
 - `OmniWatch_<版本>_armhf.deb`：ARM 32 位硬浮点设备
