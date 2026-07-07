@@ -425,18 +425,14 @@ class MonitorService:
                 if isinstance(error, PicoRestartingError):
                     self.stopping.wait(self.arguments.reconnect_interval)
                     continue
-                # The COM port may reappear before the firmware can answer PING.
-                # Retry a failed probe even if that same port is already present.
-                if probing:
-                    self.stopping.wait(self.arguments.reconnect_interval)
-                    continue
-                if not self._wait_for_usb_addition(ports_before_probe):
-                    break
-                LOGGER.info(
-                    "USB 端口已增加，%.1f 秒后重新探测 Pico LCD",
-                    self.arguments.reconnect_interval,
-                )
+                # 探测失败和已连接后的通信异常都按固定间隔重新握手，避免同名 COM 口常驻时卡在等待新增端口。
+                if not probing:
+                    LOGGER.info(
+                        "串口连接已断开，%.1f 秒后重新探测 Pico LCD",
+                        self.arguments.reconnect_interval,
+                    )
                 self.stopping.wait(self.arguments.reconnect_interval)
+                continue
         reboot_requested = getattr(self, "reboot_requested", None)
         reboot_result = None
         if reboot_requested is not None and reboot_requested.is_set() and self.client.is_connected:

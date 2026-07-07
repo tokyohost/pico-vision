@@ -25,12 +25,12 @@ jobs:
             bits: 32
             installer_arch: x86
             exe_name: pico-monitor-windows-x86.exe
-            asset_name: pico-monitor-windows-x86-setup.exe
+            asset_name: OmniWatch-windows-x86-setup.exe
           - architecture: x64
             bits: 64
             installer_arch: x64
             exe_name: pico-monitor-windows-x64.exe
-            asset_name: pico-monitor-windows-x64-setup.exe
+            asset_name: OmniWatch-windows-x64-setup.exe
 
     defaults:
       run:

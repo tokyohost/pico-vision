@@ -42,7 +42,7 @@ class WindowsReleaseUpdater:
         """按当前 Python 进程位数选择 Windows Monitor 安装包。"""
         architecture = "x64" if platform.architecture()[0] == "64bit" else "x86"
         return self._required_asset(
-            assets, "pico-monitor-windows-{}-setup.exe".format(architecture)
+            assets, "OmniWatch-windows-{}-setup.exe".format(architecture)
         )
 
     @classmethod

@@ -89,6 +89,22 @@ class BadJsonSerial(FakeSerial):
         return build_frame("ERR", b"BAD_JSON")
 
 
+
+class ProtocolTimingBeforeAckSerial(FakeSerial):
+    """模拟 Pico 先返回 JSONZ 解析耗时事件再返回确认帧。"""
+
+    def __init__(self):
+        """准备按顺序返回的协议帧列表。"""
+        super().__init__()
+        self.responses = [
+            build_frame("EVENT", b"PROTOCOL_TIMING:TYPE=JSONZ:BYTES=1919:JSON_BYTES=2999"),
+            build_frame("ACK", b"JSON"),
+        ]
+
+    def readline(self):
+        """返回下一条 Pico 响应帧。"""
+        return self.responses.pop(0) if self.responses else b""
+
 class FatalMemorySerial(FakeSerial):
     """模拟 Pico 堆内存不足并即将自动重启。"""
 
@@ -221,6 +237,15 @@ class PicoClientTest(unittest.TestCase):
             "style_name": "clock",
         })
         self.assertEqual(result["style_name"], "clock")
+
+    def test_protocol_timing_extends_json_ack_wait(self):
+        """确认收到 JSONZ 解析耗时事件后继续等待随后的 ACK:JSON。"""
+        client = PicoJsonClient()
+        client.serial = ProtocolTimingBeforeAckSerial()
+
+        client.send({"version": 1})
+
+        self.assertEqual(client.serial.responses, [])
 
     def test_bad_json_keeps_serial_connected(self):
         """确认单帧 JSON 解析失败时保持串口连接并等待下一帧。"""
@@ -498,6 +523,45 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual(service.run(), 0)
 
         self.assertEqual(service.client.connect.call_count, 3)
+        service.stopping.wait.assert_any_call(3.0)
+
+    def test_connected_send_failure_retries_without_usb_addition(self):
+        """确认已连接后的通信异常不再等待新增 COM 口才重连。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(
+            port=None,
+            ping_target="127.0.0.1",
+            interval=1.0,
+            reconnect_interval=3.0,
+            screen_rotation=0,
+            network_unit="MB",
+            lcd_style="horizontal_disk",
+            dev=False,
+            upgrade_pico=False,
+            once=False,
+        )
+        service.stopping = mock.Mock()
+        service.stopping.is_set.side_effect = [False, True]
+        service.client = mock.Mock()
+        service.client.is_connected = True
+        service.client.available_ports.return_value = frozenset({"COM11"})
+        service.client.send.side_effect = RuntimeError("等待 Pico JSON 接收确认超时")
+        service._collect_snapshot = mock.Mock(return_value={"version": 1})
+        service._wait_for_usb_addition = mock.Mock(return_value=False)
+        service.custom_style_catalog_requested = mock.Mock()
+        service.custom_style_catalog_requested.is_set.return_value = False
+        service.screenshot_requested = mock.Mock()
+        service.screenshot_requested.is_set.return_value = False
+        service.custom_style_uploads = mock.Mock()
+        service.custom_style_uploads.empty.return_value = True
+        service.custom_style_deletes = mock.Mock()
+        service.custom_style_deletes.empty.return_value = True
+        service.reboot_requested = mock.Mock()
+        service.reboot_requested.is_set.return_value = False
+
+        self.assertEqual(service.run(), 0)
+
+        service._wait_for_usb_addition.assert_not_called()
         service.stopping.wait.assert_any_call(3.0)
 
     def test_usb_removal_does_not_trigger_probe(self):

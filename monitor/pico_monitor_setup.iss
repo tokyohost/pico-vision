@@ -21,7 +21,7 @@ DefaultDirName={autopf}\OmniWatch Monitor
 DefaultGroupName=OmniWatch Monitor
 DisableProgramGroupPage=yes
 OutputDir=dist
-OutputBaseFilename=pico-monitor-windows-{#Architecture}-setup
+OutputBaseFilename=OmniWatch-windows-{#Architecture}-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -43,4 +43,4 @@ Name: "{autodesktop}\OmniWatch Monitor"; Filename: "{app}\pico-monitor.exe"; Tas
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加快捷方式："; Flags: unchecked
 
 [Run]
-Filename: "{app}\pico-monitor.exe"; Description: "启动 OmniWatch Monitor"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\pico-monitor.exe"; Description: "启动 OmniWatch Monitor"; Flags: nowait postinstall skipifsilent runascurrentuser
