@@ -19,6 +19,7 @@ from windows_tray import (
     style_names,
 )
 from win.tray import APPLICATION_NAME
+from style_validator import ValidatedStyle
 
 
 class WindowsTraySettingsTest(unittest.TestCase):
@@ -83,6 +84,21 @@ class WindowsTraySettingsTest(unittest.TestCase):
         icon.notify.assert_not_called()
 
     @mock.patch("win.tray.threading.Thread")
+    def test_log_window_uses_single_internal_window(self, thread_class):
+        """确认日志功能只创建一个应用内窗口而不启动外部控制台。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.log_window_lock = threading.Lock()
+        application.log_window_open = False
+
+        application._show_log()
+        application._show_log()
+
+        thread_class.assert_called_once()
+        self.assertEqual("日志窗口", thread_class.call_args.kwargs["name"])
+        thread_class.return_value.start.assert_called_once_with()
+        self.assertTrue(application.log_window_open)
+
+    @mock.patch("win.tray.threading.Thread")
     def test_about_window_can_only_be_opened_once(self, thread_class):
         """确认关于应用窗口不能被重复创建。"""
         application = WindowsTrayApplication.__new__(WindowsTrayApplication)
@@ -137,6 +153,45 @@ class WindowsTraySettingsTest(unittest.TestCase):
 
         self.assertTrue(application._get_device_connection()["connected"])
         self.assertEqual(connection, application.device_connection_messages.get_nowait())
+
+    @mock.patch("style_validator.StyleFileValidator.validate")
+    def test_custom_style_upload_rejects_existing_filename(self, validate):
+        """确认 customStyles 已存在同名文件时不会向工作进程发送上传请求。"""
+        validate.return_value = ValidatedStyle(
+            name="clock",
+            chinese_name="时钟",
+            filename="style_clock.py",
+            source=b"source",
+        )
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.worker_process = mock.Mock()
+
+        with self.assertRaisesRegex(ValueError, "同名文件"):
+            application.request_custom_style_upload("style_clock.py", {"clock"})
+
+        application.worker_process.stdin.write.assert_not_called()
+
+    @mock.patch("style_validator.StyleFileValidator.validate")
+    def test_custom_style_upload_sends_validated_source(self, validate):
+        """确认通过校验的样式源码会封装为工作进程上传指令。"""
+        validate.return_value = ValidatedStyle(
+            name="clock",
+            chinese_name="时钟",
+            filename="style_clock.py",
+            source=b"source",
+        )
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.worker_process = mock.Mock()
+        application.worker_process.poll.return_value = None
+
+        result = application.request_custom_style_upload("style_clock.py", set())
+
+        command = application.worker_process.stdin.write.call_args.args[0]
+        payload = json.loads(command.removeprefix("CUSTOM_STYLE_UPLOAD:").strip())
+        self.assertEqual("clock", result.name)
+        self.assertEqual("style_clock.py", payload["filename"])
+        self.assertEqual("c291cmNl", payload["content"])
+        application.worker_process.stdin.flush.assert_called_once_with()
 
     def test_every_style_has_a_chinese_label(self):
         for name in STYLE_NAMES:

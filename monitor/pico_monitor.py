@@ -17,6 +17,7 @@ import argparse
 import json
 import logging
 import os
+import queue
 import signal
 import sys
 import threading
@@ -143,6 +144,7 @@ class MonitorService:
         self.stopping = threading.Event()
         self.reboot_requested = threading.Event()
         self.custom_style_catalog_requested = threading.Event()
+        self.custom_style_uploads = queue.Queue()
         self.available_styles = set(BUILTIN_LCD_STYLES)
 
     def _synchronize_style_catalog(self):
@@ -192,6 +194,33 @@ class MonitorService:
             result = {"status": "error", "message": str(error), "styles": []}
         print(
             "CUSTOM_STYLE_LIST_RESULT:"
+            + json.dumps(result, ensure_ascii=False, separators=(",", ":")),
+            flush=True,
+        )
+
+    def request_custom_style_upload(self, payload):
+        """安排主循环在串口空闲时上传一个已校验的自定义样式。"""
+        self.custom_style_uploads.put(dict(payload))
+
+    def _publish_custom_style_upload(self):
+        """执行待处理的自定义样式上传并向托盘输出结构化结果。"""
+        payload = self.custom_style_uploads.get_nowait()
+        try:
+            import base64
+
+            content = base64.b64decode(payload["content"], validate=True)
+            data = self.client.upload_style(
+                payload["filename"],
+                payload["style_name"],
+                content,
+            )
+            result = {"status": "ok", "data": data}
+            self.client.styles = self.client.request_style_catalog()
+            self._synchronize_style_catalog()
+        except (KeyError, ValueError, OSError, RuntimeError, serial.SerialException) as error:
+            result = {"status": "error", "message": str(error)}
+        print(
+            "CUSTOM_STYLE_UPLOAD_RESULT:"
             + json.dumps(result, ensure_ascii=False, separators=(",", ":")),
             flush=True,
         )
@@ -248,6 +277,8 @@ class MonitorService:
                     return self._upgrade_pico()
                 if self.custom_style_catalog_requested.is_set():
                     self._publish_custom_style_catalog()
+                if not self.custom_style_uploads.empty():
+                    self._publish_custom_style_upload()
                 started = time.monotonic()
                 snapshot = self._collect_snapshot()
                 collection_elapsed = time.monotonic() - started
@@ -509,6 +540,13 @@ def main():
                         LOGGER.warning("显示设置热更新失败：%s", error)
                 elif command == "CUSTOM_STYLE_LIST":
                     service.request_custom_style_catalog()
+                elif command.startswith("CUSTOM_STYLE_UPLOAD:"):
+                    try:
+                        service.request_custom_style_upload(
+                            json.loads(command[len("CUSTOM_STYLE_UPLOAD:"):])
+                        )
+                    except (TypeError, ValueError, json.JSONDecodeError) as error:
+                        LOGGER.warning("自定义样式上传请求无效：%s", error)
 
         threading.Thread(
             target=listen_for_tray_commands,

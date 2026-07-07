@@ -493,6 +493,37 @@ class PicoJsonClient:
                 raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
         raise RuntimeError("等待 Pico 返回自定义样式清单超时")
 
+    def upload_style(self, filename, style_name, content, timeout=10.0):
+        """向 Pico 上传一个已经由 Monitor 校验的自定义样式文件。"""
+        if not self.is_connected:
+            raise RuntimeError("Pico 串口尚未连接")
+        request_id = "style-upload-{}".format(int(time.time() * 1000))
+        packet = self.build_command_packet(
+            "uploadStyle",
+            params={
+                "filename": filename,
+                "style_name": style_name,
+                "content": base64.b64encode(content).decode("ascii"),
+            },
+            request_id=request_id,
+        )
+        self.serial.write(packet)
+        self.serial.flush()
+        deadline = time.monotonic() + max(0.1, float(timeout))
+        while time.monotonic() < deadline:
+            response = self.serial.readline().strip()
+            frame = parse_frame(response)
+            if frame and frame[0] == "COMMAND":
+                result = json.loads(frame[1].decode("utf-8"))
+                if result.get("request_id") != request_id:
+                    continue
+                if result.get("status") != "ok":
+                    raise RuntimeError(result.get("error") or "自定义样式上传失败")
+                return result.get("data") or {}
+            if frame and frame[0] == "ERR":
+                raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
+        raise RuntimeError("等待 Pico 返回自定义样式上传结果超时")
+
     def close(self):
         """安全关闭串口，并恢复为未连接状态。"""
         device, self.serial = self.serial, None
