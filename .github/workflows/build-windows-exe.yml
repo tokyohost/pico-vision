@@ -54,7 +54,7 @@ jobs:
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.Substring(1)
-          $content = "`"`"`"保存构建时写入的 Monitor 版本及 GitHub 仓库信息。`"`"`"`nMONITOR_VERSION = `"$version`"`nGITHUB_REPOSITORY = `"$env:GITHUB_REPOSITORY`"`n"
+          $content = "`"`"`"保存构建时写入的 Monitor 版本及 GitHub 仓库信息。`"`"`"`nMONITOR_VERSION = `"$version`"`nGITHUB_REPOSITORY = `"tokyohost/omniwatch-doc`"`n"
           [IO.File]::WriteAllText((Join-Path $PWD "build_info.py"), $content, [Text.UTF8Encoding]::new($false))
 
       - name: 执行单元测试

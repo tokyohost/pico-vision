@@ -415,33 +415,24 @@ class WindowsTraySettingsTest(unittest.TestCase):
         thread_class.return_value.start.assert_called_once_with()
         icon.notify.assert_called_once_with("更新任务正在执行，请稍候", APPLICATION_NAME)
 
-    def test_cancel_update_dialog_releases_task_lock(self):
-        """确认关闭更新地址窗口后可以再次执行检查。"""
+    @mock.patch("win.tray.WindowsReleaseUpdater")
+    def test_update_uses_fixed_repository_address(self, updater_class):
+        """确认版本检查始终使用固定发布仓库地址。"""
         application = WindowsTrayApplication.__new__(WindowsTrayApplication)
         application.update_lock = threading.Lock()
         application.update_lock.acquire()
-        application._ask_update_url = mock.Mock(return_value=None)
-        icon = mock.Mock()
-
-        application._prompt_and_perform_update(icon)
-
-        self.assertTrue(application.update_lock.acquire(blocking=False))
-
-    def test_confirm_update_dialog_passes_address_to_updater(self):
-        """确认地址窗口确定后保存配置并进入更新流程。"""
-        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
-        application.update_lock = threading.Lock()
-        application.update_lock.acquire()
-        application.settings = dict(DEFAULT_SETTINGS)
-        application.settings_store = mock.Mock()
-        application._ask_update_url = mock.Mock(return_value="https://updates.example/latest")
         application._perform_update = mock.Mock()
+        updater_class.return_value.default_update_url.return_value = (
+            "https://api.github.com/repos/tokyohost/omniwatch-doc/releases/latest"
+        )
         icon = mock.Mock()
 
         application._prompt_and_perform_update(icon)
 
-        application.settings_store.save.assert_called_once_with(application.settings)
-        application._perform_update.assert_called_once_with(icon, "https://updates.example/latest")
+        application._perform_update.assert_called_once_with(
+            icon,
+            "https://api.github.com/repos/tokyohost/omniwatch-doc/releases/latest",
+        )
 
     def test_empty_update_address_uses_default(self):
         """确认更新地址留空时使用正式构建内置的默认地址。"""

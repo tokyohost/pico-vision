@@ -789,23 +789,9 @@ class WindowsTrayApplication:
         ).start()
 
     def _prompt_and_perform_update(self, icon):
-        """在工作线程中运行 Tk 消息循环，确认地址后继续执行更新。"""
-        handoff_to_updater = False
-        try:
-            update_url = self._ask_update_url()
-            if update_url is None:
-                return
-            self.settings["update_url"] = update_url
-            self.settings_store.save(self.settings)
-            handoff_to_updater = True
-        except Exception as error:
-            LOGGER.exception("打开更新地址窗口失败：%s", error)
-            icon.notify("无法打开更新地址窗口，请查看日志", APPLICATION_NAME)
-            return
-        finally:
-            if not handoff_to_updater:
-                self.update_lock.release()
-        self._perform_update(icon, update_url)
+        """使用固定发布仓库地址执行在线更新。"""
+        updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, MONITOR_VERSION)
+        self._perform_update(icon, updater.default_update_url())
 
     def _ask_update_url(self):
         """显示更新地址输入框，返回确认后的 HTTP 地址。"""

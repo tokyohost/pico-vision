@@ -15,4 +15,4 @@
 
 
 MONITOR_VERSION = "development"
-GITHUB_REPOSITORY = ""
+GITHUB_REPOSITORY = "tokyohost/omniwatch-doc"
