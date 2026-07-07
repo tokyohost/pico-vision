@@ -277,6 +277,24 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertEqual(style_names(loaded), {"custom_clock": "自定义时钟"})
         self.assertEqual(style_label("custom_clock", loaded), "自定义时钟（custom_clock）")
 
+    def test_tray_reloads_pico_style_catalog_without_replacing_other_settings(self):
+        """确认托盘刷新 Pico 样式时同步选中项且不覆盖其他内存配置。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.settings = dict(DEFAULT_SETTINGS, dev=True, lcd_style="simple")
+        application.settings_store = mock.Mock()
+        application.settings_store.load.return_value = dict(
+            DEFAULT_SETTINGS,
+            styles=[{"name": "custom_clock", "chinese_name": "自定义时钟", "type": "custom"}],
+            lcd_style="custom_clock",
+            dev=False,
+        )
+
+        application._reload_style_catalog()
+
+        self.assertEqual("custom_clock", application.settings["lcd_style"])
+        self.assertEqual({"custom_clock": "自定义时钟"}, style_names(application.settings))
+        self.assertTrue(application.settings["dev"])
+
 
 if __name__ == "__main__":
     unittest.main()

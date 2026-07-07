@@ -300,6 +300,71 @@ class SimpleStyleTest(unittest.TestCase):
         self.assertGreater(len(set(canvas.colors)), 3)
         self.assertEqual(canvas.pixel_calls, 0)
 
+    def test_gradient_fill_stays_below_descending_line(self):
+        """确认回退逐列填充不会越过下降折线边界。"""
+        class BoundaryCanvas:
+            """记录用于校验面积边界的渐变色带矩形。"""
+
+            def __init__(self):
+                """初始化矩形调用记录。"""
+                self.rectangles = []
+
+            def fill_rect(self, x, y, width, height, color):
+                """记录渐变填充矩形的位置与尺寸。"""
+                del color
+                self.rectangles.append((x, y, width, height))
+
+            def line(self, x1, y1, x2, y2, color):
+                """忽略边界测试不需要检查的折线调用。"""
+                del x1, y1, x2, y2, color
+
+        canvas = BoundaryCanvas()
+
+        SimpleStyle()._gradient_history(
+            canvas, 0, 0, 10, 10, [100, 0], BLUE, True
+        )
+
+        self.assertTrue(canvas.rectangles)
+        for x, y, width, height in canvas.rectangles:
+            self.assertGreater(height, 0)
+            self.assertGreaterEqual(y, x + width - 1)
+
+    def test_gradient_polygons_share_boundaries_without_gaps(self):
+        """确认三层渐变多边形首尾相接并完整覆盖到图表底部。"""
+        class PolygonCanvas:
+            """记录原生渐变多边形及最终折线。"""
+
+            def __init__(self):
+                """初始化多边形记录列表。"""
+                self.polygons = []
+
+            def fill_polygon(self, points, color):
+                """记录多边形并模拟原生填充成功。"""
+                del color
+                self.polygons.append(list(points))
+                return True
+
+            def line(self, x1, y1, x2, y2, color):
+                """忽略本测试不检查的折线调用。"""
+                del x1, y1, x2, y2, color
+
+        canvas = PolygonCanvas()
+
+        SimpleStyle()._gradient_history(
+            canvas, 0, 0, 10, 10, [100, 50, 0], BLUE, True
+        )
+
+        self.assertEqual(len(canvas.polygons), 3)
+        point_count = len(canvas.polygons[0]) // 2
+        first_lower = list(reversed(canvas.polygons[0][point_count:]))
+        second_upper = canvas.polygons[1][:point_count]
+        second_lower = list(reversed(canvas.polygons[1][point_count:]))
+        third_upper = canvas.polygons[2][:point_count]
+        third_lower = canvas.polygons[2][point_count:]
+        self.assertEqual(first_lower, second_upper)
+        self.assertEqual(second_lower, third_upper)
+        self.assertTrue(all(point[1] == 9 for point in third_lower))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -32,7 +32,7 @@ class SimpleStyle(HorizontalDiskStyle):
             ("storage_summary", 106, 2, 212, 43),
             ("disk_row_0", 106, 48, 212, 52),
             ("disk_row_1", 106, 103, 212, 52),
-            ("disk_row_2", 106, 158, 212, 52),
+            ("disk_row_2", 106, 158, 212, 55),
             ("footer", 2, 216, 316, 22),
         ]
 
@@ -90,7 +90,7 @@ class SimpleStyle(HorizontalDiskStyle):
         return (red << 11) | (green << 5) | blue
 
     def _gradient_history(self, canvas, x, y, width, height, values, color, percentage=False):
-        """使用少量竖线色带绘制由折线向底部变暗的实心渐变面积图。"""
+        """使用三层精确轮廓绘制由折线向底部变暗的实心渐变面积图。"""
         if not values or len(values) < 2:
             return
         maximum = 100 if percentage else max(1, max(self._number(value) for value in values))
@@ -106,9 +106,38 @@ class SimpleStyle(HorizontalDiskStyle):
             ratio = max(0, min(1, self._number(value) / maximum))
             points.append((point_x, y + height - 1 - int(ratio * (height - 1))))
         bottom = y + height - 1
+        contours = []
+        for level in range(4):
+            contours.append([
+                (point_x, point_y + (bottom - point_y) * level // 3)
+                for point_x, point_y in points
+            ])
+        polygons = [
+            contours[index] + list(reversed(contours[index + 1]))
+            for index in range(3)
+        ]
+        fill_polygon = getattr(canvas, "fill_polygon", None)
+        polygon_filled = bool(
+            callable(fill_polygon)
+            and fill_polygon(polygons[0], gradient_colors[0])
+        )
+        if polygon_filled:
+            fill_polygon(polygons[1], gradient_colors[1])
+            fill_polygon(polygons[2], gradient_colors[2])
+        else:
+            self._gradient_history_columns(
+                canvas, x, width, bottom, points, gradient_colors
+            )
+        previous = points[0]
+        for point in points[1:]:
+            canvas.line(previous[0], previous[1], point[0], point[1], color)
+            previous = point
+
+    @staticmethod
+    def _gradient_history_columns(canvas, x, width, bottom, points, colors):
+        """在不支持多边形填充时逐列精确绘制三层渐变面积。"""
         segment_index = 1
-        # 全图统一每三个横向像素采样一次，避免每段折线重复填充边界列。
-        for draw_x in range(x, x + width, 3):
+        for draw_x in range(x, x + width):
             while segment_index < len(points) - 1 and draw_x > points[segment_index][0]:
                 segment_index += 1
             previous = points[segment_index - 1]
@@ -117,20 +146,19 @@ class SimpleStyle(HorizontalDiskStyle):
             draw_y = previous[1] + int(
                 (point[1] - previous[1]) * (draw_x - previous[0]) / span
             )
-            fill_height = bottom - draw_y + 1
-            column_width = min(3, x + width - draw_x)
-            for band_index, band_color in enumerate(gradient_colors):
-                band_top = draw_y + fill_height * band_index // 3
-                band_bottom = draw_y + fill_height * (band_index + 1) // 3 - 1
-                if band_bottom >= band_top:
-                    canvas.fill_rect(
-                        draw_x, band_top, column_width,
-                        band_bottom - band_top + 1, band_color,
-                    )
-        previous = points[0]
-        for point in points[1:]:
-            canvas.line(previous[0], previous[1], point[0], point[1], color)
-            previous = point
+            boundaries = (
+                draw_y,
+                draw_y + (bottom - draw_y) // 3,
+                draw_y + (bottom - draw_y) * 2 // 3,
+                bottom,
+            )
+            for band_index, band_color in enumerate(colors):
+                band_top = boundaries[band_index]
+                band_bottom = boundaries[band_index + 1]
+                canvas.fill_rect(
+                    draw_x, band_top, 1,
+                    band_bottom - band_top + 1, band_color,
+                )
 
     def _draw_metric_card(self, canvas, y, title, data, color):
         """绘制 CPU、内存或 GPU 的百分比与渐变历史卡片。"""
@@ -184,12 +212,13 @@ class SimpleStyle(HorizontalDiskStyle):
             if selected_row is not None and index != selected_row:
                 continue
             x, y = 106, 48 + index * 55
+            card_height = 55 if index == 2 else 52
             percent = int(self._number(disk.get("percent")))
             usage_color = self._disk_usage_color(percent)
             frame_color, name_color, all_red, show_warning = self._health_display(
                 disk.get("health", 0), usage_color
             )
-            self._frame(canvas, x, y, 212, 52, frame_color)
+            self._frame(canvas, x, y, 212, card_height, frame_color)
             name = self._format_disk_name(disk.get("name", "DISK{}".format(index)), 8)
             canvas.text(x + 6, y + 5, "WARN" if show_warning else name, RED if all_red else name_color, 1)
             canvas.text(x + 6, y + 20, "{}%".format(percent), RED if all_red else usage_color, 2)
@@ -241,7 +270,7 @@ class SimpleStyle(HorizontalDiskStyle):
             self._draw_network_simple(canvas, snapshot)
         if self._visible(canvas, 2, 45):
             self._draw_storage_summary(canvas, snapshot)
-        if self._visible(canvas, 48, 210):
+        if self._visible(canvas, 48, 213):
             self._draw_disk_cards(canvas, snapshot)
         if self._visible(canvas, 216, 238):
             self._draw_footer_simple(canvas, snapshot)

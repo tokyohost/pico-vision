@@ -24,4 +24,4 @@ analysis = Analysis(
     optimize=0,
 )
 python_archive = PYZ(analysis.pure)
-executable = EXE(python_archive, analysis.scripts, analysis.binaries, analysis.datas, [], name="pico-monitor", debug=False, bootloader_ignore_signals=False, strip=False, upx=True, console=False, uac_admin=False, disable_windowed_traceback=False)
+executable = EXE(python_archive, analysis.scripts, analysis.binaries, analysis.datas, [], name="pico-monitor", debug=False, bootloader_ignore_signals=False, strip=False, upx=True, console=False, uac_admin=True, disable_windowed_traceback=False)

@@ -181,6 +181,12 @@ class _NvmlUtilization(ctypes.Structure):
     _fields_ = [("gpu", ctypes.c_uint), ("memory", ctypes.c_uint)]
 
 
+class _NvmlMemory(ctypes.Structure):
+    """描述 NVML 返回的 GPU 专用显存容量。"""
+
+    _fields_ = [("total", ctypes.c_ulonglong), ("free", ctypes.c_ulonglong), ("used", ctypes.c_ulonglong)]
+
+
 class _NvmlGpuBackend:
     """通过进程内常驻 NVML 接口采集 NVIDIA GPU 使用率。"""
 
@@ -234,15 +240,34 @@ class _NvmlGpuBackend:
         self.library.nvmlDeviceGetHandleByIndex_v2.restype = ctypes.c_int
         self.library.nvmlDeviceGetUtilizationRates.argtypes = [ctypes.c_void_p, ctypes.POINTER(_NvmlUtilization)]
         self.library.nvmlDeviceGetUtilizationRates.restype = ctypes.c_int
+        self.library.nvmlDeviceGetMemoryInfo.argtypes = [ctypes.c_void_p, ctypes.POINTER(_NvmlMemory)]
+        self.library.nvmlDeviceGetMemoryInfo.restype = ctypes.c_int
+        self.library.nvmlDeviceGetTemperature.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_uint)]
+        self.library.nvmlDeviceGetTemperature.restype = ctypes.c_int
 
     def sample(self):
-        """返回全部 NVIDIA GPU 中最高的核心使用率。"""
-        values = []
+        """返回全部 NVIDIA GPU 的使用率、专用显存与最高温度。"""
+        percentages = []
+        used_bytes = 0
+        total_bytes = 0
+        temperatures = []
         for device in self.devices:
             utilization = _NvmlUtilization()
             if self.library.nvmlDeviceGetUtilizationRates(device, ctypes.byref(utilization)) == 0:
-                values.append(utilization.gpu)
-        return max(values) if values else None
+                percentages.append(utilization.gpu)
+            memory = _NvmlMemory()
+            if self.library.nvmlDeviceGetMemoryInfo(device, ctypes.byref(memory)) == 0:
+                used_bytes += memory.used
+                total_bytes += memory.total
+            temperature = ctypes.c_uint()
+            if self.library.nvmlDeviceGetTemperature(device, 0, ctypes.byref(temperature)) == 0:
+                temperatures.append(temperature.value)
+        return {
+            "percent": max(percentages) if percentages else None,
+            "dedicated_memory_used_bytes": used_bytes if total_bytes else None,
+            "dedicated_memory_total_bytes": total_bytes or None,
+            "temperature_c": max(temperatures) if temperatures else None,
+        }
 
     def close(self):
         """关闭已经初始化的 NVML 会话。"""
@@ -329,7 +354,12 @@ class _WindowsPdhGpuBackend:
             return None
         items = ctypes.cast(buffer, ctypes.POINTER(_PdhFormattedItem))
         values = [items[index].value.double_value for index in range(item_count.value) if items[index].value.status == 0]
-        return max(values) if values else None
+        return {
+            "percent": max(values) if values else None,
+            "dedicated_memory_used_bytes": None,
+            "dedicated_memory_total_bytes": None,
+            "temperature_c": None,
+        }
 
     def close(self):
         """关闭 PDH 查询句柄。"""
@@ -344,19 +374,44 @@ class _LinuxSysfsGpuBackend:
 
     def __init__(self):
         """缓存所有可读取的 GPU 忙碌百分比文件路径。"""
-        self.paths = tuple(Path("/sys/class/drm").glob("card*/device/gpu_busy_percent"))
-        if not self.paths:
+        self.devices = tuple(
+            path for path in Path("/sys/class/drm").glob("card*/device")
+            if (path / "gpu_busy_percent").is_file()
+        )
+        if not self.devices:
             raise OSError("未发现可用 GPU sysfs 指标")
 
     def sample(self):
-        """返回全部 sysfs GPU 中最高的忙碌百分比。"""
-        values = []
-        for path in self.paths:
+        """返回全部 sysfs GPU 的使用率、专用显存与最高温度。"""
+        percentages = []
+        used_bytes = 0
+        total_bytes = 0
+        temperatures = []
+        for device in self.devices:
             try:
-                values.append(float(path.read_text(encoding="ascii").strip()))
+                percentages.append(float((device / "gpu_busy_percent").read_text(encoding="ascii").strip()))
             except (OSError, ValueError):
-                continue
-        return max(values) if values else None
+                pass
+            try:
+                total = int((device / "mem_info_vram_total").read_text(encoding="ascii").strip())
+                used = int((device / "mem_info_vram_used").read_text(encoding="ascii").strip())
+                total_bytes += total
+                used_bytes += used
+            except (OSError, ValueError):
+                pass
+            for path in device.glob("hwmon/hwmon*/temp*_input"):
+                try:
+                    value = float(path.read_text(encoding="ascii").strip()) / 1000
+                except (OSError, ValueError):
+                    continue
+                if 0 < value < 150:
+                    temperatures.append(value)
+        return {
+            "percent": max(percentages) if percentages else None,
+            "dedicated_memory_used_bytes": used_bytes if total_bytes else None,
+            "dedicated_memory_total_bytes": total_bytes or None,
+            "temperature_c": max(temperatures) if temperatures else None,
+        }
 
     def close(self):
         """兼容统一后端关闭接口，sysfs 无需释放资源。"""
@@ -413,8 +468,11 @@ class GpuMonitor:
                 self.backend.close()
                 self.backend = None
                 value = None
-            if value is not None:
-                value = round(max(0, min(100, float(value))), 1)
+            if value is not None and any(item is not None for item in value.values()):
+                if value.get("percent") is not None:
+                    value["percent"] = round(max(0, min(100, float(value["percent"]))), 1)
+                if value.get("temperature_c") is not None:
+                    value["temperature_c"] = round(float(value["temperature_c"]), 1)
                 with self.lock:
                     self.value = value
                     self.version += 1
@@ -651,6 +709,18 @@ class SystemInformationCollector:
         self.last_disk_io = counters
         self.last_disk_io_time = now
         return disks
+
+    @staticmethod
+    def _cpu_frequency_ghz():
+        """读取 CPU 当前频率并换算为 GHz。"""
+        try:
+            frequency = psutil.cpu_freq()
+        except (AttributeError, OSError, RuntimeError):
+            return None
+        current_mhz = getattr(frequency, "current", None) if frequency is not None else None
+        if current_mhz is None or current_mhz <= 0:
+            return None
+        return round(float(current_mhz) / 1000, 2)
 
     @staticmethod
     def _cpu_temperature():
@@ -1274,7 +1344,8 @@ class SystemInformationCollector:
         local_ip = self._local_ip()
         network = self._network_rates(local_ip)
         power = self.power_monitor.snapshot()
-        gpu_percent, gpu_version = self.gpu_monitor.snapshot()
+        gpu, gpu_version = self.gpu_monitor.snapshot()
+        gpu_percent = gpu.get("percent") if gpu is not None else None
         history_now = time.monotonic()
         fps = self.fps_monitor.snapshot(history_now) if self.fps_monitor is not None else {
             "value": None,
@@ -1307,4 +1378,7 @@ class SystemInformationCollector:
             )
         self.last_gpu_version = gpu_version
         power["history"] = list(self.power_history)
-        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total}, "disks": disks, "physical_disks": physical_disks, "gpu": {"percent": gpu_percent, "history": list(self.gpu_history)} if gpu_percent is not None else None, "fps": fps, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "transmit_bytes": network[2], "receive_bytes": network[3], "link_speed_mbps": self._network_link_speed(local_ip), "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": local_ip}}
+        if gpu is not None:
+            gpu = dict(gpu)
+            gpu["history"] = list(self.gpu_history)
+        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "frequency_ghz": self._cpu_frequency_ghz(), "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total}, "disks": disks, "physical_disks": physical_disks, "gpu": gpu, "fps": fps, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "transmit_bytes": network[2], "receive_bytes": network[3], "link_speed_mbps": self._network_link_speed(local_ip), "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": local_ip}}

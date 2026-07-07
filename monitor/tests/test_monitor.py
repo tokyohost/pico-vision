@@ -520,6 +520,13 @@ class SystemCollectorTest(unittest.TestCase):
                 self.assertEqual(collector._network_rates("192.168.1.2")[:2], (0, 0))
                 self.assertEqual(collector._network_rates("192.168.1.2")[:2], (600, 900))
 
+    @mock.patch("system_monitor.psutil.cpu_freq")
+    def test_cpu_frequency_converts_mhz_to_ghz(self, cpu_freq):
+        """确认 CPU 当前频率从 MHz 正确换算为 GHz。"""
+        cpu_freq.return_value = SimpleNamespace(current=4287.6)
+
+        self.assertEqual(SystemInformationCollector._cpu_frequency_ghz(), 4.29)
+
     def test_network_rates_reset_baseline_after_interface_change(self):
         """确认出口接口切换后重置基线，避免累计计数差产生速率尖峰。"""
         collector = SystemInformationCollector("127.0.0.1")
@@ -542,6 +549,12 @@ class SystemCollectorTest(unittest.TestCase):
         """确认完整快照包含四组核心硬件指标。"""
         del temperature, disk_temperatures
         collector = SystemInformationCollector("127.0.0.1")
+        collector.gpu_monitor.snapshot = mock.Mock(return_value=({
+            "percent": 61.5,
+            "dedicated_memory_used_bytes": 2_000_000_000,
+            "dedicated_memory_total_bytes": 8_000_000_000,
+            "temperature_c": 67.0,
+        }, 1))
         snapshot = collector.collect()
         self.assertEqual(snapshot["version"], 1)
         self.assertTrue({"cpu", "memory", "disk", "disks", "physical_disks", "fps", "power", "network"}.issubset(snapshot))
@@ -549,6 +562,10 @@ class SystemCollectorTest(unittest.TestCase):
         self.assertEqual(len(snapshot["fps"]["history"]), 24)
         self.assertTrue({"watts", "source", "scope", "history"}.issubset(snapshot["power"]))
         self.assertTrue({"receive_bytes", "transmit_bytes"}.issubset(snapshot["network"]))
+        self.assertIn("frequency_ghz", snapshot["cpu"])
+        self.assertTrue({
+            "percent", "dedicated_memory_used_bytes", "dedicated_memory_total_bytes", "temperature_c", "history"
+        }.issubset(snapshot["gpu"]))
         self.assertNotIn("history", snapshot["disk"])
 
     def test_physical_disk_statistics_contains_temperature(self):

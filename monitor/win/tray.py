@@ -123,15 +123,15 @@ class WindowsTrayApplication:
             return False
 
     def _collect_output(self):
+        """收集工作进程日志，并在 Pico 样式清单变化后刷新托盘菜单。"""
         process = self.worker_process
         with self.log_path.open("a", encoding="utf-8", newline="") as log_file:
             for line in process.stdout:
                 log_file.write(line)
                 log_file.flush()
                 if "STYLE_CATALOG_UPDATED" in line:
-                    self.settings = self.settings_store.load()
+                    self._reload_style_catalog()
                     if self.icon is not None:
-                        self.icon.menu = self._build_menu()
                         self.icon.update_menu()
         return_code = process.wait()
         if not self.stopping.is_set() and process is self.worker_process and self.icon is not None:
@@ -836,12 +836,10 @@ class WindowsTrayApplication:
         return base_directory.joinpath(*parts)
 
     def _build_menu(self):
+        """构建托盘主菜单，样式子菜单在每次展开时动态读取最新清单。"""
         import pystray
 
-        style_menu = pystray.Menu(*(
-            pystray.MenuItem(style_label(name, self.settings), self._select_style(name), checked=self._style_checked(name), radio=True)
-            for name in style_names(self.settings)
-        ))
+        style_menu = pystray.Menu(self._style_menu_items)
         return pystray.Menu(
             pystray.MenuItem("配置...", self._show_settings, default=True),
             pystray.MenuItem("界面样式", style_menu),
@@ -857,6 +855,22 @@ class WindowsTrayApplication:
             pystray.MenuItem("开机自动启动", self._toggle_autostart, checked=self._is_autostart),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("退出", self._exit),
+        )
+
+    def _reload_style_catalog(self):
+        """从配置文件同步 Pico 样式清单及当前选择。"""
+        latest_settings = self.settings_store.load()
+        self.settings["styles"] = latest_settings["styles"]
+        self.settings["lcd_style"] = latest_settings["lcd_style"]
+
+    def _style_menu_items(self):
+        """生成最新的样式菜单项，避免托盘长期持有启动时的静态清单。"""
+        import pystray
+
+        self._reload_style_catalog()
+        return tuple(
+            pystray.MenuItem(style_label(name, self.settings), self._select_style(name), checked=self._style_checked(name), radio=True)
+            for name in style_names(self.settings)
         )
 
     def _set_rotation(self, rotation):

@@ -102,7 +102,7 @@ def create_argument_parser():
     parser.add_argument("--qbittorrent-username", default=os.getenv("PICO_MONITOR_QBITTORRENT_USERNAME") or None, help="qBittorrent Web UI 账号")
     parser.add_argument("--qbittorrent-password", default=os.getenv("PICO_MONITOR_QBITTORRENT_PASSWORD") or None, help="qBittorrent Web UI 密码")
     parser.add_argument("--qbittorrent-interval", type=float, default=float(os.getenv("PICO_MONITOR_QBITTORRENT_INTERVAL", "2.0")), help="qBittorrent 指标采集间隔，单位为秒")
-    parser.add_argument("--dev", action="store_true", default=environment_flag("PICO_MONITOR_DEV"), help="开发模式：未发现 Pico 时仍打印待发送的 JSON 协议行")
+    parser.add_argument("--dev", action="store_true", default=environment_flag("PICO_MONITOR_DEV",True), help="开发模式：未发现 Pico 时仍打印待发送的 JSON 协议行")
     parser.add_argument("--disk-health-test-index", type=int, default=int(os.getenv("PICO_MONITOR_DISK_HEALTH_TEST_INDEX", "0")), help="磁盘健康显示测试：指定从 1 开始的磁盘序号，0 表示关闭")
     parser.add_argument("--disk-health-test-level", type=int, choices=range(6), default=int(os.getenv("PICO_MONITOR_DISK_HEALTH_TEST_LEVEL", "3")), help="磁盘健康显示测试等级，范围为 0 至 5，默认 3")
     parser.add_argument("--once", action="store_true", help="仅成功发送一次数据")
