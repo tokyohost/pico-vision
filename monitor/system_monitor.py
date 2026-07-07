@@ -1376,16 +1376,29 @@ class SystemInformationCollector:
 
     def collect(self):
         """采集一次完整系统状态并更新全部历史趋势序列。"""
+        collection_started = time.monotonic()
+        stage_times = {}
+        stage_started = time.monotonic()
         cpu, memory = round(psutil.cpu_percent(interval=None), 1), psutil.virtual_memory()
+        stage_times["CPU与内存"] = time.monotonic() - stage_started
+        stage_started = time.monotonic()
         disks = self._disk_rates(self._latest_disks())
         physical_disks = self._physical_disk_statistics(disks)
         disk_used, disk_total, disk_percent = self._disk_usage(disks)
+        stage_times["磁盘"] = time.monotonic() - stage_started
+        stage_started = time.monotonic()
         local_ip = self._local_ip()
         network = self._network_rates(local_ip)
+        stage_times["网络"] = time.monotonic() - stage_started
+        stage_started = time.monotonic()
         power = self.power_monitor.snapshot()
+        stage_times["电源"] = time.monotonic() - stage_started
+        stage_started = time.monotonic()
         gpu, gpu_version = self.gpu_monitor.snapshot()
+        stage_times["GPU"] = time.monotonic() - stage_started
         gpu_percent = gpu.get("percent") if gpu is not None else None
         history_now = time.monotonic()
+        stage_started = time.monotonic()
         fps = self.fps_monitor.snapshot(history_now) if self.fps_monitor is not None else {
             "value": None,
             "history": [0] * HISTORY_LENGTH,
@@ -1393,7 +1406,10 @@ class SystemInformationCollector:
             "process_id": None,
             "process_name": "",
         }
+        stage_times["FPS"] = time.monotonic() - stage_started
+        stage_started = time.monotonic()
         ping, online = self.ping_monitor.snapshot()
+        stage_times["Ping"] = time.monotonic() - stage_started
         for name, value in (("cpu", cpu), ("memory", memory.percent), ("upload", network[0]), ("download", network[1])):
             update_per_second(
                 self.histories[name],
@@ -1420,4 +1436,23 @@ class SystemInformationCollector:
         if gpu is not None:
             gpu = dict(gpu)
             gpu["history"] = list(self.gpu_history)
-        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "frequency_ghz": self._cpu_frequency_ghz(), "temperature_c": self._cpu_temperature(), "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total}, "disks": disks, "physical_disks": physical_disks, "gpu": gpu, "fps": fps, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "transmit_bytes": network[2], "receive_bytes": network[3], "link_speed_mbps": self._network_link_speed(local_ip), "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": local_ip}}
+        stage_started = time.monotonic()
+        cpu_frequency = self._cpu_frequency_ghz()
+        stage_times["CPU频率"] = time.monotonic() - stage_started
+        stage_started = time.monotonic()
+        cpu_temperature = self._cpu_temperature()
+        stage_times["CPU温度"] = time.monotonic() - stage_started
+        stage_started = time.monotonic()
+        link_speed = self._network_link_speed(local_ip)
+        stage_times["网卡速率"] = time.monotonic() - stage_started
+        total_elapsed = time.monotonic() - collection_started
+        ordered_times = sorted(stage_times.items(), key=lambda item: item[1], reverse=True)
+        log_method = LOGGER.warning if total_elapsed > 0.5 else LOGGER.debug
+        log_method(
+            "系统指标分项耗时：总计=%.3f秒，%s；最慢项=%s(%.3f秒)",
+            total_elapsed,
+            "，".join("{}={:.3f}秒".format(name, elapsed) for name, elapsed in ordered_times),
+            ordered_times[0][0],
+            ordered_times[0][1],
+        )
+        return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "frequency_ghz": cpu_frequency, "temperature_c": cpu_temperature, "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total}, "disks": disks, "physical_disks": physical_disks, "gpu": gpu, "fps": fps, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "transmit_bytes": network[2], "receive_bytes": network[3], "link_speed_mbps": link_speed, "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": local_ip}}

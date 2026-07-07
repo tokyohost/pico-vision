@@ -16,6 +16,7 @@
 
 import json
 import os
+import threading
 import unittest
 import zlib
 import base64
@@ -470,6 +471,21 @@ class PicoClientTest(unittest.TestCase):
                 log_monitor_version()
 
         self.assertIn("Pico Monitor 启动：版本=1.2.3", logs.output[0])
+
+    def test_sending_uses_latest_snapshot_without_waiting_for_next_collection(self):
+        """确认后台采集尚未发布新结果时，发送链路立即复用最近成功快照。"""
+        service = MonitorService.__new__(MonitorService)
+        service._snapshot_condition = threading.Condition()
+        service._latest_collected_snapshot = {"version": 1, "sequence": 7}
+        service._latest_collection_error = None
+        service.stopping = mock.Mock()
+        service.stopping.is_set.return_value = False
+        service._collect_snapshot = mock.Mock(side_effect=AssertionError("发送线程不应同步采集"))
+
+        snapshot = service._snapshot_for_sending()
+
+        self.assertEqual(snapshot["sequence"], 7)
+        service._collect_snapshot.assert_not_called()
 
     def test_development_mode_stops_reconnecting_without_pico(self):
         """确认开发模式首次连接失败后直接进入 JSON 输出循环。"""

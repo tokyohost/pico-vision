@@ -199,6 +199,10 @@ class MonitorService:
         self.custom_style_deletes = queue.Queue()
         self.screenshot_requested = threading.Event()
         self.available_styles = set(BUILTIN_LCD_STYLES)
+        self._snapshot_condition = threading.Condition()
+        self._latest_collected_snapshot = None
+        self._latest_collection_error = None
+        self._collection_thread = None
 
     def _synchronize_style_catalog(self):
         """接收 Pico 样式清单并更新 monitor 的 JSON 配置文件。"""
@@ -378,6 +382,7 @@ class MonitorService:
     def run(self):
         """持续连接设备、采集指标并发送最新系统快照。"""
         LOGGER.info("监控服务启动：端口=%s，Ping=%s，发送间隔=%.1f 秒，重连间隔=%.1f 秒，屏幕旋转=%d°，网络单位=%s，LCD 样式=%s，开发模式=%s", self.arguments.port or "自动发现", self.arguments.ping_target, self.arguments.interval, self.arguments.reconnect_interval, self.arguments.screen_rotation, self.arguments.network_unit, self.arguments.lcd_style, "开启" if self.arguments.dev else "关闭")
+        self._start_collection_worker()
         while not self.stopping.is_set():
             probing = not self.client.is_connected
             ports_before_probe = self.client.available_ports()
@@ -405,13 +410,7 @@ class MonitorService:
                     self._publish_custom_style_delete()
                     continue
                 started = time.monotonic()
-                snapshot = self._collect_snapshot()
-                collection_elapsed = time.monotonic() - started
-                if collection_elapsed > 0.5:
-                    LOGGER.warning(
-                        "系统指标采集耗时较长：%.3f 秒",
-                        collection_elapsed,
-                    )
+                snapshot = self._snapshot_for_sending()
                 if self.arguments.dev:
                     self._print_development_snapshot(snapshot)
                 self.client.send(snapshot)
@@ -452,6 +451,53 @@ class MonitorService:
             )
         LOGGER.info("监控服务已停止")
         return 0
+
+    def _start_collection_worker(self):
+        """启动独立指标采集线程，避免慢速硬件查询阻塞串口发送。"""
+        # 使用 __new__ 构造的旧测试桩没有异步采集状态，此时保留同步行为。
+        if not hasattr(self, "_snapshot_condition"):
+            return
+        if self._collection_thread is not None and self._collection_thread.is_alive():
+            return
+        self._collection_thread = threading.Thread(
+            target=self._collection_loop,
+            name="system-metrics-collector",
+            daemon=True,
+        )
+        self._collection_thread.start()
+
+    def _collection_loop(self):
+        """按配置周期采集快照，并以原子替换方式发布最近一次成功结果。"""
+        while not self.stopping.is_set():
+            started = time.monotonic()
+            try:
+                snapshot = self._collect_snapshot()
+                with self._snapshot_condition:
+                    self._latest_collected_snapshot = snapshot
+                    self._latest_collection_error = None
+                    self._snapshot_condition.notify_all()
+            except (OSError, RuntimeError, TypeError, ValueError, psutil.Error) as error:
+                LOGGER.exception("后台系统指标采集失败，将继续发送最近一次成功快照：%s", error)
+                with self._snapshot_condition:
+                    self._latest_collection_error = error
+                    self._snapshot_condition.notify_all()
+            remaining = self.arguments.interval - (time.monotonic() - started)
+            self.stopping.wait(max(0.0, remaining))
+
+    def _snapshot_for_sending(self):
+        """返回最近成功快照；仅首次采集尚未完成时等待后台线程。"""
+        if not hasattr(self, "_snapshot_condition"):
+            return self._collect_snapshot()
+        with self._snapshot_condition:
+            while self._latest_collected_snapshot is None and not self.stopping.is_set():
+                if self._latest_collection_error is not None:
+                    error = self._latest_collection_error
+                    self._latest_collection_error = None
+                    raise RuntimeError("首次系统指标采集失败：{}".format(error)) from error
+                self._snapshot_condition.wait(timeout=0.1)
+            if self._latest_collected_snapshot is None:
+                raise RuntimeError("系统指标采集已停止，无法生成发送快照")
+            return self._latest_collected_snapshot
 
     def _wait_for_usb_addition(self, previous_ports):
         """等待新串口插入，拔出时只更新基线而不发起 Pico 握手。"""
@@ -501,11 +547,19 @@ class MonitorService:
 
     def _collect_snapshot(self):
         """采集系统指标并补充 Pico 显示配置。"""
+        started = time.monotonic()
         snapshot = self.collector.collect()
+        system_elapsed = time.monotonic() - started
+        stage_started = time.monotonic()
         if self.qbittorrent_monitor is not None:
             snapshot["qbittorrent"] = self.qbittorrent_monitor.snapshot()
+        qbittorrent_elapsed = time.monotonic() - stage_started
+        stage_started = time.monotonic()
         self._apply_disk_health_test(snapshot)
+        disk_test_elapsed = time.monotonic() - stage_started
+        stage_started = time.monotonic()
         snapshot["ext"] = get_custom_data_manager().collect_due_data()
+        custom_elapsed = time.monotonic() - stage_started
         snapshot["display"] = {
             "rotation": self.arguments.screen_rotation,
             "brightness": getattr(self.arguments, "lcd_brightness", 100),
@@ -513,6 +567,17 @@ class MonitorService:
             "network_unit": self.arguments.network_unit,
             "style": self.arguments.lcd_style,
         }
+        total_elapsed = time.monotonic() - started
+        log_method = LOGGER.warning if total_elapsed > 0.5 else LOGGER.debug
+        log_method(
+            "系统快照采集耗时：总计=%.3f秒，系统指标=%.3f秒，qBittorrent=%.3f秒，"
+            "磁盘测试覆盖=%.3f秒，自定义扩展=%.3f秒",
+            total_elapsed,
+            system_elapsed,
+            qbittorrent_elapsed,
+            disk_test_elapsed,
+            custom_elapsed,
+        )
         return snapshot
 
     def _apply_disk_health_test(self, snapshot):
@@ -543,7 +608,7 @@ class MonitorService:
         """打印实际进入压缩和发送流程的紧凑 JSON 内容。"""
         try:
             if snapshot is None:
-                snapshot = self._collect_snapshot()
+                snapshot = self._snapshot_for_sending()
             LOGGER.info(
                 "[DEV][Monitor -> Pico][JSON] %s",
                 PicoJsonClient.build_json_payload(snapshot).decode("utf-8"),
