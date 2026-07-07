@@ -25,12 +25,10 @@ jobs:
             bits: 32
             installer_arch: x86
             exe_name: pico-monitor-windows-x86.exe
-            asset_name: OmniWatch-windows-x86-setup.exe
           - architecture: x64
             bits: 64
             installer_arch: x64
             exe_name: pico-monitor-windows-x64.exe
-            asset_name: OmniWatch-windows-x64-setup.exe
 
     defaults:
       run:
@@ -83,13 +81,14 @@ jobs:
           $version = if ($env:GITHUB_REF_NAME.StartsWith("v")) { $env:GITHUB_REF_NAME.Substring(1) } else { "development" }
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion="$version" /DArchitecture=${{ matrix.installer_arch }} /DSourceExe="dist\${{ matrix.exe_name }}" pico_monitor_setup.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (-not (Test-Path -LiteralPath "dist/${{ matrix.asset_name }}")) { throw "未生成安装包：dist/${{ matrix.asset_name }}" }
+          $assetName = "OmniWatch-windows-${{ matrix.installer_arch }}-setup-v$version.exe"
+          if (-not (Test-Path -LiteralPath "dist/$assetName")) { throw "未生成安装包：dist/$assetName" }
 
       - name: 上传 Windows 安装包构建产物
         uses: actions/upload-artifact@v7
         with:
           name: windows-installer-${{ matrix.bits }}bit
-          path: monitor/dist/${{ matrix.asset_name }}
+          path: monitor/dist/OmniWatch-windows-${{ matrix.installer_arch }}-setup-v*.exe
           if-no-files-found: error
           compression-level: 0
 
@@ -123,7 +122,7 @@ jobs:
           if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes --title "${GITHUB_REF_NAME}"
           fi
-          gh release upload "${GITHUB_REF_NAME}" release-assets/*-setup.exe --clobber
+          gh release upload "${GITHUB_REF_NAME}" release-assets/*-setup-v*.exe --clobber
 
       - name: 同步 Windows 制品到文档仓库
         env:
@@ -146,4 +145,4 @@ jobs:
             gh release create "${GITHUB_REF_NAME}" --target main --title "${GITHUB_REF_NAME}" --notes-file RELEASE_NOTES.md || gh release view "${GITHUB_REF_NAME}" >/dev/null
           fi
           gh release edit "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file RELEASE_NOTES.md
-          gh release upload "${GITHUB_REF_NAME}" release-assets/*-setup.exe --clobber
+          gh release upload "${GITHUB_REF_NAME}" release-assets/*-setup-v*.exe --clobber

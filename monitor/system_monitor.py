@@ -518,10 +518,30 @@ class SystemInformationCollector:
         self.disk_hardware_signature = None
         self.disk_snapshot = []
         self.disk_snapshot_lock = threading.Lock()
+        self.cpu_frequency_snapshot = None
+        self.cpu_frequency_snapshot_lock = threading.Lock()
+        self.fps_snapshot = {
+            "value": None,
+            "history": [0] * HISTORY_LENGTH,
+            "source": "unavailable",
+            "process_id": None,
+            "process_name": "",
+        }
+        self.fps_snapshot_lock = threading.Lock()
         self.ping_monitor.start()
         self.gpu_monitor.start()
         if self.fps_monitor is not None:
             self.fps_monitor.start()
+            threading.Thread(
+                target=self._fps_collection_loop,
+                name="FPS 指标采集",
+                daemon=True,
+            ).start()
+        threading.Thread(
+            target=self._cpu_frequency_collection_loop,
+            name="CPU 频率采集",
+            daemon=True,
+        ).start()
         threading.Thread(
             target=self._disk_collection_loop,
             name="磁盘信息采集",
@@ -529,12 +549,40 @@ class SystemInformationCollector:
         ).start()
         psutil.cpu_percent(interval=None)
 
+    def _cpu_frequency_collection_loop(self):
+        """在独立线程采集 CPU 频率，避免 Windows 电源接口阻塞主循环。"""
+        while True:
+            value = self._cpu_frequency_ghz()
+            with self.cpu_frequency_snapshot_lock:
+                self.cpu_frequency_snapshot = value
+            time.sleep(1)
+
+    def _latest_cpu_frequency(self):
+        """返回后台线程最近一次完成的 CPU 频率采样。"""
+        with self.cpu_frequency_snapshot_lock:
+            return self.cpu_frequency_snapshot
+
+    def _fps_collection_loop(self):
+        """在独立线程采集 FPS，避免进程树查询或驱动接口阻塞主循环。"""
+        while True:
+            snapshot = self.fps_monitor.snapshot(time.monotonic())
+            with self.fps_snapshot_lock:
+                self.fps_snapshot = snapshot
+            time.sleep(0.5)
+
+    def _latest_fps(self):
+        """返回后台线程最近一次完成的 FPS 快照。"""
+        with self.fps_snapshot_lock:
+            snapshot = dict(self.fps_snapshot)
+            snapshot["history"] = list(snapshot.get("history", ()))
+            return snapshot
+
     def _disk_collection_loop(self):
-        """在后台低频采集磁盘信息，避免慢盘阻塞主发送循环。"""
+        """在后台低频采集磁盘信息和读写速率，避免慢盘阻塞主发送循环。"""
         while True:
             try:
                 self._refresh_disk_hardware_state()
-                disks = self._disk_details()
+                disks = self._disk_rates(self._disk_details())
             except (OSError, ValueError, psutil.Error, subprocess.SubprocessError):
                 disks = None
             if disks is not None:
@@ -1382,7 +1430,8 @@ class SystemInformationCollector:
         cpu, memory = round(psutil.cpu_percent(interval=None), 1), psutil.virtual_memory()
         stage_times["CPU与内存"] = time.monotonic() - stage_started
         stage_started = time.monotonic()
-        disks = self._disk_rates(self._latest_disks())
+        # 磁盘系统接口可能因休眠盘或异常设备阻塞数秒，此处只读取后台快照。
+        disks = self._latest_disks()
         physical_disks = self._physical_disk_statistics(disks)
         disk_used, disk_total, disk_percent = self._disk_usage(disks)
         stage_times["磁盘"] = time.monotonic() - stage_started
@@ -1399,13 +1448,7 @@ class SystemInformationCollector:
         gpu_percent = gpu.get("percent") if gpu is not None else None
         history_now = time.monotonic()
         stage_started = time.monotonic()
-        fps = self.fps_monitor.snapshot(history_now) if self.fps_monitor is not None else {
-            "value": None,
-            "history": [0] * HISTORY_LENGTH,
-            "source": "unavailable",
-            "process_id": None,
-            "process_name": "",
-        }
+        fps = self._latest_fps()
         stage_times["FPS"] = time.monotonic() - stage_started
         stage_started = time.monotonic()
         ping, online = self.ping_monitor.snapshot()
@@ -1437,7 +1480,7 @@ class SystemInformationCollector:
             gpu = dict(gpu)
             gpu["history"] = list(self.gpu_history)
         stage_started = time.monotonic()
-        cpu_frequency = self._cpu_frequency_ghz()
+        cpu_frequency = self._latest_cpu_frequency()
         stage_times["CPU频率"] = time.monotonic() - stage_started
         stage_started = time.monotonic()
         cpu_temperature = self._cpu_temperature()
