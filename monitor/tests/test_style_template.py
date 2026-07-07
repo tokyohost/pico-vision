@@ -5,7 +5,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from monitor.style_validator import MAX_STYLE_FILE_SIZE, StyleFileValidator
+from style_validator import MAX_STYLE_FILE_SIZE, StyleFileValidator
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
