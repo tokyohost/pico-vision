@@ -23,17 +23,17 @@ class WindowsReleaseUpdaterTest(unittest.TestCase):
     def test_selects_matching_windows_and_pico_assets(self):
         """确认按进程位数和版本选择两个更新资源。"""
         assets = [
-            {"name": "pico-monitor-windows-x64.exe"},
-            {"name": "pico-upgrade-v1.1.0.zip"},
+            {"name": "pico-monitor-windows-x64-setup.exe"},
+            {"name": "OmniWatch-pico-upgrade-v1.1.0.zip"},
         ]
         updater = WindowsReleaseUpdater("owner/repository", "1.0.0")
         with mock.patch("windows_update.platform.architecture", return_value=("64bit", "WindowsPE")):
             self.assertEqual(
-                "pico-monitor-windows-x64.exe",
+                "pico-monitor-windows-x64-setup.exe",
                 updater.select_monitor_asset(assets)["name"],
             )
         self.assertEqual(
-            "pico-upgrade-v1.1.0.zip",
+            "OmniWatch-pico-upgrade-v1.1.0.zip",
             updater.select_pico_asset(assets, "1.1.0")["name"],
         )
 

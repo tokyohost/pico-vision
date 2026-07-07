@@ -75,7 +75,7 @@ python pico_monitor.py
 
 qBittorrent 也可通过环境变量 `PICO_MONITOR_QBITTORRENT_ENABLED`、`PICO_MONITOR_QBITTORRENT_ADDRESS`、`PICO_MONITOR_QBITTORRENT_USERNAME`、`PICO_MONITOR_QBITTORRENT_PASSWORD` 和 `PICO_MONITOR_QBITTORRENT_INTERVAL` 配置。启用采集后地址、账号、密码必须全部配置。建议使用环境变量或 Linux 配置文件保存密码，避免密码出现在进程命令行中。
 
-## 构建 Windows EXE
+## 构建 Windows 安装包
 
 在 Windows 命令提示符执行：
 
@@ -83,9 +83,9 @@ qBittorrent 也可通过环境变量 `PICO_MONITOR_QBITTORRENT_ENABLED`、`PICO_
 build-exe.bat
 ```
 
-生成的 Windows EXE 清单要求管理员权限，启动时系统会显示 UAC 提权确认窗口；用户拒绝提权时程序不会运行。
+安装包和生成的 Windows EXE 清单均要求管理员权限，启动时系统会显示 UAC 提权确认窗口；用户拒绝提权时程序不会运行。
 
-输出文件为 `dist\pico-monitor.exe`。双击后驻留系统托盘，运行日志位于 `%LOCALAPPDATA%\PicoMonitor\pico-monitor.log`。右键托盘图标选择“日志导出”，可导出最近 1 MB 日志并打开导出文件目录；勾选“Dev 模式”会保存配置并重启后台监控，使开发模式立即生效。选择“检查更新”可在弹窗中确认或修改更新地址，程序会先更新 Pico 固件，再替换 Monitor 程序并自动重启。
+最终发布文件为 `dist\pico-monitor-windows-x64-setup.exe`，`dist\pico-monitor.exe` 仅作为安装包构建的中间产物。安装完成后从开始菜单或桌面快捷方式启动，程序会驻留系统托盘，运行日志位于 `%LOCALAPPDATA%\PicoMonitor\pico-monitor.log`。右键托盘图标选择“日志导出”，可导出最近 1 MB 日志并打开导出文件目录；勾选“Dev 模式”会保存配置并重启后台监控，使开发模式立即生效。选择“检查更新”可在弹窗中确认或修改更新地址，程序会先更新 Pico 固件，再运行 Monitor 安装包并自动重启。
 
 日志使用 `[Monitor -> Pico]` 和 `[Pico -> Monitor]` 标识通信方向。Linux 服务可通过 `journalctl -u pico-monitor -f` 实时查看相同内容。
 
@@ -98,7 +98,7 @@ Linux 发布明确构建以下四种架构：
 - `armhf`：32 位 ARM 硬浮点设备，包括部分 Raspberry Pi OS。
 - `i386`：32 位 Intel/AMD 电脑。
 
-DEB 原生支持 Debian、Ubuntu 及使用兼容 APT 依赖仓库的衍生发行版。Fedora、RHEL、openSUSE、Arch Linux 等非 Debian 系统请使用 Release 中的通用 `linux.tar.gz`，解压后运行 `sudo ./install-linux.sh`。
+DEB 原生支持 Debian、Ubuntu 及使用兼容 APT 依赖仓库的衍生发行版。Fedora、RHEL、openSUSE、Arch Linux 等非 Debian 系统请使用 Release 中的通用 `OmniWatch-<版本>-linux.tar.gz`，解压后运行 `sudo ./install-linux.sh`。
 
 在 Debian 或 Ubuntu 中执行：
 
@@ -107,7 +107,7 @@ sudo apt update
 sudo apt install build-essential debhelper devscripts
 chmod 0755 debian/rules bin/pico-monitor
 dpkg-buildpackage --no-sign -b
-sudo apt install ../pico-monitor_1.0.0_$(dpkg --print-architecture).deb
+sudo apt install ../OmniWatch_1.0.0_$(dpkg --print-architecture).deb
 ```
 
 安装后可使用以下命令：
@@ -131,7 +131,7 @@ sudo systemctl start pico-monitor
 pico-monitor --version
 ```
 
-`--update` 会调用 GitHub Release API，按 `dpkg --print-architecture` 自动选择 `amd64`、`arm64`、`armhf` 或 `i386` 软件包，并优先使用 Release 中的 `SHA256SUMS-linux-deb.txt` 校验下载内容，最后通过 `apt-get install` 完成更新。该命令仅支持 Linux 发布构建，必须使用 root 权限运行；本地 `development` 版本不会执行自动更新。
+`--update` 会调用 GitHub Release API，按 `dpkg --print-architecture` 自动选择 `amd64`、`arm64`、`armhf` 或 `i386` 软件包，并优先使用 Release 中的 `OmniWatch-SHA256SUMS-linux-deb.txt` 校验下载内容，最后通过 `apt-get install` 完成更新。该命令仅支持 Linux 发布构建，必须使用 root 权限运行；本地 `development` 版本不会执行自动更新。
 
 ## Pico 固件要求
 
@@ -147,7 +147,7 @@ pico-monitor --pico-info
 
 该命令会自动发现 Pico，也可同时通过 `--port` 指定串口；信息打印完成后程序立即退出。
 
-发布版 Monitor 可执行 `pico-monitor --upgrade-pico`，程序会下载同版本 GitHub Release 中的 `pico-upgrade-v<版本>.zip`。该无后缀兼容包仅适用于 `rp2040_usb` 与 `st7789vw_2inch`。其他硬件必须从 Release 选择 `pico-upgrade-v<版本>-<开发板型号>-<屏幕方案>.zip`，并通过 `--upgrade-url` 指定。升级时 Monitor 与 Pico 会持续打印下载、传输、安装百分比；Pico 对每个文件核对长度和 SHA-256，全部通过后替换内部文件并自动软重启。传输或校验失败时只删除临时区，不安装未通过校验的文件。
+发布版 Monitor 可执行 `pico-monitor --upgrade-pico`，程序会下载同版本 GitHub Release 中的 `OmniWatch-pico-upgrade-v<版本>.zip`。该无后缀兼容包仅适用于 `rp2040_usb` 与 `st7789vw_2inch`。其他硬件必须从 Release 选择 `OmniWatch-pico-upgrade-v<版本>-<开发板型号>-<屏幕方案>.zip`，并通过 `--upgrade-url` 指定。升级时 Monitor 与 Pico 会持续打印下载、传输、安装百分比；Pico 对每个文件核对长度和 SHA-256，全部通过后替换内部文件并自动软重启。传输或校验失败时只删除临时区，不安装未通过校验的文件。
 
 ### Linux DEB 安装后升级 Pico
 
@@ -160,7 +160,7 @@ sudo systemctl start pico-monitor
 sudo journalctl -u pico-monitor -n 100 --no-pager
 ```
 
-程序会根据已安装 Monitor 的版本号，从同版本 GitHub Release 下载 `pico-upgrade-v<版本>.zip`。如果必须显式指定端口，应选择能响应 PV1 PONG 的数据 CDC，而不是 REPL CDC：
+程序会根据已安装 Monitor 的版本号，从同版本 GitHub Release 下载 `OmniWatch-pico-upgrade-v<版本>.zip`。如果必须显式指定端口，应选择能响应 PV1 PONG 的数据 CDC，而不是 REPL CDC：
 
 ```bash
 sudo /usr/bin/pico-monitor --port /dev/ttyACM1 --upgrade-pico
@@ -180,7 +180,7 @@ sudo /usr/bin/pico-monitor --port /dev/ttyACM1 --upgrade-pico
 New-Item -ItemType Directory -Force release-assets
 python tools\package_pico_upgrade.py `
   --source picoRP2040 `
-  --output release-assets\pico-upgrade-vlocal-test.zip `
+  --output release-assets\OmniWatch-pico-upgrade-vlocal-test.zip `
   --version local-test
 ```
 
@@ -198,47 +198,47 @@ cd monitor
 python pico_monitor.py `
   --port COM9 `
   --upgrade-pico `
-  --upgrade-url http://127.0.0.1:8000/pico-upgrade-vlocal-test.zip
+  --upgrade-url http://127.0.0.1:8000/OmniWatch-pico-upgrade-vlocal-test.zip
 ```
 
 请按实际设备修改 `COM9`。如果需要同时校验升级包下载摘要，可读取生成的 SHA-256 并传给 Monitor：
 
 ```powershell
 $hash = (Get-FileHash `
-  ..\release-assets\pico-upgrade-vlocal-test.zip `
+  ..\release-assets\OmniWatch-pico-upgrade-vlocal-test.zip `
   -Algorithm SHA256).Hash.ToLower()
 
 python pico_monitor.py `
   --port COM9 `
   --upgrade-pico `
-  --upgrade-url http://127.0.0.1:8000/pico-upgrade-vlocal-test.zip `
+  --upgrade-url http://127.0.0.1:8000/OmniWatch-pico-upgrade-vlocal-test.zip `
   --upgrade-sha256 $hash
 ```
 
-发布版 Windows EXE 使用相同参数：
+发布版 Windows 安装后使用相同参数：
 
 ```powershell
-.\pico-monitor-windows-x64.exe `
+.\pico-monitor.exe `
   --port COM9 `
   --upgrade-pico `
-  --upgrade-url http://127.0.0.1:8000/pico-upgrade-vlocal-test.zip
+  --upgrade-url http://127.0.0.1:8000/OmniWatch-pico-upgrade-vlocal-test.zip
 ```
 
 升级成功时，日志会依次出现 `ACK:UPGRADE:BEGIN:local-test`、文件传输确认、`PROGRESS:UPGRADE:INSTALL:100` 和 `ACK:UPGRADE:COMPLETE:local-test`，随后 Pico 自动重启。提交安装期间不要断开 USB 或关闭电源。
 
 ## GitHub Actions 自动发布
 
-`pico-project/.github/workflows` 提供 Windows EXE 与 Linux DEB 两套工作流。手动运行工作流时只生成 Actions Artifact；推送 `v` 开头的标签时会自动创建或更新 GitHub Release，并上传以下产物：
+`pico-project/.github/workflows` 提供 Windows 安装包与 Linux DEB 两套工作流。手动运行工作流时只生成 Actions Artifact；推送 `v` 开头的标签时会自动创建或更新 GitHub Release，并上传以下产物：
 
-- `pico-monitor-windows-x86.exe`
-- `pico-monitor-windows-x64.exe`
-- `pico-monitor_<版本>_amd64.deb`：Intel/AMD 64 位电脑
-- `pico-monitor_<版本>_arm64.deb`：ARM 64 位设备
-- `pico-monitor_<版本>_armhf.deb`：ARM 32 位硬浮点设备
-- `pico-monitor_<版本>_i386.deb`：Intel/AMD 32 位电脑
-- `pico-monitor-<版本>-linux.tar.gz`：Fedora、RHEL、openSUSE、Arch 等 systemd 发行版通用安装包
-- `pico-upgrade-v<版本>-<开发板型号>-<屏幕方案>.zip` 与 `.sha256`：定向 Pico 串口升级包及下载摘要
-- `pico-upgrade-v<版本>.zip` 与 `.sha256`：默认硬件组合的兼容升级包
+- `pico-monitor-windows-x86-setup.exe`
+- `pico-monitor-windows-x64-setup.exe`
+- `OmniWatch_<版本>_amd64.deb`：Intel/AMD 64 位电脑
+- `OmniWatch_<版本>_arm64.deb`：ARM 64 位设备
+- `OmniWatch_<版本>_armhf.deb`：ARM 32 位硬浮点设备
+- `OmniWatch_<版本>_i386.deb`：Intel/AMD 32 位电脑
+- `OmniWatch-<版本>-linux.tar.gz`：Fedora、RHEL、openSUSE、Arch 等 systemd 发行版通用安装包
+- `OmniWatch-pico-upgrade-v<版本>-<开发板型号>-<屏幕方案>.zip` 与 `.sha256`：定向 Pico 串口升级包及下载摘要
+- `OmniWatch-pico-upgrade-v<版本>.zip` 与 `.sha256`：默认硬件组合的兼容升级包
 
 发布示例：
 

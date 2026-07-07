@@ -41,7 +41,7 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then version="${{ inputs.version }}"; fi
           mkdir -p release-assets
-          package_name="pico-upgrade-v${version}-${{ matrix.board_model }}-${{ matrix.screen_color_profile }}.zip"
+          package_name="OmniWatch-pico-upgrade-v${version}-${{ matrix.board_model }}-${{ matrix.screen_color_profile }}.zip"
           python tools/package_pico_upgrade.py \
             --source picoRP2040 \
             --output "release-assets/${package_name}" \
@@ -52,8 +52,8 @@ jobs:
       - name: 上传 Pico 升级包
         uses: actions/upload-artifact@v7
         with:
-          name: pico-upgrade-${{ matrix.board_model }}-${{ matrix.screen_color_profile }}
-          path: release-assets/pico-upgrade-*
+          name: OmniWatch-pico-upgrade-${{ matrix.board_model }}-${{ matrix.screen_color_profile }}
+          path: release-assets/OmniWatch-pico-upgrade-*
           if-no-files-found: error
 
   release:
@@ -73,15 +73,15 @@ jobs:
       - name: 下载全部 Pico 升级包
         uses: actions/download-artifact@v5
         with:
-          pattern: pico-upgrade-*
+          pattern: OmniWatch-pico-upgrade-*
           path: release-assets
           merge-multiple: true
       - name: 生成默认组合兼容包
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          source="release-assets/pico-upgrade-v${version}-rp2040_usb-st7789vw_2inch.zip"
-          target="release-assets/pico-upgrade-v${version}.zip"
+          source="release-assets/OmniWatch-pico-upgrade-v${version}-rp2040_usb-st7789vw_2inch.zip"
+          target="release-assets/OmniWatch-pico-upgrade-v${version}.zip"
           cp "${source}" "${target}"
           (cd release-assets && sha256sum "$(basename "${target}")" > "$(basename "${target}").sha256")
       - name: 发布 Pico 升级包
@@ -90,7 +90,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes --title "${GITHUB_REF_NAME}"; fi
-          gh release upload "${GITHUB_REF_NAME}" release-assets/pico-upgrade-* --clobber
+          gh release upload "${GITHUB_REF_NAME}" release-assets/OmniWatch-pico-upgrade-* --clobber
       - name: 同步 Pico 升级包到文档仓库
         env:
           GH_TOKEN: ${{ secrets.OMNIWATCH_DOC_TOKEN }}
@@ -112,4 +112,4 @@ jobs:
             gh release create "${GITHUB_REF_NAME}" --target main --title "${GITHUB_REF_NAME}" --notes-file RELEASE_NOTES.md || gh release view "${GITHUB_REF_NAME}" >/dev/null
           fi
           gh release edit "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file RELEASE_NOTES.md
-          gh release upload "${GITHUB_REF_NAME}" release-assets/pico-upgrade-* --clobber
+          gh release upload "${GITHUB_REF_NAME}" release-assets/OmniWatch-pico-upgrade-* --clobber

@@ -39,16 +39,16 @@ class WindowsReleaseUpdater:
         return str(latest_version) != self.current_version
 
     def select_monitor_asset(self, assets):
-        """按当前 Python 进程位数选择 Windows Monitor 程序。"""
+        """按当前 Python 进程位数选择 Windows Monitor 安装包。"""
         architecture = "x64" if platform.architecture()[0] == "64bit" else "x86"
         return self._required_asset(
-            assets, "pico-monitor-windows-{}.exe".format(architecture)
+            assets, "pico-monitor-windows-{}-setup.exe".format(architecture)
         )
 
     @classmethod
     def select_pico_asset(cls, assets, version):
         """选择默认硬件组合兼容的 Pico 升级包。"""
-        return cls._required_asset(assets, "pico-upgrade-v{}.zip".format(version))
+        return cls._required_asset(assets, "OmniWatch-pico-upgrade-v{}.zip".format(version))
 
     def download(self, asset, suffix):
         """下载发布资源，并校验服务端提供的 SHA-256 摘要。"""

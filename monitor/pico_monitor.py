@@ -14,6 +14,7 @@
 #  This software is provided "as is", without warranty of any kind.
 
 import argparse
+import io
 import json
 import logging
 import os
@@ -31,6 +32,7 @@ import serial
 from pico_client import PicoJsonClient, PicoRestartingError
 from pico_upgrade import PicoFirmwareUpgrader, PicoUpgradeDownloader, PicoUpgradePackage
 from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
+from custom_data import get_manager as get_custom_data_manager
 from monitor_update import LinuxDebUpdater
 from qbittorrent_monitor import QbittorrentMonitor
 from system_monitor import SystemInformationCollector
@@ -44,6 +46,53 @@ BUILTIN_LCD_STYLES = (
     "horizontal_disk4x_qb", "horizontal_disk6x", "simple", "fpstest",
     "fps_simple", "game",
 )
+
+
+def _ensure_utf8_text_stream(stream):
+    """确保日志输出流使用 UTF-8 编码，避免 Windows 打包后中文日志乱码。"""
+    if stream is None:
+        return None
+    try:
+        stream.reconfigure(encoding="utf-8", errors="replace")
+        return stream
+    except (AttributeError, OSError, ValueError):
+        buffer = getattr(stream, "buffer", None)
+        if buffer is None:
+            return stream
+        return io.TextIOWrapper(
+            buffer,
+            encoding="utf-8",
+            errors="replace",
+            line_buffering=True,
+            write_through=True,
+        )
+
+
+def _open_inherited_text_stream(file_descriptor):
+    """在 Windows 无控制台 EXE 中重新打开继承的标准管道。"""
+    try:
+        return os.fdopen(
+            os.dup(file_descriptor),
+            "w",
+            encoding="utf-8",
+            errors="replace",
+            buffering=1,
+        )
+    except OSError:
+        return None
+
+
+def _configure_standard_streams():
+    """统一修正标准输出和错误输出的编码，并返回日志应写入的文本流。"""
+    stdout = _ensure_utf8_text_stream(getattr(sys, "stdout", None))
+    stderr = _ensure_utf8_text_stream(getattr(sys, "stderr", None))
+    if stdout is None:
+        stdout = _open_inherited_text_stream(1)
+        sys.stdout = stdout
+    if stderr is None:
+        stderr = _open_inherited_text_stream(2)
+        sys.stderr = stderr
+    return stderr or stdout or open(os.devnull, "w", encoding="utf-8")
 
 
 def _write_version_to_console(version_text):
@@ -425,7 +474,7 @@ class MonitorService:
         if not url:
             if not GITHUB_REPOSITORY or MONITOR_VERSION == "development":
                 raise RuntimeError("开发版本必须通过 --upgrade-url 指定 Pico 升级包")
-            url = "https://github.com/{}/releases/download/v{}/pico-upgrade-v{}.zip".format(
+            url = "https://github.com/{}/releases/download/v{}/OmniWatch-pico-upgrade-v{}.zip".format(
                 GITHUB_REPOSITORY, MONITOR_VERSION, MONITOR_VERSION
             )
         archive_path = PicoUpgradeDownloader.download(url, self.arguments.upgrade_sha256)
@@ -460,6 +509,7 @@ class MonitorService:
         if self.qbittorrent_monitor is not None:
             snapshot["qbittorrent"] = self.qbittorrent_monitor.snapshot()
         self._apply_disk_health_test(snapshot)
+        snapshot["ext"] = get_custom_data_manager().collect_due_data()
         snapshot["display"] = {
             "rotation": self.arguments.screen_rotation,
             "brightness": getattr(self.arguments, "lcd_brightness", 100),
@@ -508,7 +558,9 @@ class MonitorService:
 
 def configure_logging():
     """配置适合终端、systemd 和 Windows 托盘收集的日志格式。"""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    handler = logging.StreamHandler(_configure_standard_streams())
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
 
 
 def log_monitor_version():
