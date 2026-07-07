@@ -70,7 +70,10 @@ class TemplateStyle:
         return [
             ("header", 8, 8, 224, 20),
             ("cpu_value", 8, 46, 88, 20),
-            ("cpu_history", 8, 72, 224, 76),
+            # 单个脏矩形不得超过 240×40 条带画布容量，图表拆成上下两块刷新。
+            # A dirty region must fit the 240×40 strip canvas, so split the chart vertically.
+            ("cpu_history_top", 8, 72, 224, 38),
+            ("cpu_history_bottom", 8, 110, 224, 38),
             ("network", 8, 166, 224, 22),
             ("footer", 8, 292, 224, 18),
         ]
@@ -90,7 +93,8 @@ class TemplateStyle:
         if previous_cpu.get("percent") != current_cpu.get("percent"):
             selected.append(region_map["cpu_value"])
         if previous_cpu.get("history") != current_cpu.get("history"):
-            selected.append(region_map["cpu_history"])
+            selected.append(region_map["cpu_history_top"])
+            selected.append(region_map["cpu_history_bottom"])
         if previous.get("network") != current.get("network"):
             selected.append(region_map["network"])
         if (previous.get("timestamp"), previous.get("uptime_seconds")) != (
@@ -221,7 +225,7 @@ class TemplateStyle:
             self._draw_header(canvas)
         elif key == "cpu_value":
             self._draw_cpu_value(canvas, snapshot)
-        elif key == "cpu_history":
+        elif key in ("cpu_history_top", "cpu_history_bottom"):
             self._draw_history(canvas, snapshot.get("cpu", {}).get("history", ()))
         elif key == "network":
             self._draw_network(canvas)

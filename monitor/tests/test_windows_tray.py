@@ -112,6 +112,36 @@ class WindowsTraySettingsTest(unittest.TestCase):
         thread_class.return_value.start.assert_called_once_with()
         self.assertTrue(application.about_window_open)
 
+    @mock.patch("PIL.ImageTk.PhotoImage")
+    @mock.patch("PIL.Image.open")
+    @mock.patch("win.tray.WindowsTrayApplication._set_tk_window_icon")
+    @mock.patch("win.tray.WindowsTrayApplication._center_tk_window")
+    @mock.patch("tkinter.Button")
+    @mock.patch("tkinter.Label")
+    @mock.patch("tkinter.Frame")
+    @mock.patch("tkinter.Tk")
+    def test_about_qr_image_belongs_to_current_window(
+        self,
+        tk_class,
+        frame_class,
+        label_class,
+        button_class,
+        center_window,
+        set_window_icon,
+        image_open,
+        photo_image,
+    ):
+        """确认二维码绑定关于窗口自身的 Tcl 解释器，避免跨线程打开失败。"""
+        del frame_class, label_class, button_class, center_window, set_window_icon
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        root = tk_class.return_value
+        resized_image = image_open.return_value.__enter__.return_value.convert.return_value.resize.return_value
+
+        application._run_about_window()
+
+        photo_image.assert_called_once_with(resized_image, master=root)
+        root.mainloop.assert_called_once_with()
+
     @mock.patch("win.tray.threading.Thread")
     def test_device_probe_window_can_only_be_opened_once(self, thread_class):
         """确认设备探测窗口不能被重复创建。"""
@@ -166,7 +196,7 @@ class WindowsTraySettingsTest(unittest.TestCase):
         application = WindowsTrayApplication.__new__(WindowsTrayApplication)
         application.worker_process = mock.Mock()
 
-        with self.assertRaisesRegex(ValueError, "同名文件"):
+        with self.assertRaisesRegex(FileExistsError, "已存在样式名"):
             application.request_custom_style_upload("style_clock.py", {"clock"})
 
         application.worker_process.stdin.write.assert_not_called()
@@ -191,6 +221,42 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertEqual("clock", result.name)
         self.assertEqual("style_clock.py", payload["filename"])
         self.assertEqual("c291cmNl", payload["content"])
+        self.assertFalse(payload["overwrite"])
+        application.worker_process.stdin.flush.assert_called_once_with()
+
+    @mock.patch("style_validator.StyleFileValidator.validate")
+    def test_custom_style_upload_allows_confirmed_overwrite(self, validate):
+        """确认用户同意覆盖后会向工作进程发送覆盖标志。"""
+        validate.return_value = ValidatedStyle(
+            name="clock", chinese_name="时钟",
+            filename="style_clock.py", source=b"new",
+        )
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.worker_process = mock.Mock()
+        application.worker_process.poll.return_value = None
+
+        application.request_custom_style_upload(
+            "style_clock.py", {"clock"}, overwrite=True,
+        )
+
+        command = application.worker_process.stdin.write.call_args.args[0]
+        payload = json.loads(command.removeprefix("CUSTOM_STYLE_UPLOAD:").strip())
+        self.assertTrue(payload["overwrite"])
+
+    def test_custom_style_delete_sends_style_identity(self):
+        """确认删除请求把样式名和文件名发送给工作进程。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.worker_process = mock.Mock()
+        application.worker_process.poll.return_value = None
+
+        application.request_custom_style_delete("clock", "style_clock.py")
+
+        command = application.worker_process.stdin.write.call_args.args[0]
+        payload = json.loads(command.removeprefix("CUSTOM_STYLE_DELETE:").strip())
+        self.assertEqual(payload, {
+            "style_name": "clock",
+            "filename": "style_clock.py",
+        })
         application.worker_process.stdin.flush.assert_called_once_with()
 
     def test_every_style_has_a_chinese_label(self):
@@ -362,7 +428,7 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertNotIn("unknown", settings)
 
     def test_store_persists_pico_style_catalog(self):
-        """确认 Pico 清单中的中文名称和样式类型能够持久化。"""
+        """确认设备自定义样式与完整内置样式清单合并持久化。"""
         catalog = [
             {"name": "custom_clock", "chinese_name": "自定义时钟", "type": "custom"},
         ]
@@ -371,9 +437,28 @@ class WindowsTraySettingsTest(unittest.TestCase):
             settings = dict(DEFAULT_SETTINGS, styles=catalog, lcd_style="custom_clock")
             store.save(settings)
             loaded = store.load()
-        self.assertEqual(loaded["styles"], catalog)
-        self.assertEqual(style_names(loaded), {"custom_clock": "自定义时钟"})
+        self.assertEqual(loaded["styles"][-1], catalog[0])
+        self.assertEqual(
+            style_names(loaded),
+            dict(STYLE_NAMES, custom_clock="自定义时钟"),
+        )
         self.assertEqual(style_label("custom_clock", loaded), "自定义时钟（custom_clock）")
+
+    def test_store_rejects_custom_style_conflicting_with_builtin_style(self):
+        """确认自定义样式标识与内置样式冲突时保留内置样式。"""
+        catalog = [
+            {"name": "simple", "chinese_name": "冲突样式", "type": "custom"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            store = TraySettingsStore(Path(directory) / "settings.json")
+            store.save(dict(DEFAULT_SETTINGS, styles=catalog, lcd_style="simple"))
+            loaded = store.load()
+
+        self.assertEqual(style_names(loaded)["simple"], STYLE_NAMES["simple"])
+        self.assertEqual(
+            sum(item["name"] == "simple" for item in loaded["styles"]),
+            1,
+        )
 
     def test_tray_reloads_pico_style_catalog_without_replacing_other_settings(self):
         """确认托盘刷新 Pico 样式时同步选中项且不覆盖其他内存配置。"""
@@ -390,7 +475,10 @@ class WindowsTraySettingsTest(unittest.TestCase):
         application._reload_style_catalog()
 
         self.assertEqual("custom_clock", application.settings["lcd_style"])
-        self.assertEqual({"custom_clock": "自定义时钟"}, style_names(application.settings))
+        self.assertEqual(
+            dict(STYLE_NAMES, custom_clock="自定义时钟"),
+            style_names(application.settings),
+        )
         self.assertTrue(application.settings["dev"])
 
 

@@ -99,6 +99,17 @@ class FatalMemorySerial(FakeSerial):
         )
 
 
+class FatalCanvasCapacitySerial(FakeSerial):
+    """模拟 Pico 因脏矩形超过画布容量而自动重启。"""
+
+    def readline(self):
+        """返回需要立即重连的画布容量致命错误。"""
+        return build_frame(
+            "EVENT",
+            "FATAL:ValueError:脏矩形超过画布容量".encode("utf-8"),
+        )
+
+
 class HandshakeSerial(FakeSerial):
     """按顺序返回预置的 Pico 握手响应。"""
 
@@ -110,6 +121,40 @@ class HandshakeSerial(FakeSerial):
         if self.responses:
             return self.responses.pop(0)
         return b""
+
+
+class StyleUploadSerial(FakeSerial):
+    """模拟逐块确认样式上传命令的 Pico 串口设备。"""
+
+    def __init__(self):
+        """初始化已解析命令和待返回响应。"""
+        super().__init__()
+        self.messages = []
+        self.responses = []
+        self.pending = bytearray()
+
+    def write(self, data):
+        """累计串口写入块，并在完整帧到达后生成命令响应。"""
+        super().write(data)
+        self.pending.extend(data)
+        if not self.pending.endswith(b"\n"):
+            return len(data)
+        message_type, payload = parse_frame(self.pending)
+        self.pending = bytearray()
+        self.assert_message_type = message_type
+        message = json.loads(zlib.decompress(base64.b64decode(payload)))
+        self.messages.append(message)
+        self.responses.append(build_frame("COMMAND", json.dumps({
+            "status": "ok",
+            "command": "uploadStyle",
+            "request_id": message["request_id"],
+            "data": message["params"],
+        }).encode("utf-8")))
+        return len(data)
+
+    def readline(self):
+        """返回下一个上传动作确认响应。"""
+        return self.responses.pop(0) if self.responses else b""
 
 
 class PicoClientTest(unittest.TestCase):
@@ -143,6 +188,40 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertLessEqual(client.serial.write_calls, 6)
 
+    def test_style_upload_uses_small_flash_file_chunks(self):
+        """确认大样式拆成小帧传输且不在单个 JSON 中携带完整源码。"""
+        client = PicoJsonClient()
+        client.serial = StyleUploadSerial()
+        content = b"x" * 1300
+
+        result = client.upload_style("style_clock.py", "clock", content)
+
+        actions = [message["params"]["action"] for message in client.serial.messages]
+        self.assertEqual(actions, ["begin", "data", "data", "data", "finish"])
+        chunks = [
+            base64.b64decode(message["params"]["content"])
+            for message in client.serial.messages
+            if message["params"]["action"] == "data"
+        ]
+        self.assertEqual(b"".join(chunks), content)
+        self.assertTrue(all(len(chunk) <= 512 for chunk in chunks))
+        self.assertEqual(result["action"], "finish")
+
+    def test_style_delete_sends_command_and_waits_for_restart_ack(self):
+        """确认删除样式使用 style.delete 命令并取得重启响应。"""
+        client = PicoJsonClient()
+        client.serial = StyleUploadSerial()
+
+        result = client.delete_style("style_clock.py", "clock")
+
+        message = client.serial.messages[0]
+        self.assertEqual(message["command"], "style.delete")
+        self.assertEqual(message["params"], {
+            "filename": "style_clock.py",
+            "style_name": "clock",
+        })
+        self.assertEqual(result["style_name"], "clock")
+
     def test_bad_json_keeps_serial_connected(self):
         """确认单帧 JSON 解析失败时保持串口连接并等待下一帧。"""
         client = PicoJsonClient()
@@ -158,6 +237,14 @@ class PicoClientTest(unittest.TestCase):
         """Pico 内存不足时不再等待 ACK 超时。"""
         client = PicoJsonClient()
         client.serial = FatalMemorySerial()
+
+        with self.assertRaisesRegex(RuntimeError, "正在自动重启"):
+            client.send({"version": 1})
+
+    def test_canvas_capacity_error_triggers_immediate_reconnect(self):
+        """Pico 画布容量错误时立即进入重连而不是等待响应超时。"""
+        client = PicoJsonClient()
+        client.serial = FatalCanvasCapacitySerial()
 
         with self.assertRaisesRegex(RuntimeError, "正在自动重启"):
             client.send({"version": 1})

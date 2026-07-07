@@ -145,6 +145,7 @@ class MonitorService:
         self.reboot_requested = threading.Event()
         self.custom_style_catalog_requested = threading.Event()
         self.custom_style_uploads = queue.Queue()
+        self.custom_style_deletes = queue.Queue()
         self.available_styles = set(BUILTIN_LCD_STYLES)
 
     def _synchronize_style_catalog(self):
@@ -152,10 +153,11 @@ class MonitorService:
         catalog = getattr(self.client, "styles", None) or []
         if not catalog:
             return
-        names = {
+        names = set(BUILTIN_LCD_STYLES)
+        names.update({
             item.get("name") for item in catalog
             if isinstance(item, dict) and item.get("name")
-        }
+        })
         if not names:
             return
         self.available_styles = names
@@ -188,8 +190,12 @@ class MonitorService:
         """通过 Pico 指令查询自定义样式并输出给托盘进程。"""
         self.custom_style_catalog_requested.clear()
         try:
-            styles = self.client.request_style_catalog()
-            result = {"status": "ok", "styles": styles}
+            catalog = self.client.request_style_catalog_info()
+            result = {
+                "status": "ok",
+                "styles": catalog["styles"],
+                "flash": catalog["flash"],
+            }
         except (OSError, RuntimeError, serial.SerialException) as error:
             result = {"status": "error", "message": str(error), "styles": []}
         print(
@@ -213,6 +219,7 @@ class MonitorService:
                 payload["filename"],
                 payload["style_name"],
                 content,
+                overwrite=payload.get("overwrite") is True,
             )
             result = {"status": "ok", "data": data}
             self.client.styles = self.client.request_style_catalog()
@@ -224,6 +231,29 @@ class MonitorService:
             + json.dumps(result, ensure_ascii=False, separators=(",", ":")),
             flush=True,
         )
+
+    def request_custom_style_delete(self, payload):
+        """安排主循环删除指定自定义样式。"""
+        self.custom_style_deletes.put(dict(payload))
+
+    def _publish_custom_style_delete(self):
+        """删除 Pico 自定义样式并向托盘发布重启状态。"""
+        payload = self.custom_style_deletes.get_nowait()
+        try:
+            data = self.client.delete_style(
+                payload["filename"], payload["style_name"],
+            )
+            result = {"status": "ok", "data": data}
+        except (KeyError, ValueError, OSError, RuntimeError, serial.SerialException) as error:
+            result = {"status": "error", "message": str(error)}
+        print(
+            "CUSTOM_STYLE_DELETE_RESULT:"
+            + json.dumps(result, ensure_ascii=False, separators=(",", ":")),
+            flush=True,
+        )
+        if result["status"] == "ok":
+            # Pico 已由删除命令复位，关闭旧串口以立即进入 PONG 重连流程。
+            self.client.close()
 
     def apply_display_config(self, payload):
         """校验并热更新 Windows 托盘下发的显示配置。"""
@@ -279,6 +309,9 @@ class MonitorService:
                     self._publish_custom_style_catalog()
                 if not self.custom_style_uploads.empty():
                     self._publish_custom_style_upload()
+                if not self.custom_style_deletes.empty():
+                    self._publish_custom_style_delete()
+                    continue
                 started = time.monotonic()
                 snapshot = self._collect_snapshot()
                 collection_elapsed = time.monotonic() - started
@@ -547,6 +580,13 @@ def main():
                         )
                     except (TypeError, ValueError, json.JSONDecodeError) as error:
                         LOGGER.warning("自定义样式上传请求无效：%s", error)
+                elif command.startswith("CUSTOM_STYLE_DELETE:"):
+                    try:
+                        service.request_custom_style_delete(
+                            json.loads(command[len("CUSTOM_STYLE_DELETE:"):])
+                        )
+                    except (TypeError, ValueError, json.JSONDecodeError) as error:
+                        LOGGER.warning("自定义样式删除请求无效：%s", error)
 
         threading.Thread(
             target=listen_for_tray_commands,

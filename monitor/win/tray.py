@@ -26,6 +26,7 @@ from .settings import (
     DEFAULT_SETTINGS,
     TraySettingsStore,
     apply_worker_arguments,
+    normalize_style_catalog,
     settings_from_arguments,
     style_label,
     style_names,
@@ -65,6 +66,9 @@ class WindowsTrayApplication:
         self.current_device_connection = {"connected": False}
         self.custom_style_messages = queue.Queue()
         self.custom_style_upload_messages = queue.Queue()
+        self.custom_style_upload_logs = queue.Queue()
+        self.custom_style_upload_active = threading.Event()
+        self.custom_style_delete_messages = queue.Queue()
         self.update_lock = threading.Lock()
         data_directory = Path(os.getenv("LOCALAPPDATA", Path.home())) / "PicoMonitor"
         data_directory.mkdir(parents=True, exist_ok=True)
@@ -155,6 +159,8 @@ class WindowsTrayApplication:
             for line in process.stdout:
                 log_file.write(line)
                 log_file.flush()
+                if self.custom_style_upload_active.is_set():
+                    self.custom_style_upload_logs.put(line.rstrip("\r\n"))
                 if "STYLE_CATALOG_UPDATED" in line:
                     self._reload_style_catalog()
                     if self.icon is not None:
@@ -177,6 +183,13 @@ class WindowsTrayApplication:
                     except json.JSONDecodeError:
                         result = {"status": "error", "message": "设备返回了无效响应"}
                     self.custom_style_upload_messages.put(result)
+                    self.custom_style_upload_active.clear()
+                if line.startswith("CUSTOM_STYLE_DELETE_RESULT:"):
+                    try:
+                        result = json.loads(line.split(":", 1)[1])
+                    except json.JSONDecodeError:
+                        result = {"status": "error", "message": "设备返回了无效响应"}
+                    self.custom_style_delete_messages.put(result)
                 if "[串口关闭]" in line or "监控通信异常：" in line:
                     self._update_device_connection({"connected": False})
                 connection = re.search(
@@ -353,7 +366,7 @@ class WindowsTrayApplication:
         self._set_tk_window_icon(root)
 
         # 显式绑定当前窗口的 Tcl 解释器，避免多个独立 Tk 线程共享默认根窗口。
-        status = tk.StringVar(master=root, value="正在探测 Pico LCD 设备，请稍候……")
+        status = tk.StringVar(master=root, value="正在探测 OmniWatch 设备，请稍候……")
         ttk.Label(root, textvariable=status).pack(fill=tk.X, padx=16, pady=(16, 8))
         progress = ttk.Progressbar(root, mode="indeterminate")
         progress.pack(fill=tk.X, padx=16, pady=(0, 12))
@@ -461,7 +474,7 @@ class WindowsTrayApplication:
                         append_log(content)
                         normalized = content.strip()
                         for field_name, value in device_values.items():
-                            prefix = "Pico " + device_labels[field_name] + "："
+                            prefix = "OmniWatch " + device_labels[field_name] + "："
                             if normalized.startswith(prefix):
                                 value.set(normalized[len(prefix):].strip() or "未知")
                     else:
@@ -589,7 +602,7 @@ class WindowsTrayApplication:
             """启动主动设备探测线程，避免阻塞设备管理窗口。"""
             probe_button.configure(state=tk.DISABLED)
             reboot_button.configure(state=tk.DISABLED)
-            status.set("正在主动探测 Pico LCD 设备，请稍候……")
+            status.set("正在主动探测 OmniWatch 设备，请稍候……")
             progress.configure(mode="indeterminate")
             progress.start(12)
             device_values["board_model"].set("探测中……")
@@ -803,7 +816,7 @@ class WindowsTrayApplication:
             self._schedule_monitor_replacement(monitor_path)
             monitor_path = None
             self.stopping.set()
-            icon.notify("Pico 更新完成，Monitor 即将重启", APPLICATION_NAME)
+            icon.notify("OmniWatch 更新完成，应用即将重启", APPLICATION_NAME)
             icon.stop()
         except Exception as error:
             LOGGER.exception("检查或安装更新失败：%s", error)
@@ -835,7 +848,7 @@ class WindowsTrayApplication:
             timeout=300,
         )
         if result.returncode != 0:
-            message = (result.stdout or result.stderr or "Pico 升级进程异常退出").strip()
+            message = (result.stdout or result.stderr or "OmniWatch 升级进程异常退出").strip()
             raise RuntimeError(message[-500:])
 
     @staticmethod
@@ -934,7 +947,8 @@ class WindowsTrayApplication:
         image_path = self._resource_path("assert", "fishQr.png")
         with Image.open(image_path) as source:
             qr_image = source.convert("RGB").resize((220, 220), Image.Resampling.LANCZOS)
-        photo = ImageTk.PhotoImage(qr_image)
+        # 显式绑定当前窗口的 Tcl 解释器，避免其他 Tk 线程创建过默认根窗口后跨线程复用。
+        photo = ImageTk.PhotoImage(qr_image, master=root)
         image_label = tk.Label(frame, image=photo)
         image_label.image = photo
         image_label.pack()
@@ -989,6 +1003,110 @@ class WindowsTrayApplication:
         window.iconphoto(True, application_icon)
         window.application_icon = application_icon
 
+    def _show_copyable_error_dialog(self, parent, title, message, detail=None):
+        """显示带复制按钮的错误弹框，用于保留完整上传失败原因。"""
+        import tkinter as tk
+        from tkinter import ttk
+
+        title_text = str(title or "错误")
+        message_text = str(message or "未知错误")
+        detail_text = "" if detail is None else str(detail)
+        copy_text = message_text if not detail_text else "{}\n\n{}".format(
+            message_text,
+            detail_text,
+        )
+
+        owner = parent if parent is not None else self.settings_window
+        dialog = tk.Toplevel(owner) if owner is not None else tk.Tk()
+        dialog.title(title_text)
+        dialog.resizable(True, True)
+        dialog.configure(bg="#f5f7fa")
+        dialog.geometry("620x360")
+        dialog.minsize(480, 260)
+        try:
+            if owner is not None:
+                dialog.transient(owner)
+            dialog.attributes("-topmost", True)
+            dialog.grab_set()
+        except tk.TclError:
+            pass
+        try:
+            self._set_tk_window_icon(dialog)
+        except Exception:
+            pass
+
+        container = ttk.Frame(dialog, padding=18)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(2, weight=1)
+
+        ttk.Label(
+            container,
+            text=title_text,
+            font=("Microsoft YaHei UI", 13, "bold"),
+        ).grid(row=0, column=0, sticky="w")
+
+        ttk.Label(
+            container,
+            text=message_text,
+            foreground="#c0392b",
+            wraplength=560,
+            justify=tk.LEFT,
+        ).grid(row=1, column=0, sticky="ew", pady=(10, 8))
+
+        text_box = tk.Text(
+            container,
+            height=9,
+            wrap=tk.WORD,
+            relief=tk.SOLID,
+            borderwidth=1,
+            font=("Consolas", 9),
+        )
+        scrollbar = ttk.Scrollbar(
+            container,
+            orient=tk.VERTICAL,
+            command=text_box.yview,
+        )
+        text_box.configure(yscrollcommand=scrollbar.set)
+        text_box.grid(row=2, column=0, sticky="nsew")
+        scrollbar.grid(row=2, column=1, sticky="ns")
+        text_box.insert("1.0", copy_text)
+        text_box.configure(state=tk.DISABLED)
+
+        action_frame = ttk.Frame(container)
+        action_frame.grid(row=3, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        copy_state = ttk.Label(action_frame, text="", foreground="#67c23a")
+        copy_state.pack(side=tk.LEFT, padx=(0, 10))
+
+        def copy_error_content():
+            dialog.clipboard_clear()
+            dialog.clipboard_append(copy_text)
+            dialog.update()
+            copy_state.configure(text="已复制")
+
+        ttk.Button(
+            action_frame,
+            text="复制报错内容",
+            command=copy_error_content,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(
+            action_frame,
+            text="关闭",
+            command=dialog.destroy,
+        ).pack(side=tk.LEFT)
+
+        dialog.bind("<Escape>", lambda event: dialog.destroy())
+        self._center_tk_window(dialog)
+        dialog.focus_force()
+        dialog.wait_window()
+
+    @staticmethod
+    def _should_use_copyable_custom_style_error(title):
+        """判断自定义屏幕弹框中的错误是否需要可复制错误详情。"""
+        title_text = str(title or "")
+        keywords = ("上传", "样式", "自定义屏幕", "自定义样式")
+        return any(keyword in title_text for keyword in keywords)
+
     def _run_settings_window(self):
         """使用原生控件绘制接近 Element Plus 的分组配置对话框。"""
         self._configure_tk_runtime()
@@ -997,7 +1115,7 @@ class WindowsTrayApplication:
 
         root = tk.Tk()
         self.settings_window = root
-        root.title("Pico Monitor 配置")
+        root.title("OmniWatch 配置")
         self._set_tk_window_icon(root)
         root.geometry("680x700")
         root.minsize(620, 620)
@@ -1129,7 +1247,7 @@ class WindowsTrayApplication:
             })
             self.settings_store.save(self.settings)
             if not self._apply_display_settings():
-                messagebox.showerror("应用失败", "Monitor 未运行，显示设置暂未应用。", parent=root)
+                messagebox.showerror("应用失败", "OmniWatch 未运行，显示设置暂未应用。", parent=root)
                 return
             if self.icon is not None:
                 self.icon.update_menu()
@@ -1153,7 +1271,7 @@ class WindowsTrayApplication:
             self._restart_worker()
             if self.icon is not None:
                 self.icon.notify(
-                    "串口已保存：{}；Monitor 已重启".format(
+                    "串口已保存：{}；OmniWatch 已重启".format(
                         self.settings["port"] or "自动发现"
                     ),
                     APPLICATION_NAME,
@@ -1353,8 +1471,34 @@ class WindowsTrayApplication:
     def _show_custom_style(self, icon=None, item=None):
         """打开自定义屏幕弹框，并通过后台进程向 Pico 获取最新清单。"""
         del icon, item
+        import tkinter.messagebox as messagebox
+
         from .customStyle.dialog import show_custom_style_dialog
-        show_custom_style_dialog(self)
+
+        original_showerror = messagebox.showerror
+
+        def showerror_with_copy(title=None, message=None, **options):
+            """在自定义屏幕窗口内把上传失败弹框替换为可复制版本。"""
+            if self._should_use_copyable_custom_style_error(title):
+                parent = options.get("parent") or self.settings_window
+                detail = options.get("detail")
+                if detail is None and isinstance(message, BaseException):
+                    detail = repr(message)
+                self._show_copyable_error_dialog(
+                    parent,
+                    title or "上传样式失败",
+                    message or "未知错误",
+                    detail=detail,
+                )
+                return "ok"
+            return original_showerror(title, message, **options)
+
+        messagebox.showerror = showerror_with_copy
+        try:
+            show_custom_style_dialog(self)
+        finally:
+            if messagebox.showerror is showerror_with_copy:
+                messagebox.showerror = original_showerror
 
     def request_custom_style_catalog(self):
         """向工作进程发送自定义样式清单查询请求。"""
@@ -1368,7 +1512,7 @@ class WindowsTrayApplication:
         except (BrokenPipeError, OSError):
             return False
 
-    def request_custom_style_upload(self, path, existing_style_names):
+    def request_custom_style_upload(self, path, existing_style_names, overwrite=False):
         """校验本地样式文件、检查重名并交给 Monitor 工作进程上传。"""
         from style_validator import StyleFileValidator
 
@@ -1376,16 +1520,24 @@ class WindowsTrayApplication:
         existing_filenames = {
             "style_{}.py".format(name) for name in existing_style_names
         }
-        if validated.filename in existing_filenames:
-            raise ValueError("customStyles 中已存在同名文件：{}".format(validated.filename))
+        if validated.filename in existing_filenames and not overwrite:
+            raise FileExistsError(
+                "OmniWatch 中已存在样式名 {} 和文件 {}".format(
+                    validated.name, validated.filename,
+                )
+            )
         process = self.worker_process
         if process is None or process.poll() is not None or process.stdin is None:
-            raise RuntimeError("Monitor 未运行，无法上传样式")
+            raise RuntimeError("OmniWatch 未运行，无法上传样式")
         payload = {
             "filename": validated.filename,
             "style_name": validated.name,
             "content": base64.b64encode(validated.source).decode("ascii"),
+            "overwrite": bool(overwrite),
         }
+        upload_active = getattr(self, "custom_style_upload_active", None)
+        if upload_active is not None:
+            upload_active.set()
         try:
             process.stdin.write(
                 "CUSTOM_STYLE_UPLOAD:{}\n".format(
@@ -1394,13 +1546,31 @@ class WindowsTrayApplication:
             )
             process.stdin.flush()
         except (BrokenPipeError, OSError) as error:
+            if upload_active is not None:
+                upload_active.clear()
             raise RuntimeError("自定义样式上传请求发送失败") from error
         return validated
+
+    def request_custom_style_delete(self, style_name, filename):
+        """向工作进程发送自定义样式删除请求。"""
+        process = self.worker_process
+        if process is None or process.poll() is not None or process.stdin is None:
+            raise RuntimeError("OmniWatch 未运行，无法删除样式")
+        payload = {"style_name": style_name, "filename": filename}
+        try:
+            process.stdin.write(
+                "CUSTOM_STYLE_DELETE:{}\n".format(
+                    json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+                )
+            )
+            process.stdin.flush()
+        except (BrokenPipeError, OSError) as error:
+            raise RuntimeError("自定义样式删除请求发送失败") from error
 
     def _reload_style_catalog(self):
         """从配置文件同步 Pico 样式清单及当前选择。"""
         latest_settings = self.settings_store.load()
-        self.settings["styles"] = latest_settings["styles"]
+        self.settings["styles"] = normalize_style_catalog(latest_settings["styles"])
         self.settings["lcd_style"] = latest_settings["lcd_style"]
 
     def _style_menu_items(self):

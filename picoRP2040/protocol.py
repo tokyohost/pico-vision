@@ -30,18 +30,22 @@ except ImportError:
 
 try:
     import zlib
+
     ZLIB_ERROR = getattr(zlib, "error", ValueError)
+
 
     def decompress_zlib(data):
         return zlib.decompress(data, 15)
 except ImportError:
     import deflate
+
     try:
         import io
     except ImportError:
         import uio as io
 
     ZLIB_ERROR = OSError
+
 
     def decompress_zlib(data):
         source = io.BytesIO(data)
@@ -84,6 +88,39 @@ def _build_crc16_byte_table():
 
 
 CRC16_BYTE_TABLE = _build_crc16_byte_table()
+
+
+def _json_error_payload(stage, error=None, detail=None):
+    """生成简短 ASCII JSON 错误，方便主机端定位 BAD_JSON 的真实阶段。"""
+    try:
+        if error is not None:
+            name = error.__class__.__name__
+            message = str(error)
+        else:
+            name = "Error"
+            message = str(detail or "")
+    except Exception:
+        name = "Error"
+        message = ""
+
+    try:
+        import gc
+
+        memory = ":MEM_FREE={}:MEM_ALLOC={}".format(
+            gc.mem_free(),
+            gc.mem_alloc(),
+        )
+    except Exception:
+        memory = ""
+
+    text = "BAD_JSON:{}:{}:{}{}".format(
+        stage,
+        name,
+        message,
+        memory,
+    )
+    text = text.replace("\r", " ").replace("\n", " ")
+    return text[:220].encode("ascii", "replace")
 
 
 class JsonProtocol:
@@ -192,6 +229,8 @@ class JsonProtocol:
             if len(self._buffer) > maximum_size:
                 self._buffer = bytearray()
                 self._last_byte_ms = None
+                self._frame_started_ms = None
+                self._frame_read_calls = 0
                 self._write_frame("ERR", b"FRAME_TOO_LARGE")
                 return None
         return self._parse_lines()
@@ -207,68 +246,163 @@ class JsonProtocol:
             newline = self._buffer.find(b"\n")
             if newline < 0:
                 break
+
             # memoryview 避免 bytearray 切片先复制一次整包数据，降低解析峰值内存。
             line_view = memoryview(self._buffer)[:newline]
             line = bytes(line_view)
             del line_view
+
             receive_finished_ms = self._ticks_ms()
             receive_elapsed_ms = self._elapsed_ms(
-                receive_finished_ms, self._frame_started_ms
+                receive_finished_ms,
+                self._frame_started_ms,
             )
             frame_read_calls = self._frame_read_calls
             self._consume(newline + 1)
+
             # 串口可能先被 ModemManager 等程序写入无换行的探测字节；扫描魔数，
             # 从同一行中的首个 PV1 帧重新同步，而不是连合法帧一起丢弃。
             frame_start = line.find(b"PV1:")
-            if frame_start >= 0:
-                line = line[frame_start:]
-                try:
-                    parse_started_ms = self._ticks_ms()
-                    message_type, payload = self._parse_frame(line)
-                    self._last_message_ms = receive_finished_ms
-                    parse_elapsed_ms = self._elapsed_ms(
-                        self._ticks_ms(), parse_started_ms
-                    )
-                except ValueError as error:
-                    self._write_frame("ERR", str(error).encode("ascii"))
-                    continue
-                if message_type == "PING":
-                    self._write_pong()
-                elif message_type == "JSONZ":
-                    try:
-                        decompress_started_ms = self._ticks_ms()
-                        compressed_payload = binascii.a2b_base64(payload)
-                        json_payload = decompress_zlib(compressed_payload)
-                        decompress_elapsed_ms = self._elapsed_ms(
-                            self._ticks_ms(), decompress_started_ms
-                        )
-                        if len(json_payload) > MAX_JSON_SIZE:
-                            raise ValueError("JSON_TOO_LARGE")
-                        json_started_ms = self._ticks_ms()
-                        message = json.loads(json_payload.decode("utf-8"))
-                        json_elapsed_ms = self._elapsed_ms(
-                            self._ticks_ms(), json_started_ms
-                        )
-                        timing = (
-                            "PROTOCOL_TIMING:TYPE=JSONZ:BYTES={}:JSON_BYTES={}:READS={}:"
-                            "RX={}MS:FRAME_PARSE={}MS:DECOMPRESS={}MS:JSON={}MS"
-                        ).format(
-                            len(line),
-                            len(json_payload),
-                            frame_read_calls,
-                            receive_elapsed_ms,
-                            parse_elapsed_ms,
-                            decompress_elapsed_ms,
-                            json_elapsed_ms,
-                        )
-                        self._write_frame("EVENT", timing.encode("ascii"))
-                        latest = self._handle_json_message(message)
-                    except (ValueError, UnicodeError, OSError, MemoryError, ZLIB_ERROR):
-                        self._write_frame("ERR", b"BAD_JSON")
-                else:
-                    self._write_frame("ERR", b"UNKNOWN_TYPE")
+            if frame_start < 0:
                 continue
+
+            line = line[frame_start:]
+
+            try:
+                parse_started_ms = self._ticks_ms()
+                message_type, payload = self._parse_frame(line)
+                self._last_message_ms = receive_finished_ms
+                parse_elapsed_ms = self._elapsed_ms(
+                    self._ticks_ms(),
+                    parse_started_ms,
+                )
+            except ValueError as error:
+                self._write_frame("ERR", str(error).encode("ascii", "replace"))
+                continue
+
+            if message_type == "PING":
+                self._write_pong()
+            elif message_type == "JSONZ":
+                latest = self._handle_jsonz_frame(
+                    payload=payload,
+                    line=line,
+                    frame_read_calls=frame_read_calls,
+                    receive_elapsed_ms=receive_elapsed_ms,
+                    parse_elapsed_ms=parse_elapsed_ms,
+                )
+            else:
+                self._write_frame("ERR", b"UNKNOWN_TYPE")
         return latest
+
+    def _handle_jsonz_frame(
+            self,
+            payload,
+            line,
+            frame_read_calls,
+            receive_elapsed_ms,
+            parse_elapsed_ms,
+    ):
+        """分阶段解析 JSONZ，并返回更具体的 BAD_JSON 错误。"""
+        decompress_started_ms = self._ticks_ms()
+
+        try:
+            compressed_payload = binascii.a2b_base64(payload)
+        except MemoryError as error:
+            self._write_frame("ERR", _json_error_payload("MEMORY_BASE64", error))
+            return None
+        except Exception as error:
+            self._write_frame("ERR", _json_error_payload("BASE64", error))
+            return None
+
+        try:
+            json_payload = decompress_zlib(compressed_payload)
+        except MemoryError as error:
+            self._write_frame("ERR", _json_error_payload("MEMORY_ZLIB", error))
+            return None
+        except (ValueError, OSError, ZLIB_ERROR) as error:
+            self._write_frame("ERR", _json_error_payload("ZLIB", error))
+            return None
+        except Exception as error:
+            self._write_frame("ERR", _json_error_payload("ZLIB_UNKNOWN", error))
+            return None
+
+        decompress_elapsed_ms = self._elapsed_ms(
+            self._ticks_ms(),
+            decompress_started_ms,
+        )
+
+        try:
+            json_size = len(json_payload)
+        except Exception:
+            json_size = -1
+
+        if json_size > MAX_JSON_SIZE:
+            self._write_frame(
+                "ERR",
+                _json_error_payload(
+                    "SIZE",
+                    detail="JSON_TOO_LARGE:{}>{}".format(
+                        json_size,
+                        MAX_JSON_SIZE,
+                    ),
+                ),
+            )
+            return None
+
+        try:
+            text_payload = json_payload.decode("utf-8")
+        except MemoryError as error:
+            self._write_frame("ERR", _json_error_payload("MEMORY_UTF8", error))
+            return None
+        except UnicodeError as error:
+            self._write_frame("ERR", _json_error_payload("UTF8", error))
+            return None
+        except Exception as error:
+            self._write_frame("ERR", _json_error_payload("UTF8_UNKNOWN", error))
+            return None
+
+        try:
+            json_started_ms = self._ticks_ms()
+            message = json.loads(text_payload)
+            json_elapsed_ms = self._elapsed_ms(
+                self._ticks_ms(),
+                json_started_ms,
+            )
+        except MemoryError as error:
+            self._write_frame("ERR", _json_error_payload("MEMORY_JSON_PARSE", error))
+            return None
+        except ValueError as error:
+            self._write_frame("ERR", _json_error_payload("JSON_PARSE", error))
+            return None
+        except Exception as error:
+            self._write_frame("ERR", _json_error_payload("JSON_PARSE_UNKNOWN", error))
+            return None
+
+        timing = (
+            "PROTOCOL_TIMING:TYPE=JSONZ:BYTES={}:JSON_BYTES={}:READS={}:"
+            "RX={}MS:FRAME_PARSE={}MS:DECOMPRESS={}MS:JSON={}MS"
+        ).format(
+            len(line),
+            json_size,
+            frame_read_calls,
+            receive_elapsed_ms,
+            parse_elapsed_ms,
+            decompress_elapsed_ms,
+            json_elapsed_ms,
+        )
+        self._write_frame("EVENT", timing.encode("ascii", "replace"))
+
+        try:
+            return self._handle_json_message(message)
+        except MemoryError as error:
+            self._write_frame("ERR", _json_error_payload("MEMORY_JSON_HANDLE", error))
+            return None
+        except ValueError as error:
+            self._write_frame("ERR", _json_error_payload("JSON_HANDLE", error))
+            return None
+        except Exception as error:
+            self._write_frame("ERR", _json_error_payload("JSON_HANDLE_UNKNOWN", error))
+            return None
 
     def _handle_json_message(self, message):
         """按 JSON 信封模式分发快照或命令，并兼容旧裸快照。"""

@@ -76,9 +76,9 @@ def style_label(style, settings=None):
 
 
 def normalize_style_catalog(catalog):
-    """校验 Pico 下发的样式清单并去除重复项目。"""
-    normalized = []
-    seen = set()
+    """校验设备样式清单，并在保留全部内置样式的基础上合并自定义样式。"""
+    normalized = [dict(item) for item in DEFAULT_STYLE_CATALOG]
+    seen = {item["name"] for item in normalized}
     for item in catalog if isinstance(catalog, list) else ():
         if not isinstance(item, dict):
             continue

@@ -107,8 +107,19 @@ def _scan_style_directory(directory, required_type):
             metadata = None
         if (metadata and metadata["name"] != "boot"
                 and metadata["type"] == required_type):
+            path = directory + "/" + filename
+            metadata["filename"] = filename
+            metadata["file_size"] = _file_size(path)
             catalog.append(metadata)
     return tuple(catalog)
+
+
+def _file_size(path):
+    """返回样式模板文件大小，读取失败时返回零。"""
+    try:
+        return int(os.stat(path)[6])
+    except (OSError, IndexError, TypeError):
+        return 0
 
 
 def _read_style_metadata(path):

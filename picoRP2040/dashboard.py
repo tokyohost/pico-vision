@@ -51,6 +51,10 @@ class DashboardRenderer:
         """返回当前生效的样式插件名称。"""
         return self._style_name
 
+    def style_type(self):
+        """返回当前样式声明的 builtin 或 custom 类型。"""
+        return getattr(self._style, "type", "builtin")
+
     def canvas_backend(self):
         """返回当前渲染器使用的 Canvas 后端名称。"""
         return canvas_backend_name()

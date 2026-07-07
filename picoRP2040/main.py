@@ -25,6 +25,7 @@ from config import (
     RENDER_INTERVAL_MS,
 )
 from protocol import JsonProtocol
+from fatal_policy import CANVAS_CAPACITY_ERROR, should_restart_after_fatal
 
 
 def memory_usage():
@@ -67,6 +68,7 @@ class Application:
         # 优先把首个有效自定义样式用于 SYSTEM BOOT 页面；目录为空时使用内置启动样式。
         from styles.style_plugins import load_startup_custom_style
         startup_style = load_startup_custom_style(self._write_custom_style_log)
+        self._failed_custom_style = None
         self._renderer = DashboardRenderer(
             self._lcd, style_name=startup_style or "boot"
         )
@@ -94,16 +96,43 @@ class Application:
         if log and (not self._boot_logs or self._boot_logs[-1] != log):
             self._boot_logs.append(log)
             self._boot_logs = self._boot_logs[-4:]
-        self._renderer.request_render({
+        boot_snapshot = {
             "boot": {
                 "progress": progress,
                 "logs": self._boot_logs,
                 "status": status,
             }
-        }, force=True)
+        }
+        self._renderer.request_render(boot_snapshot, force=True)
         if flush:
             while self._renderer.is_rendering():
-                self._renderer.update_pending(max_regions=1)
+                self._update_renderer_with_fallback(boot_snapshot)
+
+    def _update_renderer_with_fallback(self, snapshot):
+        """刷新一个区域，自定义样式画布超限时回退到内置默认样式。"""
+        try:
+            return self._renderer.update_pending(max_regions=1)
+        except ValueError as error:
+            if (
+                str(error) != CANVAS_CAPACITY_ERROR
+                or self._renderer.style_type() != "custom"
+            ):
+                raise
+            failed_style = self._renderer.style_name()
+            self._failed_custom_style = failed_style
+            self._protocol.write(
+                "CUSTOM_STYLE:RENDER_FAILED:{}:{}\n".format(
+                    failed_style, error,
+                ).encode("utf-8")
+            )
+            self._renderer.set_style("default")
+            self._renderer.request_render(snapshot, force=True)
+            self._protocol.write(
+                "CONFIG:LCD_STYLE_FALLBACK:{}:default\n".format(
+                    failed_style,
+                ).encode("utf-8")
+            )
+            return False
 
     def _monitor_timed_out(self, now):
         """判断 Monitor 是否已连续超过配置周期没有发送有效消息。"""
@@ -207,6 +236,11 @@ class Application:
                 except (TypeError, ValueError):
                     requested_rotation = 0
                 requested_style = display.get("style", LCD_STYLE)
+                if requested_style == self._failed_custom_style:
+                    requested_style = "default"
+                elif self._failed_custom_style is not None:
+                    # 用户切换到其他样式后允许未来再次尝试已修复的同名样式。
+                    self._failed_custom_style = None
                 requested_brightness = display.get("brightness", 100)
                 try:
                     requested_brightness = int(requested_brightness)
@@ -246,7 +280,7 @@ class Application:
                 )
             # 每绘制一个区域就返回主循环轮询 USB，避免连续绘制多个区域期间
             # 主机串口写入因 Pico 不消费数据而阻塞数百毫秒。
-            render_completed = self._renderer.update_pending(max_regions=1)
+            render_completed = self._update_renderer_with_fallback(snapshot or {})
             # system_boot 等待页使用尚未打开的应用 CDC；此时若发送帧完成
             # ACK，CDC 写缓冲会持续返回零并阻塞主循环。仅在 Monitor 已
             # 恢复连接后发送渲染性能信息，等待动画本身仍可正常推进。
@@ -301,8 +335,8 @@ def main():
             sys.print_exception(error)
         except AttributeError:
             pass
-        if isinstance(error, MemoryError):
-            # MemoryError 后堆往往已高度碎片化，继续运行无法恢复。
+        if should_restart_after_fatal(error):
+            # 内存耗尽或脏矩形容量配置错误均无法由当前渲染循环自行恢复。
             # 先给独立 CDC 留出发送 FATAL 的时间，再硬复位重建堆。
             time.sleep_ms(300)
             import machine

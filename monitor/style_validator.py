@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-MAX_STYLE_FILE_SIZE = 12100
+# 样式通过小块写入 Flash，16 KB 上限兼顾标准模板扩展空间与 Pico 编译内存。
+MAX_STYLE_FILE_SIZE = 16 * 1024
 REQUIRED_STYLE_METHODS = ("create_dirty_regions", "draw_visible", "draw_dirty")
 
 

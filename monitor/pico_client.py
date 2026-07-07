@@ -31,6 +31,7 @@ FRAME_MAGIC = b"PV1"
 FRAME_MAX_PAYLOAD = 16 * 1024
 TRANSPORT_BLOCK_SIZE = 64
 ZLIB_WINDOW_BITS = 9
+STYLE_UPLOAD_CHUNK_SIZE = 512
 
 
 def _build_crc16_byte_table():
@@ -92,10 +93,23 @@ def parse_frame(line):
 PING_COMMAND = build_frame("PING")
 SERIAL_WRITE_CHUNK_SIZE = 511
 LOGGER = logging.getLogger("pico-monitor.serial")
+RESTARTING_FATAL_PREFIXES = (
+    b"FATAL:MemoryError:",
+    "FATAL:ValueError:脏矩形超过画布容量".encode("utf-8"),
+)
 
 
 class PicoRestartingError(RuntimeError):
-    """Pico reported a fatal condition and is restarting itself."""
+    """表示 Pico 报告不可恢复错误并正在自动重启。"""
+
+
+def _is_restarting_fatal(frame):
+    """判断协议帧是否表示 Pico 正在因致命异常自动重启。"""
+    return bool(
+        frame
+        and frame[0] == "EVENT"
+        and any(frame[1].startswith(prefix) for prefix in RESTARTING_FATAL_PREFIXES)
+    )
 
 
 class PicoJsonClient:
@@ -366,22 +380,22 @@ class PicoJsonClient:
         ).encode("utf-8")
         return PicoJsonClient._build_jsonz_packet(payload)
 
-    def send(self, snapshot):
-        """分块发送单行 JSON 数据，并等待 Pico 返回接收确认。"""
-        if not self.is_connected:
-            raise RuntimeError("Pico 串口尚未连接")
-        build_started = time.monotonic()
-        packet = memoryview(self.build_packet(snapshot))
-        build_elapsed_ms = (time.monotonic() - build_started) * 1000
+    def _write_packet(self, packet, label, build_elapsed_ms=0.0):
+        """按统一分块策略写入一条 PV1 帧，并输出串口写入耗时日志。"""
+        packet = memoryview(packet)
+        total_chunks = (len(packet) + SERIAL_WRITE_CHUNK_SIZE - 1) // SERIAL_WRITE_CHUNK_SIZE
         LOGGER.info(
-            "[Monitor -> Pico][%s][JSONZ][压缩帧 %d 字节]",
+            "[Monitor -> Pico][%s][%s][发送帧 %d 字节，共 %d 块]",
             self.port_name,
+            label,
             len(packet),
+            total_chunks,
         )
         send_started = time.monotonic()
         chunk_count = 0
         write_elapsed_ms = 0.0
         slowest_write_ms = 0.0
+        total_written = 0
         for position in range(0, len(packet), SERIAL_WRITE_CHUNK_SIZE):
             chunk = packet[position:position + SERIAL_WRITE_CHUNK_SIZE]
             write_started = time.monotonic()
@@ -390,44 +404,137 @@ class PicoJsonClient:
             write_elapsed_ms += chunk_elapsed_ms
             slowest_write_ms = max(slowest_write_ms, chunk_elapsed_ms)
             chunk_count += 1
+            total_written += written or 0
             LOGGER.info(
-                "[协议耗时][%s][主机写入 %d/%d] 请求=%d 字节，实际=%s 字节，耗时=%.1f ms",
+                "[协议耗时][%s][%s 写入 %d/%d] offset=%d，请求=%d 字节，实际=%s 字节，耗时=%.1f ms",
                 self.port_name,
+                label,
                 chunk_count,
-                (len(packet) + SERIAL_WRITE_CHUNK_SIZE - 1) // SERIAL_WRITE_CHUNK_SIZE,
+                total_chunks,
+                position,
                 len(chunk),
                 written,
                 chunk_elapsed_ms,
             )
+            if written != len(chunk):
+                raise serial.SerialTimeoutException(
+                    "%s 仅发送 %d/%d 字节，当前块 %d/%d 实际写入 %s/%d 字节" % (
+                        label,
+                        total_written,
+                        len(packet),
+                        chunk_count,
+                        total_chunks,
+                        written,
+                        len(chunk),
+                    )
+                )
         flush_started = time.monotonic()
         self.serial.flush()
         flush_elapsed_ms = (time.monotonic() - flush_started) * 1000
         send_elapsed_ms = (time.monotonic() - send_started) * 1000
         LOGGER.info(
-            "[协议耗时][%s][主机汇总] 构帧=%.1f ms，write合计=%.1f ms，最慢write=%.1f ms，flush=%.1f ms，发送阶段=%.1f ms，共%d块",
+            "[协议耗时][%s][%s 写入汇总] 构帧=%.1f ms，write合计=%.1f ms，最慢write=%.1f ms，flush=%.1f ms，发送阶段=%.1f ms，总写入=%d/%d 字节，共%d块",
             self.port_name,
+            label,
             build_elapsed_ms,
             write_elapsed_ms,
             slowest_write_ms,
             flush_elapsed_ms,
             send_elapsed_ms,
+            total_written,
+            len(packet),
             chunk_count,
         )
+
+    def _read_protocol_frame(self, label):
+        """读取并解析一条 Pico 返回帧，同时输出原始响应日志。"""
+        response = self.serial.readline().strip()
+        if response:
+            LOGGER.info(
+                "[Pico -> Monitor][%s][%s 响应] %s",
+                self.port_name,
+                label,
+                response.decode("utf-8", errors="replace"),
+            )
+        try:
+            return parse_frame(response)
+        except ValueError as error:
+            LOGGER.warning(
+                "[Pico -> Monitor][%s][%s 坏帧] %s raw=%r",
+                self.port_name,
+                label,
+                error,
+                response,
+            )
+            raise RuntimeError(f"Pico 返回损坏协议帧：{error}") from error
+
+    def _wait_command_result(self, request_id, timeout, label, default_error):
+        """等待指定 request_id 的 COMMAND 响应，供样式列表和上传命令复用。"""
+        wait_started = time.monotonic()
+        deadline = time.monotonic() + max(0.1, float(timeout))
+        while time.monotonic() < deadline:
+            frame = self._read_protocol_frame(label)
+            if frame and frame[0] == "COMMAND":
+                result = json.loads(frame[1].decode("utf-8"))
+                if result.get("request_id") != request_id:
+                    LOGGER.info(
+                        "[Pico -> Monitor][%s][%s 忽略响应] request_id=%s，期望=%s",
+                        self.port_name,
+                        label,
+                        result.get("request_id"),
+                        request_id,
+                    )
+                    continue
+                elapsed_ms = (time.monotonic() - wait_started) * 1000
+                if result.get("status") != "ok":
+                    LOGGER.warning(
+                        "[Pico -> Monitor][%s][%s 失败] 耗时=%.1f ms，结果=%s",
+                        self.port_name,
+                        label,
+                        elapsed_ms,
+                        result,
+                    )
+                    raise RuntimeError(result.get("error") or default_error)
+                LOGGER.info(
+                    "[Pico -> Monitor][%s][%s 成功] COMMAND等待=%.1f ms，data=%s",
+                    self.port_name,
+                    label,
+                    elapsed_ms,
+                    result.get("data"),
+                )
+                return result
+            if _is_restarting_fatal(frame):
+                raise PicoRestartingError(
+                    frame[1].decode("utf-8", errors="replace")
+                )
+            if frame and frame[0] == "ERR":
+                raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
+        LOGGER.error(
+            "[交互超时][%s][%s] %.1f 秒内未收到 COMMAND request_id=%s",
+            self.port_name,
+            label,
+            float(timeout),
+            request_id,
+        )
+        raise RuntimeError(default_error + "：等待 Pico 响应超时")
+
+    def send(self, snapshot):
+        """分块发送单行 JSON 数据，并等待 Pico 返回接收确认。"""
+        if not self.is_connected:
+            raise RuntimeError("Pico 串口尚未连接")
+        build_started = time.monotonic()
+        packet = self.build_packet(snapshot)
+        build_elapsed_ms = (time.monotonic() - build_started) * 1000
+        self._write_packet(packet, "JSONZ", build_elapsed_ms)
         ack_wait_started = time.monotonic()
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
-            response = self.serial.readline().strip()
-            if response:
-                LOGGER.info("[Pico -> Monitor][%s][响应] %s", self.port_name, response.decode("utf-8", errors="replace"))
-            try:
-                frame = parse_frame(response)
-            except ValueError as error:
-                raise RuntimeError(f"Pico 返回损坏协议帧：{error}") from error
+            frame = self._read_protocol_frame("JSONZ")
             if frame == ("ACK", b"JSON"):
                 ack_wait_ms = (time.monotonic() - ack_wait_started) * 1000
                 total_ms = (time.monotonic() - build_started) * 1000
                 LOGGER.info(
-                    "[协议耗时][%s][交互完成] ACK等待=%.1f ms，构帧到ACK总计=%.1f ms",
+                    "[协议耗时][%s][JSONZ 交互完成] ACK等待=%.1f ms，构帧到ACK总计=%.1f ms",
                     self.port_name,
                     ack_wait_ms,
                     total_ms,
@@ -439,8 +546,8 @@ class PicoJsonClient:
                     self.port_name,
                 )
                 return
-            if frame and frame[0] == "EVENT" and frame[1].startswith(b"FATAL:MemoryError:"):
-                raise PicoRestartingError("Pico 内存不足，设备正在自动重启")
+            if _is_restarting_fatal(frame):
+                raise PicoRestartingError("Pico 发生不可恢复的渲染错误，设备正在自动重启")
             if frame and frame[0] == "ERR":
                 raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
         LOGGER.error("[交互超时][%s] 5 秒内未收到 ACK:JSON", self.port_name)
@@ -451,15 +558,11 @@ class PicoJsonClient:
         if not self.is_connected:
             raise RuntimeError("Pico 串口尚未连接")
         LOGGER.info("[Monitor -> Pico][%s][命令 reboot]", self.port_name)
-        self.serial.write(self.build_command_packet("reboot", request_id="reboot"))
-        self.serial.flush()
+        packet = self.build_command_packet("reboot", request_id="reboot")
+        self._write_packet(packet, "reboot")
         deadline = time.monotonic() + max(0.1, float(timeout))
         while time.monotonic() < deadline:
-            response = self.serial.readline().strip()
-            try:
-                frame = parse_frame(response)
-            except ValueError as error:
-                raise RuntimeError(f"Pico 返回损坏协议帧：{error}") from error
+            frame = self._read_protocol_frame("reboot")
             if frame and frame[0] == "COMMAND":
                 result = json.loads(frame[1].decode("utf-8"))
                 if result.get("command") == "reboot" and result.get("status") == "ok":
@@ -469,60 +572,132 @@ class PicoJsonClient:
                 raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
         raise RuntimeError("设备无响应，请重新拔插设备注册")
 
-    def request_style_catalog(self, timeout=5.0):
-        """请求 Pico 重新扫描并返回自定义样式清单。"""
+    def request_style_catalog_info(self, timeout=5.0):
+        """请求 Pico 返回自定义样式清单及 Flash 空间信息。"""
         if not self.is_connected:
             raise RuntimeError("Pico 串口尚未连接")
         request_id = "style-list-{}".format(int(time.time() * 1000))
+        build_started = time.monotonic()
         packet = self.build_command_packet("style.list", request_id=request_id)
-        self.serial.write(packet)
-        self.serial.flush()
-        deadline = time.monotonic() + max(0.1, float(timeout))
-        while time.monotonic() < deadline:
-            response = self.serial.readline().strip()
-            frame = parse_frame(response)
-            if frame and frame[0] == "COMMAND":
-                result = json.loads(frame[1].decode("utf-8"))
-                if result.get("request_id") != request_id:
-                    continue
-                if result.get("status") != "ok":
-                    raise RuntimeError(result.get("error") or "样式清单查询失败")
-                styles = (result.get("data") or {}).get("styles", [])
-                return [item for item in styles if isinstance(item, dict)]
-            if frame and frame[0] == "ERR":
-                raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
-        raise RuntimeError("等待 Pico 返回自定义样式清单超时")
+        build_elapsed_ms = (time.monotonic() - build_started) * 1000
+        LOGGER.info(
+            "[样式清单][%s] request_id=%s，命令帧=%d 字节，timeout=%.1f 秒",
+            self.port_name,
+            request_id,
+            len(packet),
+            timeout,
+        )
+        self._write_packet(packet, "style.list", build_elapsed_ms)
+        result = self._wait_command_result(
+            request_id,
+            timeout,
+            "style.list",
+            "样式清单查询失败",
+        )
+        data = result.get("data") or {}
+        styles = data.get("styles", [])
+        flash = data.get("flash") or {}
+        return {
+            "styles": [item for item in styles if isinstance(item, dict)],
+            "flash": {
+                "free_bytes": max(0, int(flash.get("free_bytes", 0))),
+                "total_bytes": max(0, int(flash.get("total_bytes", 0))),
+            },
+        }
 
-    def upload_style(self, filename, style_name, content, timeout=10.0):
-        """向 Pico 上传一个已经由 Monitor 校验的自定义样式文件。"""
+    def request_style_catalog(self, timeout=5.0):
+        """请求 Pico 返回自定义样式清单并保持原有列表返回格式。"""
+        return self.request_style_catalog_info(timeout)["styles"]
+
+    def delete_style(self, filename, style_name, timeout=5.0):
+        """请求 Pico 删除一个自定义样式文件并重启设备。"""
         if not self.is_connected:
             raise RuntimeError("Pico 串口尚未连接")
-        request_id = "style-upload-{}".format(int(time.time() * 1000))
+        request_id = "style-delete-{}".format(int(time.time() * 1000))
         packet = self.build_command_packet(
-            "uploadStyle",
-            params={
-                "filename": filename,
-                "style_name": style_name,
-                "content": base64.b64encode(content).decode("ascii"),
-            },
+            "style.delete",
+            params={"filename": filename, "style_name": style_name},
             request_id=request_id,
         )
-        self.serial.write(packet)
-        self.serial.flush()
-        deadline = time.monotonic() + max(0.1, float(timeout))
-        while time.monotonic() < deadline:
-            response = self.serial.readline().strip()
-            frame = parse_frame(response)
-            if frame and frame[0] == "COMMAND":
-                result = json.loads(frame[1].decode("utf-8"))
-                if result.get("request_id") != request_id:
-                    continue
-                if result.get("status") != "ok":
-                    raise RuntimeError(result.get("error") or "自定义样式上传失败")
-                return result.get("data") or {}
-            if frame and frame[0] == "ERR":
-                raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
-        raise RuntimeError("等待 Pico 返回自定义样式上传结果超时")
+        self._write_packet(packet, "style.delete")
+        result = self._wait_command_result(
+            request_id, timeout, "style.delete", "自定义样式删除失败",
+        )
+        return result.get("data") or {}
+
+    def upload_style(self, filename, style_name, content, timeout=10.0, overwrite=False):
+        """把样式源码分块写入 Pico 的 Flash 临时文件并完成校验。"""
+        if not self.is_connected:
+            raise RuntimeError("Pico 串口尚未连接")
+        upload_id = filename
+        request_prefix = "style-upload-{}".format(int(time.time() * 1000))
+        LOGGER.info(
+            "[样式上传][%s] filename=%s，style_name=%s，原始=%d 字节，分块=%d 字节，request_id=%s，timeout=%.1f 秒",
+            self.port_name,
+            filename,
+            style_name,
+            len(content),
+            STYLE_UPLOAD_CHUNK_SIZE,
+            request_prefix,
+            timeout,
+        )
+        begin_result = self._send_style_upload_action(
+            request_prefix + "-begin",
+            {
+                "action": "begin", "filename": filename,
+                "style_name": style_name, "size": len(content),
+                "overwrite": bool(overwrite),
+            },
+            timeout,
+            "begin",
+        )
+        del begin_result
+        try:
+            for sequence, offset in enumerate(range(0, len(content), STYLE_UPLOAD_CHUNK_SIZE)):
+                chunk = content[offset:offset + STYLE_UPLOAD_CHUNK_SIZE]
+                self._send_style_upload_action(
+                    request_prefix + "-data-{}".format(sequence),
+                    {
+                        "action": "data",
+                        "upload_id": upload_id,
+                        "sequence": sequence,
+                        "content": base64.b64encode(chunk).decode("ascii"),
+                    },
+                    timeout,
+                    "data-{}".format(sequence),
+                )
+            result = self._send_style_upload_action(
+                request_prefix + "-finish",
+                {"action": "finish", "upload_id": upload_id},
+                timeout,
+                "finish",
+            )
+            return result.get("data") or {}
+        except Exception:
+            try:
+                self._send_style_upload_action(
+                    request_prefix + "-abort",
+                    {"action": "abort", "upload_id": upload_id},
+                    min(timeout, 2.0),
+                    "abort",
+                )
+            except Exception:
+                LOGGER.warning("[样式上传][%s] Flash 临时文件清理请求失败", self.port_name)
+            raise
+
+    def _send_style_upload_action(self, request_id, params, timeout, action):
+        """发送一个低内存占用的样式上传动作并等待 Pico 确认。"""
+        build_started = time.monotonic()
+        packet = self.build_command_packet("uploadStyle", params=params, request_id=request_id)
+        build_elapsed_ms = (time.monotonic() - build_started) * 1000
+        label = "uploadStyle." + action
+        self._write_packet(packet, label, build_elapsed_ms)
+        return self._wait_command_result(
+            request_id,
+            timeout,
+            label,
+            "自定义样式上传失败",
+        )
 
     def close(self):
         """安全关闭串口，并恢复为未连接状态。"""
