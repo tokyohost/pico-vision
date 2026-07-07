@@ -572,6 +572,42 @@ class PicoJsonClient:
                 raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
         raise RuntimeError("设备无响应，请重新拔插设备注册")
 
+    def screenshot(self, timeout=30.0):
+        """请求 Pico 分块返回 LCD 画面，并重组为大端 RGB565 数据。"""
+        if not self.is_connected:
+            raise RuntimeError("Pico 串口尚未连接")
+        request_id = "screenshot-{}".format(int(time.time() * 1000))
+        packet = self.build_command_packet("screenshot", request_id=request_id)
+        self._write_packet(packet, "screenshot")
+        chunks = {}
+        deadline = time.monotonic() + max(0.1, float(timeout))
+        while time.monotonic() < deadline:
+            frame = self._read_protocol_frame("screenshot")
+            if not frame or frame[0] != "COMMAND":
+                if frame and frame[0] == "ERR":
+                    raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
+                continue
+            result = json.loads(frame[1].decode("utf-8"))
+            if result.get("request_id") != request_id:
+                continue
+            if result.get("status") == "chunk":
+                data = result.get("data") or {}
+                sequence = int(data["sequence"])
+                chunks[sequence] = base64.b64decode(data["pixels"], validate=True)
+                continue
+            if result.get("status") != "ok":
+                raise RuntimeError(result.get("error") or "Pico 截图失败")
+            metadata = result.get("data") or {}
+            expected_chunks = int(metadata.get("chunks", 0))
+            if sorted(chunks) != list(range(expected_chunks)):
+                raise RuntimeError("Pico 截图数据不完整")
+            pixels = b"".join(chunks[index] for index in range(expected_chunks))
+            expected_bytes = int(metadata["width"]) * int(metadata["height"]) * 2
+            if len(pixels) != expected_bytes:
+                raise RuntimeError("Pico 截图像素长度不正确")
+            return metadata, pixels
+        raise RuntimeError("等待 Pico 截图响应超时")
+
     def request_style_catalog_info(self, timeout=5.0):
         """请求 Pico 返回自定义样式清单及 Flash 空间信息。"""
         if not self.is_connected:

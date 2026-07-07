@@ -22,6 +22,8 @@ import signal
 import sys
 import threading
 import time
+from datetime import datetime
+from pathlib import Path
 
 import psutil
 import serial
@@ -146,6 +148,7 @@ class MonitorService:
         self.custom_style_catalog_requested = threading.Event()
         self.custom_style_uploads = queue.Queue()
         self.custom_style_deletes = queue.Queue()
+        self.screenshot_requested = threading.Event()
         self.available_styles = set(BUILTIN_LCD_STYLES)
 
     def _synchronize_style_catalog(self):
@@ -185,6 +188,44 @@ class MonitorService:
     def request_custom_style_catalog(self):
         """安排主循环在当前串口交互结束后查询自定义样式。"""
         self.custom_style_catalog_requested.set()
+
+    def request_screenshot(self):
+        """安排主循环在当前串口交互完成后截取 LCD 画面。"""
+        self.screenshot_requested.set()
+
+    def _publish_screenshot(self):
+        """接收 Pico 截图、转换为 PNG，并把保存结果输出给托盘。"""
+        self.screenshot_requested.clear()
+        try:
+            from PIL import Image
+
+            metadata, pixels = self.client.screenshot()
+            width = int(metadata["width"])
+            height = int(metadata["height"])
+            # Pillow 的 BGR;16 解码器读取小端 RGB565，Pico 回传的是 LCD 使用的
+            # 大端字节序，因此先按像素交换高低字节再生成 PNG。
+            little_endian_pixels = bytearray(len(pixels))
+            little_endian_pixels[0::2] = pixels[1::2]
+            little_endian_pixels[1::2] = pixels[0::2]
+            image = Image.frombytes(
+                "RGB", (width, height), bytes(little_endian_pixels), "raw", "BGR;16"
+            )
+            screenshot_directory = Path(
+                os.getenv("PICO_MONITOR_SCREENSHOT_DIR", Path.cwd() / "screenshot")
+            )
+            screenshot_directory.mkdir(parents=True, exist_ok=True)
+            path = screenshot_directory / datetime.now().strftime(
+                "screenshot_%Y%m%d_%H%M%S_%f.png"
+            )
+            image.save(path, "PNG")
+            result = {"status": "ok", "path": str(path.resolve())}
+        except (KeyError, OSError, RuntimeError, ValueError, serial.SerialException) as error:
+            result = {"status": "error", "message": str(error)}
+        print(
+            "SCREENSHOT_RESULT:"
+            + json.dumps(result, ensure_ascii=False, separators=(",", ":")),
+            flush=True,
+        )
 
     def _publish_custom_style_catalog(self):
         """通过 Pico 指令查询自定义样式并输出给托盘进程。"""
@@ -307,6 +348,8 @@ class MonitorService:
                     return self._upgrade_pico()
                 if self.custom_style_catalog_requested.is_set():
                     self._publish_custom_style_catalog()
+                if self.screenshot_requested.is_set():
+                    self._publish_screenshot()
                 if not self.custom_style_uploads.empty():
                     self._publish_custom_style_upload()
                 if not self.custom_style_deletes.empty():
@@ -573,6 +616,8 @@ def main():
                         LOGGER.warning("显示设置热更新失败：%s", error)
                 elif command == "CUSTOM_STYLE_LIST":
                     service.request_custom_style_catalog()
+                elif command == "SCREENSHOT":
+                    service.request_screenshot()
                 elif command.startswith("CUSTOM_STYLE_UPLOAD:"):
                     try:
                         service.request_custom_style_upload(

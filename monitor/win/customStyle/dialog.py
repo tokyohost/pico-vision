@@ -2,6 +2,10 @@
 
 import queue
 import threading
+import webbrowser
+
+
+CUSTOM_STYLE_TUTORIAL_URL = "https://github.com/tokyohost/omniwatch-doc"
 
 
 def _format_flash_size(size):
@@ -239,11 +243,24 @@ def _run_custom_style_dialog(application):
             status.set("样式删除失败")
         root.after(100, poll_delete_result)
 
+    def open_custom_style_tutorial(_event=None):
+        """使用系统默认浏览器打开自定义屏幕教程。"""
+        webbrowser.open_new_tab(CUSTOM_STYLE_TUTORIAL_URL)
+
     action_frame = ttk.Frame(root)
     action_frame.pack(fill=tk.X, padx=16, pady=(0, 16))
     upload_button = ttk.Button(action_frame, text="上传文件", command=upload_style)
     upload_button.pack(side=tk.LEFT)
     ttk.Button(action_frame, text="刷新", command=refresh).pack(side=tk.RIGHT)
+    tutorial_link = tk.Label(
+        root,
+        text="自定义屏幕教程",
+        fg="#0563C1",
+        cursor="hand2",
+        font=("TkDefaultFont", 9, "underline"),
+    )
+    tutorial_link.pack(anchor=tk.W, padx=16, pady=(0, 12))
+    tutorial_link.bind("<Button-1>", open_custom_style_tutorial)
     table.bind("<ButtonRelease-1>", delete_selected_style)
     refresh()
     root.after(100, poll_result)

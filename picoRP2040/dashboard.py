@@ -246,6 +246,33 @@ class DashboardRenderer:
         lcd_us = time.ticks_diff(time.ticks_us(), lcd_started)
         return buffer_us, lcd_us
 
+    def capture_screen(self, chunk_writer, rows_per_chunk=8):
+        """重新绘制当前画面并按 RGB565 条带输出，不额外占用整帧内存。"""
+        if self._snapshot is None:
+            raise ValueError("当前没有可截图的 LCD 画面")
+        rows_per_chunk = max(1, min(int(rows_per_chunk), LCD_STRIP_HEIGHT))
+        sequence = 0
+        y = 0
+        while y < self._height:
+            height = min(rows_per_chunk, self._height - y)
+            self.canvas.set_view(0, y, self._width, height)
+            self._style.draw_visible(self.canvas, self._snapshot)
+            byte_count = self._width * height * 2
+            chunk_writer(
+                sequence,
+                y,
+                height,
+                memoryview(self.canvas.buffer)[:byte_count],
+            )
+            sequence += 1
+            y += height
+        return {
+            "width": self._width,
+            "height": self._height,
+            "pixel_format": "RGB565_BE",
+            "chunks": sequence,
+        }
+
     def last_render_ms(self):
         """返回最近一帧从开始到完成的耗时毫秒数。"""
         return self._last_render_ms

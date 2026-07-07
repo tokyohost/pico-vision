@@ -73,6 +73,7 @@ class WindowsTrayApplication:
         data_directory = Path(os.getenv("LOCALAPPDATA", Path.home())) / "PicoMonitor"
         data_directory.mkdir(parents=True, exist_ok=True)
         self.data_directory = data_directory
+        self.screenshot_directory = data_directory / "screenshot"
         self.log_path = data_directory / "pico-monitor.log"
         self.settings_store = TraySettingsStore(data_directory / "settings.json")
         settings_existed = self.settings_store.path.exists()
@@ -108,6 +109,7 @@ class WindowsTrayApplication:
         environment = os.environ.copy()
         environment.update({"PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"})
         environment["PICO_MONITOR_SETTINGS_PATH"] = str(self.settings_store.path)
+        environment["PICO_MONITOR_SCREENSHOT_DIR"] = str(self.screenshot_directory)
         self.worker_process = subprocess.Popen(
             self._worker_command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
@@ -190,6 +192,12 @@ class WindowsTrayApplication:
                     except json.JSONDecodeError:
                         result = {"status": "error", "message": "设备返回了无效响应"}
                     self.custom_style_delete_messages.put(result)
+                if line.startswith("SCREENSHOT_RESULT:"):
+                    try:
+                        result = json.loads(line.split(":", 1)[1])
+                    except json.JSONDecodeError:
+                        result = {"status": "error", "message": "设备返回了无效截图响应"}
+                    self._handle_screenshot_result(result)
                 if "[串口关闭]" in line or "监控通信异常：" in line:
                     self._update_device_connection({"connected": False})
                 connection = re.search(
@@ -214,6 +222,40 @@ class WindowsTrayApplication:
         with self.device_connection_lock:
             self.current_device_connection = snapshot
         self.device_connection_messages.put(snapshot)
+
+    def _handle_screenshot_result(self, result):
+        """提示截图结果，并在成功时打开截图目录。"""
+        if result.get("status") != "ok":
+            if self.icon is not None:
+                self.icon.notify(
+                    "屏幕截图失败：{}".format(result.get("message", "未知错误")),
+                    APPLICATION_NAME,
+                )
+            return
+        path = Path(result["path"])
+        try:
+            subprocess.Popen(["explorer", str(path.parent)])
+        except OSError as error:
+            LOGGER.warning("打开截图目录失败：%s", error)
+        if self.icon is not None:
+            self.icon.notify("屏幕截图已保存：{}".format(path.name), APPLICATION_NAME)
+
+    def _take_screenshot(self, icon=None, item=None):
+        """通知 Monitor 工作进程向 Pico 下发 screenshot 命令。"""
+        del item
+        process = self.worker_process
+        if process is None or process.poll() is not None or process.stdin is None:
+            if icon is not None:
+                icon.notify("后台监控未运行，无法截图", APPLICATION_NAME)
+            return
+        try:
+            process.stdin.write("SCREENSHOT\n")
+            process.stdin.flush()
+            if icon is not None:
+                icon.notify("正在截取 LCD 屏幕", APPLICATION_NAME)
+        except (BrokenPipeError, OSError) as error:
+            if icon is not None:
+                icon.notify("截图请求失败：{}".format(error), APPLICATION_NAME)
 
     def _get_device_connection(self):
         """返回当前设备连接状态的独立快照。"""
@@ -1457,6 +1499,7 @@ class WindowsTrayApplication:
                 pystray.MenuItem("0°", self._set_rotation(0), checked=lambda item: self.settings["screen_rotation"] == 0, radio=True),
                 pystray.MenuItem("180°", self._set_rotation(180), checked=lambda item: self.settings["screen_rotation"] == 180, radio=True),
             )),
+            pystray.MenuItem("屏幕截图", self._take_screenshot),
             pystray.MenuItem("打开日志", self._show_log),
             pystray.MenuItem("设备管理", self._show_device_probe),
             pystray.MenuItem("日志导出", self._export_log),

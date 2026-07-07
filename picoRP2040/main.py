@@ -72,6 +72,7 @@ class Application:
         self._renderer = DashboardRenderer(
             self._lcd, style_name=startup_style or "boot"
         )
+        self._protocol.set_command_services({"renderer": self._renderer})
         self._boot_frame = 0
         self._boot_logs = []
         self._next_boot_animation = time.ticks_ms()

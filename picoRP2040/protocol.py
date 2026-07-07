@@ -146,7 +146,13 @@ class JsonProtocol:
         self._frame_read_calls = 0
         self._upgrade_manager = upgrade_manager
         self._command_registry = None
+        self._command_services = {"upgrade_manager": self._upgrade_manager}
         self._last_message_ms = None
+
+    def set_command_services(self, services):
+        """合并应用层命令服务，供延迟创建的命令策略注册表使用。"""
+        if services:
+            self._command_services.update(services)
 
     @staticmethod
     def protocol_backend():
@@ -429,10 +435,9 @@ class JsonProtocol:
         from command.base import CommandError
 
         if self._command_registry is None:
-            services = {"upgrade_manager": self._upgrade_manager}
             self._command_registry = create_command_registry(
                 self._write_command_response,
-                services,
+                self._command_services,
             )
         try:
             self._command_registry.dispatch(message)
