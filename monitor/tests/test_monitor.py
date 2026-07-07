@@ -223,6 +223,19 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual(device.write_calls, 1)
         self.assertEqual(device.written, PING_COMMAND)
 
+    @mock.patch("pico_client.time.sleep")
+    @mock.patch("pico_client.time.monotonic")
+    def test_handshake_uses_configured_ping_interval(self, monotonic, sleep):
+        """确认连续握手 PING 按配置的间隔发送。"""
+        clock = iter(index * 0.4 for index in range(100))
+        monotonic.side_effect = lambda: next(clock)
+        device = HandshakeSerial([])
+
+        self.assertFalse(PicoJsonClient(probe_interval=3.0)._handshake(device))
+
+        self.assertEqual(sleep.call_args_list, [mock.call(3.0), mock.call(3.0)])
+        self.assertEqual(device.write_calls, 3)
+
     def test_parse_pico_hardware_and_firmware_information(self):
         """确认 Monitor 能从新版握手读取板型、屏幕方案和固件版本。"""
         client = PicoJsonClient()
@@ -230,11 +243,15 @@ class PicoClientTest(unittest.TestCase):
             "board_model": "rp2040_typec",
             "screen_color_profile": "st7789_2_4inch",
             "firmware_version": "1.2.3",
+            "width": 320,
+            "height": 240,
         }).encode())
         self.assertEqual(client.device_information(), {
             "board_model": "rp2040_typec",
             "screen_color_profile": "st7789_2_4inch",
             "firmware_version": "1.2.3",
+            "screen_width": 320,
+            "screen_height": 240,
         })
 
     @mock.patch("pico_client.time.monotonic")
@@ -282,10 +299,13 @@ class PicoClientTest(unittest.TestCase):
             "board_model": "rp2040_typec",
             "screen_color_profile": "st7789_2_4inch",
             "firmware_version": "1.2.3",
+            "screen_width": 320,
+            "screen_height": 240,
         })
         self.assertIn("Pico 开发板型号：rp2040_typec", text)
         self.assertIn("Pico 屏幕色彩方案：st7789_2_4inch", text)
         self.assertIn("Pico 固件版本：1.2.3", text)
+        self.assertIn("Pico 屏幕分辨率：320 x 240", text)
 
     @mock.patch("pico_monitor._write_version_to_console")
     @mock.patch("pico_monitor.PicoJsonClient")
@@ -412,6 +432,7 @@ class PicoClientTest(unittest.TestCase):
         """确认 Ping 默认地址和网络速率单位可以独立配置。"""
         defaults = create_argument_parser().parse_args([])
         self.assertEqual(defaults.ping_target, "www.baidu.com")
+        self.assertEqual(defaults.serial_probe_interval, 3.0)
         arguments = create_argument_parser().parse_args(["--ping-target", "1.1.1.1", "--network-unit", "Mbps"])
         self.assertEqual(arguments.ping_target, "1.1.1.1")
         self.assertEqual(arguments.network_unit, "Mbps")
@@ -520,10 +541,20 @@ class SystemCollectorTest(unittest.TestCase):
                 self.assertEqual(collector._network_rates("192.168.1.2")[:2], (0, 0))
                 self.assertEqual(collector._network_rates("192.168.1.2")[:2], (600, 900))
 
+    @mock.patch("system_monitor.platform.system", return_value="Linux")
     @mock.patch("system_monitor.psutil.cpu_freq")
-    def test_cpu_frequency_converts_mhz_to_ghz(self, cpu_freq):
-        """确认 CPU 当前频率从 MHz 正确换算为 GHz。"""
-        cpu_freq.return_value = SimpleNamespace(current=4287.6)
+    def test_cpu_frequency_averages_current_core_speeds(self, cpu_freq, system):
+        """确认 CPU GHz 根据各逻辑处理器的实时 MHz 平均值计算。"""
+        del system
+        cpu_freq.return_value = [SimpleNamespace(current=4200), SimpleNamespace(current=4400)]
+
+        self.assertEqual(SystemInformationCollector._cpu_frequency_ghz(), 4.3)
+
+    @mock.patch("system_monitor.platform.system", return_value="Windows")
+    @mock.patch.object(SystemInformationCollector, "_windows_cpu_current_frequency_mhz", return_value=4287.6)
+    def test_windows_cpu_frequency_uses_native_current_speed(self, current_frequency, system):
+        """确认 Windows 使用原生接口的实时频率而不是 CPU 基准速度。"""
+        del current_frequency, system
 
         self.assertEqual(SystemInformationCollector._cpu_frequency_ghz(), 4.29)
 

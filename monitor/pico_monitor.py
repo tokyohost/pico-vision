@@ -39,7 +39,7 @@ BUILTIN_LCD_STYLES = (
     "horizontal_diskv2",
     "horizontal_disk4x",
     "horizontal_disk4x_qb", "horizontal_disk6x", "simple", "fpstest",
-    "fps_simple",
+    "fps_simple", "game",
 )
 
 
@@ -90,6 +90,7 @@ def create_argument_parser():
     parser.add_argument("--ping-target", default=os.getenv("PICO_MONITOR_PING_TARGET", "www.baidu.com"), help="网络延迟检测目标")
     parser.add_argument("--interval", type=float, default=float(os.getenv("PICO_MONITOR_INTERVAL", "0.5")), help="采集和发送间隔，单位为秒")
     parser.add_argument("--reconnect-interval", type=float, default=float(os.getenv("PICO_MONITOR_RECONNECT_INTERVAL", "3.0")), help="设备断线后的重连间隔，单位为秒")
+    parser.add_argument("--serial-probe-interval", type=float, default=float(os.getenv("PICO_MONITOR_SERIAL_PROBE_INTERVAL", "3.0")), help="串口探测 PING 的发送间隔，单位为秒")
     parser.add_argument("--screen-rotation", type=int, choices=(0, 180), default=int(os.getenv("PICO_MONITOR_SCREEN_ROTATION", "0")), help="Pico 屏幕旋转角度，可选 0 或 180")
     parser.add_argument("--lcd-brightness", type=int, choices=range(1, 101), default=int(os.getenv("PICO_MONITOR_LCD_BRIGHTNESS", "50")), help="Pico LCD 背光亮度百分比，范围为 1 至 100")
     parser.add_argument("--network-unit", choices=("MB", "Mbps"), default=os.getenv("PICO_MONITOR_NETWORK_UNIT", "MB"), help="网络速率模式：MB 自动使用 B/KB/MB/GB，Mbps 自动使用 bps/Kbps/Mbps/Gbps")
@@ -138,7 +139,7 @@ class MonitorService:
                 arguments.qbittorrent_interval,
             )
             self.qbittorrent_monitor.start()
-        self.client = PicoJsonClient(arguments.port)
+        self.client = PicoJsonClient(arguments.port, arguments.serial_probe_interval)
         self.stopping = threading.Event()
         self.reboot_requested = threading.Event()
         self.available_styles = set(BUILTIN_LCD_STYLES)
@@ -260,12 +261,22 @@ class MonitorService:
                 )
                 self.stopping.wait(self.arguments.reconnect_interval)
         reboot_requested = getattr(self, "reboot_requested", None)
+        reboot_result = None
         if reboot_requested is not None and reboot_requested.is_set() and self.client.is_connected:
             try:
                 self.client.reboot()
+                reboot_result = {"status": "ok", "message": "设备已确认重启"}
             except (OSError, RuntimeError, serial.SerialException) as error:
                 LOGGER.warning("Pico 重启指令下发失败：%s", error)
+                reboot_result = {"status": "error", "message": str(error)}
+        elif reboot_requested is not None and reboot_requested.is_set():
+            reboot_result = {"status": "error", "message": "当前没有已连接设备"}
         self.client.close()
+        if reboot_result is not None:
+            print(
+                "DEVICE_REBOOT_RESULT:" + json.dumps(reboot_result, ensure_ascii=False),
+                flush=True,
+            )
         LOGGER.info("监控服务已停止")
         return 0
 
@@ -389,6 +400,13 @@ def format_pico_information(information):
         "Pico 固件版本：{}".format(
             information.get("firmware_version") or "未知（旧版固件未提供）"
         ),
+        "Pico 屏幕分辨率：{}".format(
+            "{} x {}".format(
+                information.get("screen_width"), information.get("screen_height")
+            )
+            if information.get("screen_width") and information.get("screen_height")
+            else "未知（旧版固件未提供）"
+        ),
     ))
 
 
@@ -413,7 +431,9 @@ def validate_arguments(arguments):
     ))
     if exclusive_actions > 1:
         raise SystemExit("--pico-info、--upgrade-pico 和 --update 不能同时使用")
-    if arguments.interval <= 0 or arguments.reconnect_interval <= 0 or arguments.qbittorrent_interval <= 0:
+    if (arguments.interval <= 0 or arguments.reconnect_interval <= 0
+            or arguments.serial_probe_interval <= 0
+            or arguments.qbittorrent_interval <= 0):
         raise SystemExit("采集间隔和重连间隔必须大于 0")
     if arguments.pico_info:
         return

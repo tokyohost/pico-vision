@@ -19,7 +19,9 @@ import logging
 import time
 import zlib
 import base64
+import threading
 from array import array
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import serial
 from serial.tools import list_ports
@@ -99,13 +101,17 @@ class PicoRestartingError(RuntimeError):
 class PicoJsonClient:
     """封装 Pico LCD 自动发现、握手、数据发送和连接清理。"""
 
-    def __init__(self, configured_port=None):
+    def __init__(self, configured_port=None, probe_interval=3.0, cancellation_event=None):
         """保存可选固定串口名称并初始化断开状态。"""
         self.configured_port = configured_port
+        self.probe_interval = max(0.0, float(probe_interval))
+        self.cancellation_event = cancellation_event
         self.serial = None
         self.board_model = None
         self.screen_color_profile = None
         self.firmware_version = None
+        self.screen_width = None
+        self.screen_height = None
         self.styles = []
 
     @property
@@ -131,23 +137,34 @@ class PicoJsonClient:
                 reverse=True,
             )
             candidates = [item.device for item in ports]
+        if not self.configured_port and len(candidates) > 1:
+            self._connect_parallel(candidates)
+            return
         LOGGER.info("[串口发现] 候选端口：%s", ", ".join(candidates) if candidates else "无")
         errors = []
         for port in candidates:
+            if self.cancellation_event is not None and self.cancellation_event.is_set():
+                raise RuntimeError("设备探测已取消")
             try:
                 LOGGER.info("[串口打开] 正在打开 %s，波特率 115200", port)
                 device = serial.Serial(port, 115200, timeout=0.3, write_timeout=10)
-                time.sleep(1.0)
+                if self.cancellation_event is None:
+                    time.sleep(1.0)
+                elif self.cancellation_event.wait(1.0):
+                    device.close()
+                    raise RuntimeError("设备探测已取消")
                 device.reset_input_buffer()
                 device.reset_output_buffer()
                 if self._handshake(device):
                     self.serial = device
                     LOGGER.info(
-                        "[串口连接] %s 握手成功：开发板=%s，屏幕方案=%s，固件版本=%s",
+                        "[串口连接] %s 握手成功：开发板=%s，屏幕方案=%s，固件版本=%s，分辨率=%sx%s",
                         port,
                         self.board_model or "未知",
                         self.screen_color_profile or "未知",
                         self.firmware_version or "未知",
+                        self.screen_width or "未知",
+                        self.screen_height or "未知",
                     )
                     return
                 LOGGER.warning("[串口握手] %s 未返回有效设备标识", port)
@@ -157,6 +174,61 @@ class PicoJsonClient:
                 errors.append(f"{port}: {error}")
         detail = "；".join(errors) if errors else "未发现可用串口"
         raise RuntimeError(f"未找到 Pico LCD：{detail}")
+
+    def _connect_parallel(self, candidates):
+        """并行探测候选串口，并在任一端口成功后中断其余探测。"""
+        cancellation_event = threading.Event()
+
+        def probe(port):
+            """使用独立客户端探测一个串口，避免并发覆盖握手状态。"""
+            client = PicoJsonClient(
+                port,
+                self.probe_interval,
+                cancellation_event=cancellation_event,
+            )
+            try:
+                client.connect()
+                return client
+            except RuntimeError:
+                client.close()
+                return None
+
+        executor = ThreadPoolExecutor(
+            max_workers=len(candidates), thread_name_prefix="串口探测"
+        )
+        futures = [executor.submit(probe, port) for port in candidates]
+        winner = None
+        try:
+            for future in as_completed(futures):
+                client = future.result()
+                if client is None:
+                    continue
+                winner = client
+                cancellation_event.set()
+                for pending in futures:
+                    if pending is not future:
+                        pending.cancel()
+                break
+        finally:
+            cancellation_event.set()
+            executor.shutdown(wait=True, cancel_futures=True)
+        for future in futures:
+            if not future.done() or future.cancelled():
+                continue
+            client = future.result()
+            if client is not None and client is not winner:
+                client.close()
+        if winner is None:
+            raise RuntimeError("未找到 Pico LCD：所有候选串口均未响应")
+        self.serial = winner.serial
+        winner.serial = None
+        self.board_model = winner.board_model
+        self.screen_color_profile = winner.screen_color_profile
+        self.firmware_version = winner.firmware_version
+        self.screen_width = winner.screen_width
+        self.screen_height = winner.screen_height
+        self.styles = winner.styles
+        winner.close()
 
     @staticmethod
     def available_ports():
@@ -168,8 +240,17 @@ class PicoJsonClient:
         self.board_model = None
         self.screen_color_profile = None
         self.firmware_version = None
+        self.screen_width = None
+        self.screen_height = None
         self.styles = []
         for attempt in range(1, 4):
+            if self.cancellation_event is not None and self.cancellation_event.is_set():
+                return False
+            if attempt > 1:
+                if self.cancellation_event is None:
+                    time.sleep(self.probe_interval)
+                elif self.cancellation_event.wait(self.probe_interval):
+                    return False
             LOGGER.info(
                 "[Monitor -> Pico][%s][握手 %d/3][PV1 %d 字节] repr=%r hex=%s",
                 device.port,
@@ -197,6 +278,8 @@ class PicoJsonClient:
             )
             deadline = time.monotonic() + 1.2
             while time.monotonic() < deadline:
+                if self.cancellation_event is not None and self.cancellation_event.is_set():
+                    return False
                 raw_message = device.readline()
                 message = raw_message.decode("utf-8", errors="replace").strip()
                 if message:
@@ -217,6 +300,8 @@ class PicoJsonClient:
         self.board_model = information.get("board_model") or None
         self.screen_color_profile = information.get("screen_color_profile") or None
         self.firmware_version = information.get("firmware_version") or None
+        self.screen_width = information.get("width") or None
+        self.screen_height = information.get("height") or None
         styles = information.get("styles")
         if isinstance(styles, list):
             self.styles = [item for item in styles if isinstance(item, dict)]
@@ -227,6 +312,8 @@ class PicoJsonClient:
             "board_model": self.board_model,
             "screen_color_profile": self.screen_color_profile,
             "firmware_version": self.firmware_version,
+            "screen_width": self.screen_width,
+            "screen_height": self.screen_height,
         }
 
     @staticmethod
@@ -359,14 +446,14 @@ class PicoJsonClient:
         LOGGER.error("[交互超时][%s] 5 秒内未收到 ACK:JSON", self.port_name)
         raise RuntimeError("等待 Pico JSON 接收确认超时")
 
-    def reboot(self):
-        """请求 Pico 确认命令后执行软重启。"""
+    def reboot(self, timeout=30.0):
+        """请求 Pico 执行软重启，并在指定秒数内等待设备确认。"""
         if not self.is_connected:
             raise RuntimeError("Pico 串口尚未连接")
         LOGGER.info("[Monitor -> Pico][%s][命令 reboot]", self.port_name)
         self.serial.write(self.build_command_packet("reboot", request_id="reboot"))
         self.serial.flush()
-        deadline = time.monotonic() + 1.0
+        deadline = time.monotonic() + max(0.1, float(timeout))
         while time.monotonic() < deadline:
             response = self.serial.readline().strip()
             try:
@@ -380,7 +467,7 @@ class PicoJsonClient:
                     return
             if frame and frame[0] == "ERR":
                 raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
-        raise RuntimeError("等待 Pico 重启确认超时")
+        raise RuntimeError("设备无响应，请重新拔插设备注册")
 
     def close(self):
         """安全关闭串口，并恢复为未连接状态。"""

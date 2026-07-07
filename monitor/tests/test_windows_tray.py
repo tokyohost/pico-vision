@@ -95,6 +95,33 @@ class WindowsTraySettingsTest(unittest.TestCase):
         thread_class.return_value.start.assert_called_once_with()
         self.assertTrue(application.about_window_open)
 
+    @mock.patch("win.tray.threading.Thread")
+    def test_device_probe_window_can_only_be_opened_once(self, thread_class):
+        """确认设备探测窗口不能被重复创建。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.device_probe_window_lock = threading.Lock()
+        application.device_probe_window_open = False
+
+        application._show_device_probe()
+        application._show_device_probe()
+
+        thread_class.assert_called_once()
+        thread_class.return_value.start.assert_called_once_with()
+        self.assertTrue(application.device_probe_window_open)
+
+    def test_device_probe_command_replaces_worker_mode_with_information_mode(self):
+        """确认设备探测命令停用常驻模式并启用单次信息查询。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application._worker_command = mock.Mock(
+            return_value=["pico-monitor.exe", "--worker", "--port", "COM9"]
+        )
+
+        command = application._device_probe_command()
+
+        self.assertNotIn("--worker", command)
+        self.assertEqual("--pico-info", command[-1])
+        self.assertEqual("COM9", command[-2])
+
     def test_every_style_has_a_chinese_label(self):
         for name in STYLE_NAMES:
             self.assertNotEqual(STYLE_NAMES[name], name)

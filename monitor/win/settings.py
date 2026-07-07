@@ -17,6 +17,7 @@ STYLE_NAMES = {
     "horizontal_disk6x": "六盘均衡版",
     "simple": "三盘简洁版",
     "fps_simple": "FPS 监控简约",
+    "game": "游戏监控简约",
 }
 DEFAULT_STYLE_CATALOG = [
     {"name": name, "chinese_name": chinese_name, "type": "builtin"}
@@ -27,6 +28,7 @@ DEFAULT_SETTINGS = {
     "ping_target": "www.baidu.com",
     "interval": 0.5,
     "reconnect_interval": 3.0,
+    "serial_probe_interval": 3.0,
     "screen_rotation": 0,
     "lcd_brightness": 100,
     "network_unit": "MB",
@@ -45,6 +47,7 @@ ARGUMENT_NAMES = {
     "--ping-target": "ping_target",
     "--interval": "interval",
     "--reconnect-interval": "reconnect_interval",
+    "--serial-probe-interval": "serial_probe_interval",
     "--screen-rotation": "screen_rotation",
     "--lcd-brightness": "lcd_brightness",
     "--network-unit": "network_unit",
@@ -152,7 +155,7 @@ def settings_from_arguments(arguments, base=None):
     """从已有启动参数提取配置，用于首次升级时平滑迁移。"""
     settings = dict(DEFAULT_SETTINGS if base is None else base)
     converters = {
-        "interval": float, "reconnect_interval": float,
+        "interval": float, "reconnect_interval": float, "serial_probe_interval": float,
         "screen_rotation": int, "lcd_brightness": int,
         "qbittorrent_interval": float,
     }

@@ -42,6 +42,7 @@ python pico_monitor.py
 --port COM3                 固定 Windows 串口
 --port /dev/ttyACM1         固定 Linux 数据 CDC；建议留空自动发现
 --ping-target 1.1.1.1       指定延迟探测目标，默认 www.baidu.com
+--serial-probe-interval 3   串口探测 PING 间隔，默认 3 秒
 --interval 1.0              指定采集发送间隔
 --reconnect-interval 3.0    指定断线重连间隔
 --screen-rotation 180       将 Pico 屏幕旋转一百八十度

@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -30,6 +31,7 @@ from .settings import (
 )
 
 APPLICATION_NAME = "OmniWatch USB监控屏"
+WINDOWS_APP_USER_MODEL_ID = "OmniWatch.USBMonitor.Tray"
 AUTOSTART_NAME = "PicoHardwareMonitor"
 MONITOR_DIRECTORY = Path(__file__).resolve().parent.parent
 LOG_EXPORT_SIZE = 1024 * 1024
@@ -40,6 +42,7 @@ class WindowsTrayApplication:
     """管理 Windows 托盘图标、配置界面和无窗口监控工作进程。"""
 
     def __init__(self, worker_arguments):
+        """初始化托盘状态、窗口互斥量、配置存储和后台进程参数。"""
         self.worker_arguments = list(worker_arguments)
         self.worker_process = None
         self.console_process = None
@@ -52,6 +55,10 @@ class WindowsTrayApplication:
         self.settings_window_restore_requested = threading.Event()
         self.about_window_lock = threading.Lock()
         self.about_window_open = False
+        self.device_probe_window_lock = threading.Lock()
+        self.device_probe_window_open = False
+        self.device_management_messages = queue.Queue()
+        self.device_connection_messages = queue.Queue()
         self.update_lock = threading.Lock()
         data_directory = Path(os.getenv("LOCALAPPDATA", Path.home())) / "PicoMonitor"
         data_directory.mkdir(parents=True, exist_ok=True)
@@ -65,14 +72,27 @@ class WindowsTrayApplication:
             self.settings_store.save(self.settings)
 
     def _acquire_single_instance(self):
+        """获取进程互斥锁，避免重复启动多个托盘实例。"""
         self.mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\PicoHardwareMonitor")
         return ctypes.windll.kernel32.GetLastError() != 183
 
+    @staticmethod
+    def _configure_windows_taskbar():
+        """设置独立的 Windows 应用标识，使任务栏采用程序窗口和 EXE 图标。"""
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            WINDOWS_APP_USER_MODEL_ID
+        )
+
     def _worker_command(self):
+        """构造应用当前托盘配置后的后台监控命令。"""
         arguments = apply_worker_arguments(self.worker_arguments, self.settings)
         if getattr(sys, "frozen", False):
             return [sys.executable, *arguments]
         return [sys.executable, str(MONITOR_DIRECTORY / "pico_monitor.py"), *arguments]
+
+    def _device_probe_command(self):
+        """构造仅执行一次 Pico 设备探测的子进程命令。"""
+        return [argument for argument in self._worker_command() if argument != "--worker"] + ["--pico-info"]
 
     def _start_worker(self):
         environment = os.environ.copy()
@@ -133,11 +153,32 @@ class WindowsTrayApplication:
                     self._reload_style_catalog()
                     if self.icon is not None:
                         self.icon.update_menu()
+                if line.startswith("DEVICE_REBOOT_RESULT:"):
+                    try:
+                        result = json.loads(line.split(":", 1)[1])
+                    except json.JSONDecodeError:
+                        result = {"status": "error", "message": "设备返回了无效响应"}
+                    self.device_management_messages.put(result)
+                if "[串口关闭]" in line or "监控通信异常：" in line:
+                    self.device_connection_messages.put({"connected": False})
+                connection = re.search(
+                    r"\[串口连接\].*握手成功：开发板=(.*)，屏幕方案=(.*)，固件版本=(.*)，分辨率=(.*)$",
+                    line.strip(),
+                )
+                if connection:
+                    self.device_connection_messages.put({
+                        "connected": True,
+                        "board_model": connection.group(1),
+                        "screen_color_profile": connection.group(2),
+                        "firmware_version": connection.group(3),
+                        "screen_resolution": connection.group(4),
+                    })
         return_code = process.wait()
         if not self.stopping.is_set() and process is self.worker_process and self.icon is not None:
             self.icon.notify("后台监控已退出，返回码：{}".format(return_code), APPLICATION_NAME)
 
     def _show_log(self, icon=None, item=None):
+        """打开独立 PowerShell 窗口并持续显示 Monitor 日志。"""
         del icon, item
         if self.console_process is not None and self.console_process.poll() is None:
             return
@@ -148,6 +189,280 @@ class WindowsTrayApplication:
             ["powershell.exe", "-NoLogo", "-NoProfile", "-Command", command],
             env=environment, creationflags=0x00000010,
         )
+
+    def _show_device_probe(self, icon=None, item=None):
+        """在独立线程中打开唯一的设备管理窗口。"""
+        del icon, item
+        with self.device_probe_window_lock:
+            if self.device_probe_window_open:
+                return
+            self.device_probe_window_open = True
+        threading.Thread(
+            target=self._run_device_probe_window_guarded,
+            name="设备探测窗口",
+            daemon=True,
+        ).start()
+
+    def _run_device_probe_window_guarded(self):
+        """运行设备管理窗口，并在窗口退出后恢复可打开状态。"""
+        try:
+            self._run_device_probe_window()
+        except Exception as error:
+            LOGGER.exception("打开设备探测窗口失败：%s", error)
+            if self.icon is not None:
+                self.icon.notify("无法打开设备探测窗口，请查看日志", APPLICATION_NAME)
+        finally:
+            with self.device_probe_window_lock:
+                self.device_probe_window_open = False
+
+    def _run_device_probe_window(self):
+        """展示已连接设备信息，并提供带等待进度的设备重启操作。"""
+        self._configure_tk_runtime()
+        import tkinter as tk
+        from tkinter import ttk
+
+        root = tk.Tk()
+        root.title("设备管理")
+        root.geometry("720x520")
+        root.minsize(560, 320)
+        root.attributes("-topmost", True)
+        self._set_tk_window_icon(root)
+
+        status = tk.StringVar(value="正在探测 Pico LCD 设备，请稍候……")
+        ttk.Label(root, textvariable=status).pack(fill=tk.X, padx=16, pady=(16, 8))
+        progress = ttk.Progressbar(root, mode="indeterminate")
+        progress.pack(fill=tk.X, padx=16, pady=(0, 12))
+        progress.start(12)
+
+        device_panel = ttk.LabelFrame(root, text="当前已连接设备", padding=12)
+        device_panel.pack(fill=tk.X, padx=16, pady=(0, 12))
+        device_values = {
+            "Pico 开发板型号": tk.StringVar(value="未连接"),
+            "Pico 屏幕色彩方案": tk.StringVar(value="--"),
+            "Pico 固件版本": tk.StringVar(value="--"),
+            "Pico 屏幕分辨率": tk.StringVar(value="--"),
+        }
+        for row, (label, value) in enumerate(device_values.items()):
+            ttk.Label(device_panel, text=label + "：", width=20).grid(
+                row=row, column=0, sticky=tk.W, pady=2
+            )
+            ttk.Label(device_panel, textvariable=value).grid(
+                row=row, column=1, sticky=tk.W, pady=2
+            )
+
+        action_frame = ttk.Frame(root)
+        action_frame.pack(fill=tk.X, padx=16, pady=(0, 12))
+        probe_button = ttk.Button(action_frame, text="主动探测")
+        probe_button.pack(side=tk.LEFT)
+        reboot_button = ttk.Button(action_frame, text="重启设备", state=tk.DISABLED)
+        reboot_button.pack(side=tk.RIGHT)
+
+        log_frame = ttk.Frame(root)
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 16))
+        log_text = tk.Text(
+            log_frame,
+            wrap=tk.WORD,
+            state=tk.DISABLED,
+            font=("Microsoft YaHei UI", 9),
+        )
+        scrollbar = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=log_text.yview)
+        log_text.configure(yscrollcommand=scrollbar.set)
+        log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        messages = queue.Queue()
+        reboot_state = {"started": None}
+
+        def clear_connected_device():
+            """清空已连接设备信息，并禁用依赖有效串口的重启操作。"""
+            device_values["Pico 开发板型号"].set("未连接")
+            device_values["Pico 屏幕色彩方案"].set("--")
+            device_values["Pico 固件版本"].set("--")
+            device_values["Pico 屏幕分辨率"].set("--")
+            reboot_button.configure(state=tk.DISABLED)
+
+        def refresh_connection_state():
+            """消费后台串口状态事件，实时同步设备面板和操作按钮。"""
+            try:
+                while True:
+                    connection = self.device_connection_messages.get_nowait()
+                    if not connection.get("connected"):
+                        clear_connected_device()
+                        status.set("当前没有已连接设备")
+                        continue
+                    device_values["Pico 开发板型号"].set(
+                        connection.get("board_model") or "未知"
+                    )
+                    device_values["Pico 屏幕色彩方案"].set(
+                        connection.get("screen_color_profile") or "未知"
+                    )
+                    device_values["Pico 固件版本"].set(
+                        connection.get("firmware_version") or "未知"
+                    )
+                    device_values["Pico 屏幕分辨率"].set(
+                        connection.get("screen_resolution") or "未知"
+                    )
+                    reboot_button.configure(state=tk.NORMAL)
+                    status.set("设备已连接")
+            except queue.Empty:
+                pass
+            if root.winfo_exists():
+                root.after(100, refresh_connection_state)
+
+        def append_log(content):
+            """向只读文本域追加日志，并自动滚动到最新内容。"""
+            log_text.configure(state=tk.NORMAL)
+            log_text.insert(tk.END, content)
+            log_text.see(tk.END)
+            log_text.configure(state=tk.DISABLED)
+
+        def refresh_messages():
+            """消费探测线程消息，并更新进度条及最终状态。"""
+            try:
+                while True:
+                    message_type, content = messages.get_nowait()
+                    if message_type == "log":
+                        append_log(content)
+                        normalized = content.strip()
+                        for label, value in device_values.items():
+                            prefix = label + "："
+                            if normalized.startswith(prefix):
+                                value.set(normalized[len(prefix):].strip() or "未知")
+                    else:
+                        progress.stop()
+                        progress.configure(mode="determinate", maximum=100, value=100)
+                        success = content == 0
+                        status.set("设备信息加载完成" if success else "未探测到可用设备")
+                        reboot_button.configure(state=tk.NORMAL if success else tk.DISABLED)
+                        probe_button.configure(state=tk.NORMAL)
+                        if not success:
+                            clear_connected_device()
+            except queue.Empty:
+                pass
+            if root.winfo_exists():
+                root.after(100, refresh_messages)
+
+        def refresh_reboot_progress():
+            """刷新重启等待进度，并处理设备确认或三十秒超时。"""
+            started = reboot_state["started"]
+            if started is None:
+                return
+            try:
+                result = self.device_management_messages.get_nowait()
+            except queue.Empty:
+                result = None
+            elapsed = (datetime.now() - started).total_seconds()
+            if result is not None:
+                reboot_state["started"] = None
+                progress.stop()
+                progress.configure(mode="determinate", maximum=100, value=100)
+                status.set(result.get("message") or "设备已回复")
+                append_log((result.get("message") or "设备已回复") + "\n")
+                clear_connected_device()
+                if not self.stopping.is_set():
+                    process = self.worker_process
+                    if process is not None and process.poll() is None:
+                        try:
+                            process.wait(timeout=2)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                    self._start_worker()
+                return
+            if elapsed >= 30:
+                reboot_state["started"] = None
+                progress.configure(value=30)
+                status.set("设备无响应，请重新拔插设备注册")
+                append_log("设备无响应，请重新拔插设备注册\n")
+                reboot_button.configure(state=tk.NORMAL)
+                if not self.stopping.is_set():
+                    threading.Thread(
+                        target=self._restart_worker,
+                        name="设备重启超时恢复",
+                        daemon=True,
+                    ).start()
+                return
+            progress.configure(value=elapsed)
+            root.after(100, refresh_reboot_progress)
+
+        def reboot_device():
+            """向后台 Monitor 发送重启指令并启动三十秒响应等待。"""
+            process = self.worker_process
+            if process is None or process.poll() is not None or process.stdin is None:
+                status.set("当前没有已连接设备")
+                return
+            while not self.device_management_messages.empty():
+                self.device_management_messages.get_nowait()
+            try:
+                process.stdin.write("EXIT_REBOOT\n")
+                process.stdin.flush()
+            except (BrokenPipeError, OSError):
+                status.set("重启指令发送失败")
+                return
+            reboot_button.configure(state=tk.DISABLED)
+            progress.stop()
+            progress.configure(mode="determinate", maximum=30, value=0)
+            status.set("重启指令已发送，正在等待设备回复……")
+            append_log("重启指令已发送，最长等待 30 秒。\n")
+            reboot_state["started"] = datetime.now()
+            refresh_reboot_progress()
+
+        reboot_button.configure(command=reboot_device)
+
+        def perform_probe():
+            """暂停常驻监控，执行单次设备探测并在结束后恢复监控。"""
+            worker_process = self.worker_process
+            if worker_process is not None and worker_process.poll() is None:
+                messages.put(("log", "检测到当前设备连接，正在断开……\n"))
+                self._stop_worker()
+                messages.put(("log", "当前设备连接已断开，开始重新探测。\n"))
+            else:
+                messages.put(("log", "当前没有已连接设备，开始探测。\n"))
+            self.worker_process = None
+            process = None
+            try:
+                process = subprocess.Popen(
+                    self._device_probe_command(),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    creationflags=0x08000000,
+                    env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1"),
+                )
+                for line in process.stdout:
+                    messages.put(("log", line))
+                messages.put(("done", process.wait()))
+            except OSError as error:
+                messages.put(("log", "启动设备探测失败：{}\n".format(error)))
+                messages.put(("done", 1))
+            finally:
+                if not self.stopping.is_set():
+                    self._start_worker()
+
+        def start_probe():
+            """启动主动设备探测线程，避免阻塞设备管理窗口。"""
+            probe_button.configure(state=tk.DISABLED)
+            reboot_button.configure(state=tk.DISABLED)
+            status.set("正在主动探测 Pico LCD 设备，请稍候……")
+            progress.configure(mode="indeterminate")
+            progress.start(12)
+            device_values["Pico 开发板型号"].set("探测中……")
+            device_values["Pico 屏幕色彩方案"].set("--")
+            device_values["Pico 固件版本"].set("--")
+            device_values["Pico 屏幕分辨率"].set("--")
+            threading.Thread(
+                target=perform_probe,
+                name="设备主动探测",
+                daemon=True,
+            ).start()
+
+        probe_button.configure(command=start_probe)
+        start_probe()
+        refresh_messages()
+        refresh_connection_state()
+        self._center_tk_window(root)
+        root.mainloop()
 
     @staticmethod
     def _remove_incomplete_utf8_prefix(content):
@@ -272,6 +587,7 @@ class WindowsTrayApplication:
         updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, MONITOR_VERSION)
         initial_url = self.settings.get("update_url") or updater.default_update_url()
         root = tk.Tk()
+        self._set_tk_window_icon(root)
         root.withdraw()
         try:
             root.attributes("-topmost", True)
@@ -301,6 +617,9 @@ class WindowsTrayApplication:
                 """创建标准输入控件并将字符宽度从 50 调整为 84。"""
                 entry = super().body(master)
                 self.entry.configure(width=84)
+                self.after_idle(
+                    lambda: WindowsTrayApplication._center_tk_window(self)
+                )
                 return entry
 
         dialog = WideUpdateUrlDialog(
@@ -454,11 +773,7 @@ class WindowsTrayApplication:
         root.title("关于应用")
         root.resizable(False, False)
         root.attributes("-topmost", True)
-        application_icon = tk.PhotoImage(
-            file=self._resource_path("icon", "icon.png")
-        )
-        root.iconphoto(True, application_icon)
-        root.application_icon = application_icon
+        self._set_tk_window_icon(root)
         frame = tk.Frame(root, padx=24, pady=18)
         frame.pack()
         tk.Label(frame, text=APPLICATION_NAME, font=("Microsoft YaHei UI", 15, "bold")).pack(pady=(0, 8))
@@ -475,6 +790,7 @@ class WindowsTrayApplication:
         image_label.pack()
         tk.Button(frame, text="确定", width=12, command=root.destroy).pack(pady=(14, 0))
         root.protocol("WM_DELETE_WINDOW", root.destroy)
+        self._center_tk_window(root)
         root.mainloop()
 
     def _run_settings_window_guarded(self):
@@ -498,6 +814,31 @@ class WindowsTrayApplication:
         if (tk_dir / "tk.tcl").exists():
             os.environ["TK_LIBRARY"] = str(tk_dir)
 
+    @staticmethod
+    def _center_tk_window(window):
+        """将 Tk 窗口固定放置在屏幕中央。"""
+        window.update_idletasks()
+        width = window.winfo_width()
+        height = window.winfo_height()
+        if width <= 1:
+            width = window.winfo_reqwidth()
+        if height <= 1:
+            height = window.winfo_reqheight()
+        x = max(0, (window.winfo_screenwidth() - width) // 2)
+        y = max(0, (window.winfo_screenheight() - height) // 2)
+        window.geometry("{}x{}+{}+{}".format(width, height, x, y))
+
+    def _set_tk_window_icon(self, window):
+        """为当前窗口及其后续弹框统一设置托盘程序图标。"""
+        import tkinter as tk
+
+        application_icon = tk.PhotoImage(
+            master=window,
+            file=self._resource_path("icon", "icon.png"),
+        )
+        window.iconphoto(True, application_icon)
+        window.application_icon = application_icon
+
     def _run_settings_window(self):
         """使用原生控件绘制接近 Element Plus 的分组配置对话框。"""
         self._configure_tk_runtime()
@@ -507,10 +848,7 @@ class WindowsTrayApplication:
         root = tk.Tk()
         self.settings_window = root
         root.title("Pico Monitor 配置")
-        icon_directory = Path(getattr(sys, "_MEIPASS", MONITOR_DIRECTORY))
-        settings_icon = tk.PhotoImage(file=icon_directory / "icon" / "icon.png")
-        root.iconphoto(True, settings_icon)
-        root.settings_icon = settings_icon
+        self._set_tk_window_icon(root)
         root.geometry("680x700")
         root.minsize(620, 620)
         root.configure(bg="#f5f7fa")
@@ -574,6 +912,7 @@ class WindowsTrayApplication:
             "ping_target": tk.StringVar(value=self.settings["ping_target"]),
             "interval": tk.StringVar(value=self.settings["interval"]),
             "reconnect_interval": tk.StringVar(value=self.settings["reconnect_interval"]),
+            "serial_probe_interval": tk.StringVar(value=self.settings["serial_probe_interval"]),
             "screen_rotation": tk.StringVar(value=str(self.settings["screen_rotation"])),
             "lcd_brightness": tk.IntVar(value=self.settings["lcd_brightness"]),
             "network_unit": tk.StringVar(value=self.settings["network_unit"]),
@@ -676,6 +1015,7 @@ class WindowsTrayApplication:
         field(monitor, 1, "Ping 目标", ttk.Entry(monitor, textvariable=variables["ping_target"]))
         field(monitor, 2, "采集间隔（秒）", ttk.Entry(monitor, textvariable=variables["interval"]))
         field(monitor, 3, "重连间隔（秒）", ttk.Entry(monitor, textvariable=variables["reconnect_interval"]))
+        field(monitor, 4, "串口探测 PING 间隔（秒）", ttk.Entry(monitor, textvariable=variables["serial_probe_interval"]))
 
         qb = card("qBittorrent")
         enable_qbittorrent = ttk.Checkbutton(
@@ -759,6 +1099,7 @@ class WindowsTrayApplication:
                     "ping_target": variables["ping_target"].get().strip(),
                     "interval": float(variables["interval"].get()),
                     "reconnect_interval": float(variables["reconnect_interval"].get()),
+                    "serial_probe_interval": float(variables["serial_probe_interval"].get()),
                     "screen_rotation": int(variables["screen_rotation"].get()),
                     "lcd_brightness": int(variables["lcd_brightness"].get()),
                     "network_unit": variables["network_unit"].get(),
@@ -770,7 +1111,7 @@ class WindowsTrayApplication:
                     "qbittorrent_interval": float(variables["qbittorrent_interval"].get()),
                 }
                 if (not updated["ping_target"]
-                        or min(updated["interval"], updated["reconnect_interval"], updated["qbittorrent_interval"]) <= 0
+                        or min(updated["interval"], updated["reconnect_interval"], updated["serial_probe_interval"], updated["qbittorrent_interval"]) <= 0
                         or not 1 <= updated["lcd_brightness"] <= 100):
                     raise ValueError
                 if updated["qbittorrent_enabled"] and not all((updated["qbittorrent_address"], updated["qbittorrent_username"], updated["qbittorrent_password"])):
@@ -810,6 +1151,7 @@ class WindowsTrayApplication:
         def closed():
             root.destroy()
         root.protocol("WM_DELETE_WINDOW", closed)
+        self._center_tk_window(root)
         root.mainloop()
 
     def _exit(self, icon, item):
@@ -848,6 +1190,7 @@ class WindowsTrayApplication:
                 pystray.MenuItem("180°", self._set_rotation(180), checked=lambda item: self.settings["screen_rotation"] == 180, radio=True),
             )),
             pystray.MenuItem("打开日志", self._show_log),
+            pystray.MenuItem("设备管理", self._show_device_probe),
             pystray.MenuItem("日志导出", self._export_log),
             pystray.MenuItem("检查更新", self._check_for_updates),
             pystray.MenuItem("关于应用", self._show_about),
@@ -883,8 +1226,10 @@ class WindowsTrayApplication:
         return select
 
     def run(self):
+        """配置 Windows 应用标识并启动后台工作进程与托盘消息循环。"""
         import pystray
 
+        self._configure_windows_taskbar()
         if not self._acquire_single_instance():
             return 0
         self._start_worker()

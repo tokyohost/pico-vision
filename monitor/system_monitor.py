@@ -187,6 +187,19 @@ class _NvmlMemory(ctypes.Structure):
     _fields_ = [("total", ctypes.c_ulonglong), ("free", ctypes.c_ulonglong), ("used", ctypes.c_ulonglong)]
 
 
+class _ProcessorPowerInformation(ctypes.Structure):
+    """描述 Windows 返回的单个逻辑处理器实时频率与电源状态。"""
+
+    _fields_ = [
+        ("number", ctypes.c_ulong),
+        ("max_mhz", ctypes.c_ulong),
+        ("current_mhz", ctypes.c_ulong),
+        ("mhz_limit", ctypes.c_ulong),
+        ("max_idle_state", ctypes.c_ulong),
+        ("current_idle_state", ctypes.c_ulong),
+    ]
+
+
 class _NvmlGpuBackend:
     """通过进程内常驻 NVML 接口采集 NVIDIA GPU 使用率。"""
 
@@ -711,11 +724,37 @@ class SystemInformationCollector:
         return disks
 
     @staticmethod
-    def _cpu_frequency_ghz():
-        """读取 CPU 当前频率并换算为 GHz。"""
+    def _windows_cpu_current_frequency_mhz():
+        """通过 Windows 电源信息接口读取全部逻辑处理器的实时 MHz 平均值。"""
+        processor_count = os.cpu_count() or 1
+        information = (_ProcessorPowerInformation * processor_count)()
         try:
-            frequency = psutil.cpu_freq()
-        except (AttributeError, OSError, RuntimeError):
+            library = ctypes.WinDLL("powrprof.dll")
+            function = library.CallNtPowerInformation
+            function.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong]
+            function.restype = ctypes.c_ulong
+            status = function(11, None, 0, ctypes.byref(information), ctypes.sizeof(information))
+        except (AttributeError, OSError):
+            return None
+        values = [item.current_mhz for item in information if item.current_mhz > 0]
+        return sum(values) / len(values) if status == 0 and values else None
+
+    @classmethod
+    def _cpu_frequency_ghz(cls):
+        """读取 CPU 各逻辑处理器的实时频率平均值并换算为 GHz。"""
+        if platform.system() == "Windows":
+            current_mhz = cls._windows_cpu_current_frequency_mhz()
+            return round(current_mhz / 1000, 2) if current_mhz is not None else None
+        try:
+            frequencies = psutil.cpu_freq(percpu=True) or ()
+        except (AttributeError, OSError, RuntimeError, TypeError):
+            frequencies = ()
+        values = [float(item.current) for item in frequencies if getattr(item, "current", 0) > 0]
+        if values:
+            return round(sum(values) / len(values) / 1000, 2)
+        try:
+            frequency = psutil.cpu_freq(percpu=False)
+        except (AttributeError, OSError, RuntimeError, TypeError):
             return None
         current_mhz = getattr(frequency, "current", None) if frequency is not None else None
         if current_mhz is None or current_mhz <= 0:
