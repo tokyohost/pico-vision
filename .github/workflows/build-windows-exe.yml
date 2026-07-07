@@ -111,6 +111,6 @@ jobs:
           GH_REPO: tokyohost/omniwatch-doc
         run: |
           if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes "由 ${GITHUB_REPOSITORY} 自动同步的 ${GITHUB_REF_NAME} 版本制品。" || gh release view "${GITHUB_REF_NAME}" >/dev/null
+            gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes "自动发步的 ${GITHUB_REF_NAME} 版本。" || gh release view "${GITHUB_REF_NAME}" >/dev/null
           fi
           gh release upload "${GITHUB_REF_NAME}" release-assets/*.exe --clobber
