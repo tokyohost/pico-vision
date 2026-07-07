@@ -25,7 +25,7 @@ import urllib.request
 
 
 LOGGER = logging.getLogger("pico-monitor.update")
-CHECKSUM_ASSET_NAME = "SHA256SUMS-linux-deb.txt"
+CHECKSUM_ASSET_NAME = "OmniWatch-SHA256SUMS-linux-deb.txt"
 
 
 class LinuxDebUpdater:
@@ -119,7 +119,7 @@ class LinuxDebUpdater:
         suffix = "_{}.deb".format(architecture)
         matches = [
             item for item in assets
-            if str(item.get("name") or "").startswith("pico-monitor_")
+            if str(item.get("name") or "").startswith("OmniWatch_")
             and str(item.get("name") or "").endswith(suffix)
         ]
         if len(matches) != 1:

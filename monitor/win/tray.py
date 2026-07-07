@@ -20,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 
 from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
+import custom_data
 from qbittorrent_monitor import QbittorrentApiClient
 from windows_update import WindowsReleaseUpdater
 
@@ -131,7 +132,7 @@ class WindowsTrayApplication:
 
     def _start_worker(self):
         environment = os.environ.copy()
-        environment.update({"PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"})
+        environment.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1"})
         environment["PICO_MONITOR_SETTINGS_PATH"] = str(self.settings_store.path)
         environment["PICO_MONITOR_SCREENSHOT_DIR"] = str(self.screenshot_directory)
         self.worker_process = subprocess.Popen(
@@ -652,7 +653,7 @@ class WindowsTrayApplication:
                     encoding="utf-8",
                     errors="replace",
                     creationflags=0x08000000,
-                    env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1"),
+                    env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PYTHONUNBUFFERED="1"),
                 )
                 for line in process.stdout:
                     messages.put(("log", line))
@@ -846,7 +847,7 @@ class WindowsTrayApplication:
         return dialog.result
 
     def _perform_update(self, icon, update_url):
-        """下载最新 Release，先升级 Pico，再安排替换 Monitor。"""
+        """下载最新 Release，先升级 Pico，再安排运行 Monitor 安装包。"""
         updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, MONITOR_VERSION)
         monitor_path = None
         pico_path = None
@@ -857,7 +858,7 @@ class WindowsTrayApplication:
                 icon.notify("当前已是最新版本：{}".format(MONITOR_VERSION), APPLICATION_NAME)
                 return
             pico_asset = updater.select_pico_asset(assets, latest_version)
-            monitor_asset = updater.select_monitor_asset(assets)
+            monitor_asset = updater.select_monitor_asset(assets, latest_version)
             icon.notify("发现版本 {}，正在下载更新".format(latest_version), APPLICATION_NAME)
             pico_path = updater.download(pico_asset, ".zip")
             monitor_path = updater.download(monitor_asset, ".exe")
@@ -865,7 +866,7 @@ class WindowsTrayApplication:
             self._upgrade_pico_from_package(pico_path)
             updater.remove_file(pico_path)
             pico_path = None
-            self._schedule_monitor_replacement(monitor_path)
+            self._schedule_monitor_installer(monitor_path)
             monitor_path = None
             self.stopping.set()
             icon.notify("OmniWatch 更新完成，应用即将重启", APPLICATION_NAME)
@@ -904,19 +905,19 @@ class WindowsTrayApplication:
             raise RuntimeError(message[-500:])
 
     @staticmethod
-    def _schedule_monitor_replacement(download_path):
-        """由独立 PowerShell 进程等待托盘退出后替换 EXE 并重新启动。"""
-        target_path = Path(sys.executable).resolve()
+    def _schedule_monitor_installer(download_path):
+        """由独立 PowerShell 进程等待托盘退出后运行安装包。"""
         environment = os.environ.copy()
         environment.update({
             "PICO_UPDATE_PID": str(os.getpid()),
             "PICO_UPDATE_SOURCE": str(Path(download_path).resolve()),
-            "PICO_UPDATE_TARGET": str(target_path),
+            "PICO_UPDATE_TARGET": str(Path(sys.executable).resolve()),
         })
         command = (
             "Wait-Process -Id $env:PICO_UPDATE_PID -ErrorAction SilentlyContinue;"
-            "Copy-Item -LiteralPath $env:PICO_UPDATE_SOURCE -Destination $env:PICO_UPDATE_TARGET -Force;"
-            "Start-Process -FilePath $env:PICO_UPDATE_TARGET;"
+            "$process = Start-Process -FilePath $env:PICO_UPDATE_SOURCE "
+            "-ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru;"
+            "if ($process.ExitCode -eq 0) { Start-Process -FilePath $env:PICO_UPDATE_TARGET; };"
             "Remove-Item -LiteralPath $env:PICO_UPDATE_SOURCE -Force -ErrorAction SilentlyContinue"
         )
         subprocess.Popen(
@@ -1020,15 +1021,28 @@ class WindowsTrayApplication:
     @staticmethod
     def _configure_tk_runtime():
         """为源码运行和单文件运行配置 Tcl/Tk 标准库路径。"""
-        python_root = Path(sys.base_prefix)
-        tcl_dir = python_root / "tcl" / "tcl8.6"
-        tk_dir = python_root / "tcl" / "tk8.6"
+        roots = []
+        for candidate in (
+            getattr(sys, "_MEIPASS", None),
+            sys.base_prefix,
+            sys.prefix,
+            sys.exec_prefix,
+            Path(sys.executable).resolve().parent if sys.executable else None,
+        ):
+            if candidate:
+                path = Path(candidate)
+                if path not in roots:
+                    roots.append(path)
 
-        if (tcl_dir / "init.tcl").exists():
-            os.environ["TCL_LIBRARY"] = str(tcl_dir)
-
-        if (tk_dir / "tk.tcl").exists():
-            os.environ["TK_LIBRARY"] = str(tk_dir)
+        for root in roots:
+            tcl_dir = root / "tcl" / "tcl8.6"
+            tk_dir = root / "tcl" / "tk8.6"
+            if "TCL_LIBRARY" not in os.environ and (tcl_dir / "init.tcl").exists():
+                os.environ["TCL_LIBRARY"] = str(tcl_dir)
+            if "TK_LIBRARY" not in os.environ and (tk_dir / "tk.tcl").exists():
+                os.environ["TK_LIBRARY"] = str(tk_dir)
+            if "TCL_LIBRARY" in os.environ and "TK_LIBRARY" in os.environ:
+                break
 
     @staticmethod
     def _center_tk_window(window):
@@ -1564,6 +1578,155 @@ class WindowsTrayApplication:
         base_directory = Path(getattr(sys, "_MEIPASS", MONITOR_DIRECTORY))
         return base_directory.joinpath(*parts)
 
+    def _show_custom_data(self, icon=None, item=None):
+        """打开自定义数据管理弹框。"""
+        del icon, item
+        threading.Thread(target=self._run_custom_data_dialog_guarded, name="自定义数据窗口", daemon=True).start()
+
+    def _run_custom_data_dialog_guarded(self):
+        """运行自定义数据窗口，并将 Tk 初始化错误降级为日志和托盘通知。"""
+        try:
+            self._run_custom_data_dialog()
+        except Exception as error:
+            LOGGER.exception("打开自定义数据窗口失败：%s", error)
+            if self.icon is not None:
+                self.icon.notify("无法打开自定义数据窗口，请查看日志", APPLICATION_NAME)
+
+    def _run_custom_data_dialog(self):
+        """显示自定义数据脚本列表并处理加载、测试、删除和查看。"""
+        self._configure_tk_runtime()
+        import tkinter as tk
+        from tkinter import filedialog, messagebox, scrolledtext, ttk
+
+        manager = custom_data.get_manager()
+        root = tk.Tk()
+        root.title("自定义数据")
+        root.geometry("860x560")
+        root.minsize(760, 460)
+        self._set_tk_window_icon(root)
+
+        status = tk.StringVar(master=root, value="目录：{}".format(manager.custom_directory))
+        tk.Label(root, textvariable=status, anchor="w", padx=10, pady=8).pack(fill=tk.X)
+
+        columns = ("file", "key", "interval", "status")
+        table = ttk.Treeview(root, columns=columns, show="headings", height=10)
+        table.heading("file", text="文件")
+        table.heading("key", text="JSON Key")
+        table.heading("interval", text="间隔(秒)")
+        table.heading("status", text="状态")
+        table.column("file", width=280, anchor="w")
+        table.column("key", width=140, anchor="w")
+        table.column("interval", width=90, anchor="center")
+        table.column("status", width=220, anchor="w")
+        table.pack(fill=tk.BOTH, expand=True, padx=10)
+
+        button_frame = tk.Frame(root, padx=10, pady=8)
+        button_frame.pack(fill=tk.X)
+        output = scrolledtext.ScrolledText(root, height=9, wrap=tk.WORD)
+        output.pack(fill=tk.BOTH, expand=False, padx=10, pady=(0, 10))
+        path_by_item = {}
+
+        def write_output(content):
+            """把操作结果写入底部文本域。"""
+            output.configure(state=tk.NORMAL)
+            output.delete("1.0", tk.END)
+            output.insert(tk.END, content)
+            output.configure(state=tk.NORMAL)
+
+        def selected_path():
+            """返回当前选中的脚本路径，未选中时提示用户。"""
+            selection = table.selection()
+            if not selection:
+                messagebox.showinfo("自定义数据", "请先选择一个脚本", parent=root)
+                return None
+            return path_by_item.get(selection[0])
+
+        def refresh():
+            """刷新脚本列表和加载错误。"""
+            path_by_item.clear()
+            for item in table.get_children():
+                table.delete(item)
+            items, errors = manager.list_items()
+            for state in items:
+                definition = state.definition
+                status_text = "正常" if not state.error else "执行错误"
+                item = table.insert("", tk.END, values=(
+                    definition.path.name,
+                    definition.key,
+                    "{:g}".format(definition.interval),
+                    status_text,
+                ))
+                path_by_item[item] = definition.path
+            for script_path, error in errors.items():
+                item = table.insert("", tk.END, values=(Path(script_path).name, "加载失败", "-", error))
+                path_by_item[item] = Path(script_path)
+            status.set("目录：{}    已加载：{}，错误：{}".format(manager.custom_directory, len(items), len(errors)))
+
+        def load_script():
+            """选择 py 文件并加载到 customData 目录。"""
+            script_path = filedialog.askopenfilename(
+                parent=root,
+                title="加载自定义数据脚本",
+                filetypes=(("Python 脚本", "*.py"), ("所有文件", "*.*")),
+            )
+            if not script_path:
+                return
+            try:
+                definition = manager.import_script(script_path)
+                write_output("加载成功：{}\nkey={}\ninterval={:g}s".format(
+                    definition.path.name,
+                    definition.key,
+                    definition.interval,
+                ))
+                refresh()
+            except Exception as error:
+                write_output("加载失败：{}".format(error))
+
+        def test_script():
+            """测试执行当前选中脚本并展示 JSON 或异常详情。"""
+            script_path = selected_path()
+            if script_path is not None:
+                write_output(manager.test_script(script_path))
+
+        def delete_script():
+            """删除当前选中的 customData 脚本。"""
+            script_path = selected_path()
+            if script_path is None:
+                return
+            if not messagebox.askyesno("删除自定义数据", "确认删除 {}？".format(Path(script_path).name), parent=root):
+                return
+            try:
+                manager.delete_script(script_path)
+                write_output("删除成功")
+                refresh()
+            except Exception as error:
+                write_output("删除失败：{}".format(error))
+
+        def view_script():
+            """在只读窗口中查看当前选中脚本源码。"""
+            script_path = selected_path()
+            if script_path is None:
+                return
+            window = tk.Toplevel(root)
+            window.title("查看 - {}".format(Path(script_path).name))
+            window.geometry("760x520")
+            self._set_tk_window_icon(window)
+            text_box = scrolledtext.ScrolledText(window, wrap=tk.NONE)
+            text_box.pack(fill=tk.BOTH, expand=True)
+            try:
+                text_box.insert(tk.END, Path(script_path).read_text(encoding="utf-8"))
+            except Exception as error:
+                text_box.insert(tk.END, "读取失败：{}".format(error))
+            text_box.configure(state=tk.DISABLED)
+
+        ttk.Button(button_frame, text="加载 py 文件", command=load_script).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(button_frame, text="测试", command=test_script).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(button_frame, text="删除", command=delete_script).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(button_frame, text="查看", command=view_script).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(button_frame, text="刷新", command=refresh).pack(side=tk.LEFT)
+        refresh()
+        root.mainloop()
+
     def _build_menu(self):
         """构建托盘主菜单，样式子菜单在每次展开时动态读取最新清单。"""
         import pystray
@@ -1573,6 +1736,7 @@ class WindowsTrayApplication:
             pystray.MenuItem("配置...", self._show_settings, default=True),
             pystray.MenuItem("界面样式", style_menu),
             pystray.MenuItem("自定义屏幕", self._show_custom_style),
+            pystray.MenuItem("自定义数据", self._show_custom_data),
             pystray.MenuItem("屏幕旋转", pystray.Menu(
                 pystray.MenuItem("0°", self._set_rotation(0), checked=lambda item: self.settings["screen_rotation"] == 0, radio=True),
                 pystray.MenuItem("180°", self._set_rotation(180), checked=lambda item: self.settings["screen_rotation"] == 180, radio=True),

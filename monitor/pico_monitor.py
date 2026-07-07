@@ -14,6 +14,7 @@
 #  This software is provided "as is", without warranty of any kind.
 
 import argparse
+import io
 import json
 import logging
 import os
@@ -31,6 +32,7 @@ import serial
 from pico_client import PicoJsonClient, PicoRestartingError
 from pico_upgrade import PicoFirmwareUpgrader, PicoUpgradeDownloader, PicoUpgradePackage
 from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
+from custom_data import get_manager as get_custom_data_manager
 from monitor_update import LinuxDebUpdater
 from qbittorrent_monitor import QbittorrentMonitor
 from system_monitor import SystemInformationCollector
@@ -44,6 +46,53 @@ BUILTIN_LCD_STYLES = (
     "horizontal_disk4x_qb", "horizontal_disk6x", "simple", "fpstest",
     "fps_simple", "game",
 )
+
+
+def _ensure_utf8_text_stream(stream):
+    """确保日志输出流使用 UTF-8 编码，避免 Windows 打包后中文日志乱码。"""
+    if stream is None:
+        return None
+    try:
+        stream.reconfigure(encoding="utf-8", errors="replace")
+        return stream
+    except (AttributeError, OSError, ValueError):
+        buffer = getattr(stream, "buffer", None)
+        if buffer is None:
+            return stream
+        return io.TextIOWrapper(
+            buffer,
+            encoding="utf-8",
+            errors="replace",
+            line_buffering=True,
+            write_through=True,
+        )
+
+
+def _open_inherited_text_stream(file_descriptor):
+    """在 Windows 无控制台 EXE 中重新打开继承的标准管道。"""
+    try:
+        return os.fdopen(
+            os.dup(file_descriptor),
+            "w",
+            encoding="utf-8",
+            errors="replace",
+            buffering=1,
+        )
+    except OSError:
+        return None
+
+
+def _configure_standard_streams():
+    """统一修正标准输出和错误输出的编码，并返回日志应写入的文本流。"""
+    stdout = _ensure_utf8_text_stream(getattr(sys, "stdout", None))
+    stderr = _ensure_utf8_text_stream(getattr(sys, "stderr", None))
+    if stdout is None:
+        stdout = _open_inherited_text_stream(1)
+        sys.stdout = stdout
+    if stderr is None:
+        stderr = _open_inherited_text_stream(2)
+        sys.stderr = stderr
+    return stderr or stdout or open(os.devnull, "w", encoding="utf-8")
 
 
 def _write_version_to_console(version_text):
@@ -150,6 +199,10 @@ class MonitorService:
         self.custom_style_deletes = queue.Queue()
         self.screenshot_requested = threading.Event()
         self.available_styles = set(BUILTIN_LCD_STYLES)
+        self._snapshot_condition = threading.Condition()
+        self._latest_collected_snapshot = None
+        self._latest_collection_error = None
+        self._collection_thread = None
 
     def _synchronize_style_catalog(self):
         """接收 Pico 样式清单并更新 monitor 的 JSON 配置文件。"""
@@ -320,15 +373,17 @@ class MonitorService:
         )
 
     def stop(self, signum=None, frame=None):
-        """请求主循环停止，并安全关闭当前串口连接。"""
+        """请求主循环停止，由通信线程在退出阶段统一关闭串口。"""
         del signum, frame
         LOGGER.info("收到停止请求，正在关闭监控程序")
+        # Windows 的 PySerial 正在 ReadFile 时不能由其他线程执行 close，
+        # 否则内部 OVERLAPPED 事件会被置空并触发 ctypes.byref(None) 异常。
         self.stopping.set()
-        self.client.close()
 
     def run(self):
         """持续连接设备、采集指标并发送最新系统快照。"""
         LOGGER.info("监控服务启动：端口=%s，Ping=%s，发送间隔=%.1f 秒，重连间隔=%.1f 秒，屏幕旋转=%d°，网络单位=%s，LCD 样式=%s，开发模式=%s", self.arguments.port or "自动发现", self.arguments.ping_target, self.arguments.interval, self.arguments.reconnect_interval, self.arguments.screen_rotation, self.arguments.network_unit, self.arguments.lcd_style, "开启" if self.arguments.dev else "关闭")
+        self._start_collection_worker()
         while not self.stopping.is_set():
             probing = not self.client.is_connected
             ports_before_probe = self.client.available_ports()
@@ -356,13 +411,7 @@ class MonitorService:
                     self._publish_custom_style_delete()
                     continue
                 started = time.monotonic()
-                snapshot = self._collect_snapshot()
-                collection_elapsed = time.monotonic() - started
-                if collection_elapsed > 0.5:
-                    LOGGER.warning(
-                        "系统指标采集耗时较长：%.3f 秒",
-                        collection_elapsed,
-                    )
+                snapshot = self._snapshot_for_sending()
                 if self.arguments.dev:
                     self._print_development_snapshot(snapshot)
                 self.client.send(snapshot)
@@ -376,18 +425,14 @@ class MonitorService:
                 if isinstance(error, PicoRestartingError):
                     self.stopping.wait(self.arguments.reconnect_interval)
                     continue
-                # The COM port may reappear before the firmware can answer PING.
-                # Retry a failed probe even if that same port is already present.
-                if probing:
-                    self.stopping.wait(self.arguments.reconnect_interval)
-                    continue
-                if not self._wait_for_usb_addition(ports_before_probe):
-                    break
-                LOGGER.info(
-                    "USB 端口已增加，%.1f 秒后重新探测 Pico LCD",
-                    self.arguments.reconnect_interval,
-                )
+                # 探测失败和已连接后的通信异常都按固定间隔重新握手，避免同名 COM 口常驻时卡在等待新增端口。
+                if not probing:
+                    LOGGER.info(
+                        "串口连接已断开，%.1f 秒后重新探测 Pico LCD",
+                        self.arguments.reconnect_interval,
+                    )
                 self.stopping.wait(self.arguments.reconnect_interval)
+                continue
         reboot_requested = getattr(self, "reboot_requested", None)
         reboot_result = None
         if reboot_requested is not None and reboot_requested.is_set() and self.client.is_connected:
@@ -408,6 +453,53 @@ class MonitorService:
         LOGGER.info("监控服务已停止")
         return 0
 
+    def _start_collection_worker(self):
+        """启动独立指标采集线程，避免慢速硬件查询阻塞串口发送。"""
+        # 使用 __new__ 构造的旧测试桩没有异步采集状态，此时保留同步行为。
+        if not hasattr(self, "_snapshot_condition"):
+            return
+        if self._collection_thread is not None and self._collection_thread.is_alive():
+            return
+        self._collection_thread = threading.Thread(
+            target=self._collection_loop,
+            name="system-metrics-collector",
+            daemon=True,
+        )
+        self._collection_thread.start()
+
+    def _collection_loop(self):
+        """按配置周期采集快照，并以原子替换方式发布最近一次成功结果。"""
+        while not self.stopping.is_set():
+            started = time.monotonic()
+            try:
+                snapshot = self._collect_snapshot()
+                with self._snapshot_condition:
+                    self._latest_collected_snapshot = snapshot
+                    self._latest_collection_error = None
+                    self._snapshot_condition.notify_all()
+            except (OSError, RuntimeError, TypeError, ValueError, psutil.Error) as error:
+                LOGGER.exception("后台系统指标采集失败，将继续发送最近一次成功快照：%s", error)
+                with self._snapshot_condition:
+                    self._latest_collection_error = error
+                    self._snapshot_condition.notify_all()
+            remaining = self.arguments.interval - (time.monotonic() - started)
+            self.stopping.wait(max(0.0, remaining))
+
+    def _snapshot_for_sending(self):
+        """返回最近成功快照；仅首次采集尚未完成时等待后台线程。"""
+        if not hasattr(self, "_snapshot_condition"):
+            return self._collect_snapshot()
+        with self._snapshot_condition:
+            while self._latest_collected_snapshot is None and not self.stopping.is_set():
+                if self._latest_collection_error is not None:
+                    error = self._latest_collection_error
+                    self._latest_collection_error = None
+                    raise RuntimeError("首次系统指标采集失败：{}".format(error)) from error
+                self._snapshot_condition.wait(timeout=0.1)
+            if self._latest_collected_snapshot is None:
+                raise RuntimeError("系统指标采集已停止，无法生成发送快照")
+            return self._latest_collected_snapshot
+
     def _wait_for_usb_addition(self, previous_ports):
         """等待新串口插入，拔出时只更新基线而不发起 Pico 握手。"""
         baseline = frozenset(previous_ports)
@@ -425,7 +517,7 @@ class MonitorService:
         if not url:
             if not GITHUB_REPOSITORY or MONITOR_VERSION == "development":
                 raise RuntimeError("开发版本必须通过 --upgrade-url 指定 Pico 升级包")
-            url = "https://github.com/{}/releases/download/v{}/pico-upgrade-v{}.zip".format(
+            url = "https://github.com/{}/releases/download/v{}/OmniWatch-pico-upgrade-v{}.zip".format(
                 GITHUB_REPOSITORY, MONITOR_VERSION, MONITOR_VERSION
             )
         archive_path = PicoUpgradeDownloader.download(url, self.arguments.upgrade_sha256)
@@ -456,10 +548,19 @@ class MonitorService:
 
     def _collect_snapshot(self):
         """采集系统指标并补充 Pico 显示配置。"""
+        started = time.monotonic()
         snapshot = self.collector.collect()
+        system_elapsed = time.monotonic() - started
+        stage_started = time.monotonic()
         if self.qbittorrent_monitor is not None:
             snapshot["qbittorrent"] = self.qbittorrent_monitor.snapshot()
+        qbittorrent_elapsed = time.monotonic() - stage_started
+        stage_started = time.monotonic()
         self._apply_disk_health_test(snapshot)
+        disk_test_elapsed = time.monotonic() - stage_started
+        stage_started = time.monotonic()
+        snapshot["ext"] = get_custom_data_manager().collect_due_data()
+        custom_elapsed = time.monotonic() - stage_started
         snapshot["display"] = {
             "rotation": self.arguments.screen_rotation,
             "brightness": getattr(self.arguments, "lcd_brightness", 100),
@@ -467,6 +568,17 @@ class MonitorService:
             "network_unit": self.arguments.network_unit,
             "style": self.arguments.lcd_style,
         }
+        total_elapsed = time.monotonic() - started
+        log_method = LOGGER.warning if total_elapsed > 0.5 else LOGGER.debug
+        log_method(
+            "系统快照采集耗时：总计=%.3f秒，系统指标=%.3f秒，qBittorrent=%.3f秒，"
+            "磁盘测试覆盖=%.3f秒，自定义扩展=%.3f秒",
+            total_elapsed,
+            system_elapsed,
+            qbittorrent_elapsed,
+            disk_test_elapsed,
+            custom_elapsed,
+        )
         return snapshot
 
     def _apply_disk_health_test(self, snapshot):
@@ -497,7 +609,7 @@ class MonitorService:
         """打印实际进入压缩和发送流程的紧凑 JSON 内容。"""
         try:
             if snapshot is None:
-                snapshot = self._collect_snapshot()
+                snapshot = self._snapshot_for_sending()
             LOGGER.info(
                 "[DEV][Monitor -> Pico][JSON] %s",
                 PicoJsonClient.build_json_payload(snapshot).decode("utf-8"),
@@ -508,7 +620,9 @@ class MonitorService:
 
 def configure_logging():
     """配置适合终端、systemd 和 Windows 托盘收集的日志格式。"""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    handler = logging.StreamHandler(_configure_standard_streams())
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
 
 
 def log_monitor_version():
@@ -579,6 +693,8 @@ def validate_arguments(arguments):
 
 def main():
     """校验参数并按当前平台启动后台工作进程或 Windows 托盘。"""
+    # 参数解析器会在 --help 场景直接输出中文，必须先于 parse_args 配置编码。
+    _configure_standard_streams()
     arguments = create_argument_parser().parse_args()
     validate_arguments(arguments)
     if (

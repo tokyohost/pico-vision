@@ -16,9 +16,11 @@
 
 import json
 import os
+import threading
 import unittest
 import zlib
 import base64
+import serial
 from unittest import mock
 from types import SimpleNamespace
 
@@ -88,6 +90,22 @@ class BadJsonSerial(FakeSerial):
         """返回可恢复的 JSON 解析错误。"""
         return build_frame("ERR", b"BAD_JSON")
 
+
+
+class ProtocolTimingBeforeAckSerial(FakeSerial):
+    """模拟 Pico 先返回 JSONZ 解析耗时事件再返回确认帧。"""
+
+    def __init__(self):
+        """准备按顺序返回的协议帧列表。"""
+        super().__init__()
+        self.responses = [
+            build_frame("EVENT", b"PROTOCOL_TIMING:TYPE=JSONZ:BYTES=1919:JSON_BYTES=2999"),
+            build_frame("ACK", b"JSON"),
+        ]
+
+    def readline(self):
+        """返回下一条 Pico 响应帧。"""
+        return self.responses.pop(0) if self.responses else b""
 
 class FatalMemorySerial(FakeSerial):
     """模拟 Pico 堆内存不足并即将自动重启。"""
@@ -171,6 +189,24 @@ class PicoClientTest(unittest.TestCase):
         self.assertTrue(any("Monitor -> Pico" in message for message in logs.output))
         self.assertTrue(any("Pico -> Monitor" in message for message in logs.output))
 
+    def test_concurrent_serial_close_is_converted_to_disconnect_error(self):
+        """确认 Windows 读取期间串口被关闭时不会泄漏 ctypes TypeError。"""
+        client = PicoJsonClient()
+        device = mock.Mock()
+        device.is_open = True
+
+        def fail_after_close():
+            """模拟 serialwin32 在读取期间被其他线程释放句柄。"""
+            device.is_open = False
+            client.serial = None
+            raise TypeError("byref() argument must be a ctypes instance, not 'NoneType'")
+
+        device.readline.side_effect = fail_after_close
+        client.serial = device
+
+        with self.assertRaisesRegex(serial.SerialException, "串口已关闭"):
+            client._read_protocol_frame("JSONZ")
+
     def test_reboot_sends_command_and_waits_for_ack(self):
         client = PicoJsonClient()
         client.serial = RebootSerial()
@@ -221,6 +257,15 @@ class PicoClientTest(unittest.TestCase):
             "style_name": "clock",
         })
         self.assertEqual(result["style_name"], "clock")
+
+    def test_protocol_timing_extends_json_ack_wait(self):
+        """确认收到 JSONZ 解析耗时事件后继续等待随后的 ACK:JSON。"""
+        client = PicoJsonClient()
+        client.serial = ProtocolTimingBeforeAckSerial()
+
+        client.send({"version": 1})
+
+        self.assertEqual(client.serial.responses, [])
 
     def test_bad_json_keeps_serial_connected(self):
         """确认单帧 JSON 解析失败时保持串口连接并等待下一帧。"""
@@ -446,6 +491,32 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertIn("Pico Monitor 启动：版本=1.2.3", logs.output[0])
 
+    def test_stop_does_not_close_serial_from_control_thread(self):
+        """确认停止请求仅唤醒主循环，避免控制线程与串口读取并发关闭。"""
+        service = MonitorService.__new__(MonitorService)
+        service.stopping = mock.Mock()
+        service.client = mock.Mock()
+
+        service.stop()
+
+        service.stopping.set.assert_called_once_with()
+        service.client.close.assert_not_called()
+
+    def test_sending_uses_latest_snapshot_without_waiting_for_next_collection(self):
+        """确认后台采集尚未发布新结果时，发送链路立即复用最近成功快照。"""
+        service = MonitorService.__new__(MonitorService)
+        service._snapshot_condition = threading.Condition()
+        service._latest_collected_snapshot = {"version": 1, "sequence": 7}
+        service._latest_collection_error = None
+        service.stopping = mock.Mock()
+        service.stopping.is_set.return_value = False
+        service._collect_snapshot = mock.Mock(side_effect=AssertionError("发送线程不应同步采集"))
+
+        snapshot = service._snapshot_for_sending()
+
+        self.assertEqual(snapshot["sequence"], 7)
+        service._collect_snapshot.assert_not_called()
+
     def test_development_mode_stops_reconnecting_without_pico(self):
         """确认开发模式首次连接失败后直接进入 JSON 输出循环。"""
         service = MonitorService.__new__(MonitorService)
@@ -498,6 +569,45 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual(service.run(), 0)
 
         self.assertEqual(service.client.connect.call_count, 3)
+        service.stopping.wait.assert_any_call(3.0)
+
+    def test_connected_send_failure_retries_without_usb_addition(self):
+        """确认已连接后的通信异常不再等待新增 COM 口才重连。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(
+            port=None,
+            ping_target="127.0.0.1",
+            interval=1.0,
+            reconnect_interval=3.0,
+            screen_rotation=0,
+            network_unit="MB",
+            lcd_style="horizontal_disk",
+            dev=False,
+            upgrade_pico=False,
+            once=False,
+        )
+        service.stopping = mock.Mock()
+        service.stopping.is_set.side_effect = [False, True]
+        service.client = mock.Mock()
+        service.client.is_connected = True
+        service.client.available_ports.return_value = frozenset({"COM11"})
+        service.client.send.side_effect = RuntimeError("等待 Pico JSON 接收确认超时")
+        service._collect_snapshot = mock.Mock(return_value={"version": 1})
+        service._wait_for_usb_addition = mock.Mock(return_value=False)
+        service.custom_style_catalog_requested = mock.Mock()
+        service.custom_style_catalog_requested.is_set.return_value = False
+        service.screenshot_requested = mock.Mock()
+        service.screenshot_requested.is_set.return_value = False
+        service.custom_style_uploads = mock.Mock()
+        service.custom_style_uploads.empty.return_value = True
+        service.custom_style_deletes = mock.Mock()
+        service.custom_style_deletes.empty.return_value = True
+        service.reboot_requested = mock.Mock()
+        service.reboot_requested.is_set.return_value = False
+
+        self.assertEqual(service.run(), 0)
+
+        service._wait_for_usb_addition.assert_not_called()
         service.stopping.wait.assert_any_call(3.0)
 
     def test_usb_removal_does_not_trigger_probe(self):

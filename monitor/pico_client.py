@@ -32,6 +32,8 @@ FRAME_MAX_PAYLOAD = 16 * 1024
 TRANSPORT_BLOCK_SIZE = 64
 ZLIB_WINDOW_BITS = 9
 STYLE_UPLOAD_CHUNK_SIZE = 512
+JSON_ACK_TIMEOUT = 8.0
+JSON_PROGRESS_GRACE_SECONDS = 2.0
 
 
 def _build_crc16_byte_table():
@@ -448,7 +450,17 @@ class PicoJsonClient:
 
     def _read_protocol_frame(self, label):
         """读取并解析一条 Pico 返回帧，同时输出原始响应日志。"""
-        response = self.serial.readline().strip()
+        device = self.serial
+        if device is None:
+            raise serial.SerialException("Pico 串口已关闭")
+        try:
+            response = device.readline().strip()
+        except TypeError as error:
+            # PySerial serialwin32 在其他线程恰好关闭句柄时可能对空的
+            # OVERLAPPED 事件执行 ctypes.byref；将其归一化为可重连异常。
+            if self.serial is not device or not getattr(device, "is_open", False):
+                raise serial.SerialException("读取 Pico 响应时串口已关闭") from error
+            raise
         if response:
             LOGGER.info(
                 "[Pico -> Monitor][%s][%s 响应] %s",
@@ -527,7 +539,7 @@ class PicoJsonClient:
         build_elapsed_ms = (time.monotonic() - build_started) * 1000
         self._write_packet(packet, "JSONZ", build_elapsed_ms)
         ack_wait_started = time.monotonic()
-        deadline = time.monotonic() + 5.0
+        deadline = time.monotonic() + JSON_ACK_TIMEOUT
         while time.monotonic() < deadline:
             frame = self._read_protocol_frame("JSONZ")
             if frame == ("ACK", b"JSON"):
@@ -540,6 +552,10 @@ class PicoJsonClient:
                     total_ms,
                 )
                 return
+            if frame and frame[0] == "EVENT" and frame[1].startswith(b"PROTOCOL_TIMING:TYPE=JSONZ:"):
+                # 收到解析耗时事件说明 Pico 已完成 JSONZ 解码，后续 ACK 可能紧随其后。
+                deadline = max(deadline, time.monotonic() + JSON_PROGRESS_GRACE_SECONDS)
+                continue
             if frame == ("ERR", b"BAD_JSON"):
                 LOGGER.warning(
                     "[数据帧丢弃][%s] Pico 无法解析本次 JSON，保持串口连接并等待下一帧",
@@ -550,7 +566,7 @@ class PicoJsonClient:
                 raise PicoRestartingError("Pico 发生不可恢复的渲染错误，设备正在自动重启")
             if frame and frame[0] == "ERR":
                 raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
-        LOGGER.error("[交互超时][%s] 5 秒内未收到 ACK:JSON", self.port_name)
+        LOGGER.error("[交互超时][%s] %.1f 秒内未收到 ACK:JSON", self.port_name, JSON_ACK_TIMEOUT)
         raise RuntimeError("等待 Pico JSON 接收确认超时")
 
     def reboot(self, timeout=30.0):

@@ -38,7 +38,7 @@ class LinuxDebUpdaterTests(unittest.TestCase):
 
     def test_downloads_matching_package_and_installs_with_apt(self):
         """确认更新器选择当前架构 DEB、校验摘要并交给 APT 安装。"""
-        package_name = "pico-monitor_1.2.4_amd64.deb"
+        package_name = "OmniWatch_1.2.4_amd64.deb"
         assets = [
             {"name": package_name, "browser_download_url": "https://example/deb"},
             {"name": CHECKSUM_ASSET_NAME, "browser_download_url": "https://example/sums"},
