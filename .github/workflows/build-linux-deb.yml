@@ -113,6 +113,11 @@ jobs:
       contents: write
 
     steps:
+      - name: 检出完整 Git 历史
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       - name: 下载全部 Linux 软件包
         uses: actions/download-artifact@v5
         with:
@@ -145,9 +150,22 @@ jobs:
           GH_TOKEN: ${{ secrets.OMNIWATCH_DOC_TOKEN }}
           GH_REPO: tokyohost/omniwatch-doc
         run: |
-          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes "自动发步的 ${GITHUB_REF_NAME} 版本。" || gh release view "${GITHUB_REF_NAME}" >/dev/null
+          previous_tag="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [[ -n "${previous_tag}" ]]; then
+            log_range="${previous_tag}..${GITHUB_REF_NAME}"
+          else
+            log_range="${GITHUB_REF_NAME}"
           fi
+          {
+            echo "## Git 提交日志"
+            echo
+            git log "${log_range}" --no-merges --pretty=format:'- %h %s (%an)'
+            echo
+          } > RELEASE_NOTES.md
+          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file RELEASE_NOTES.md || gh release view "${GITHUB_REF_NAME}" >/dev/null
+          fi
+          gh release edit "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file RELEASE_NOTES.md
           gh release upload "${GITHUB_REF_NAME}" release-assets/*.deb release-assets/SHA256SUMS-linux-deb.txt --clobber
           if compgen -G "release-assets/*.tar.gz" >/dev/null; then
             gh release upload "${GITHUB_REF_NAME}" release-assets/*.tar.gz --clobber

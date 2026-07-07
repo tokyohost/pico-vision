@@ -65,6 +65,11 @@ jobs:
       actions: read
       contents: write
     steps:
+      - name: 检出完整 Git 历史
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       - name: 下载全部 Pico 升级包
         uses: actions/download-artifact@v5
         with:
@@ -91,7 +96,20 @@ jobs:
           GH_TOKEN: ${{ secrets.OMNIWATCH_DOC_TOKEN }}
           GH_REPO: tokyohost/omniwatch-doc
         run: |
-          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes "自动发布的 ${GITHUB_REF_NAME} 版本。" || gh release view "${GITHUB_REF_NAME}" >/dev/null
+          previous_tag="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [[ -n "${previous_tag}" ]]; then
+            log_range="${previous_tag}..${GITHUB_REF_NAME}"
+          else
+            log_range="${GITHUB_REF_NAME}"
           fi
+          {
+            echo "## Git 提交日志"
+            echo
+            git log "${log_range}" --no-merges --pretty=format:'- %h %s (%an)'
+            echo
+          } > RELEASE_NOTES.md
+          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file RELEASE_NOTES.md || gh release view "${GITHUB_REF_NAME}" >/dev/null
+          fi
+          gh release edit "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file RELEASE_NOTES.md
           gh release upload "${GITHUB_REF_NAME}" release-assets/pico-upgrade-* --clobber
