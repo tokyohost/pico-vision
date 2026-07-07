@@ -64,8 +64,12 @@ class Application:
             ).encode()
         )
         self._protocol.write(b"BOOT:LCD_READY\n")
-        # 在 Monitor 发送首个快照前保持专用启动样式，该样式独立于数据看板配置。
-        self._renderer = DashboardRenderer(self._lcd, style_name="boot")
+        # 优先把首个有效自定义样式用于 SYSTEM BOOT 页面；目录为空时使用内置启动样式。
+        from styles.style_plugins import load_startup_custom_style
+        startup_style = load_startup_custom_style(self._write_custom_style_log)
+        self._renderer = DashboardRenderer(
+            self._lcd, style_name=startup_style or "boot"
+        )
         self._boot_frame = 0
         self._boot_logs = []
         self._next_boot_animation = time.ticks_ms()
@@ -80,6 +84,10 @@ class Application:
         )
         self._monitor_interval_ms = 500
         self._monitor_connected = False
+
+    def _write_custom_style_log(self, message):
+        """向 Monitor 输出自定义样式启动加载结果。"""
+        self._protocol.write(message.encode("utf-8"))
 
     def _show_boot(self, progress, log, status, flush=False):
         """提交启动画面，并可选择立即刷新其全部条带。"""

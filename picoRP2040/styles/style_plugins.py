@@ -20,6 +20,7 @@ import sys
 
 
 _STYLE_FACTORIES = {}
+_STYLE_MODULES = {}
 
 
 def register_style(name, factory):
@@ -61,11 +62,37 @@ def available_styles():
 
 def style_catalog():
     """从各样式类声明中读取名称、中文名称和类型。"""
-    directory = "/styles"
+    catalog = list(_scan_style_directory("/styles", "builtin"))
+    catalog.extend(_scan_style_directory("/customStyles", "custom"))
+    return tuple(catalog)
+
+
+def custom_style_catalog():
+    """返回 customStyles 目录中声明为 custom 的样式清单。"""
+    return _scan_style_directory("/customStyles", "custom")
+
+
+def load_startup_custom_style(logger=None):
+    """依次验证自定义样式，返回首个可用于启动页面的样式名称。"""
+    for metadata in custom_style_catalog():
+        name = metadata["name"]
+        try:
+            create_style(name)
+            if logger:
+                logger("CUSTOM_STYLE:LOAD_SUCCESS:{}\n".format(name))
+            return name
+        except Exception as error:
+            if logger:
+                logger("CUSTOM_STYLE:LOAD_FAILED:{}:{}\n".format(name, error))
+    return None
+
+
+def _scan_style_directory(directory, required_type):
+    """扫描指定样式目录并仅返回类型匹配的有效元数据。"""
     try:
         filenames = os.listdir(directory)
     except OSError:
-        directory = "styles"
+        directory = directory.lstrip("/")
         try:
             filenames = os.listdir(directory)
         except OSError:
@@ -74,8 +101,12 @@ def style_catalog():
     for filename in sorted(filenames):
         if not filename.startswith("style_") or not filename.endswith(".py"):
             continue
-        metadata = _read_style_metadata(directory + "/" + filename)
-        if metadata and metadata["name"] != "boot":
+        try:
+            metadata = _read_style_metadata(directory + "/" + filename)
+        except (TypeError, ValueError):
+            metadata = None
+        if (metadata and metadata["name"] != "boot"
+                and metadata["type"] == required_type):
             catalog.append(metadata)
     return tuple(catalog)
 
@@ -117,7 +148,8 @@ def release_style(name):
     """释放已停用样式的工厂和模块，使其占用的堆内存可被回收。"""
     normalized_name = _normalize_name(name)
     _STYLE_FACTORIES.pop(normalized_name, None)
-    sys.modules.pop("styles.style_" + normalized_name, None)
+    module_name = _STYLE_MODULES.pop(normalized_name, None)
+    sys.modules.pop(module_name or "styles.style_" + normalized_name, None)
     gc.collect()
 
 
@@ -137,6 +169,21 @@ def _load_style_module(name):
     """回收碎片内存后，按照命名约定动态导入样式模块。"""
     # 大型样式源码在首次导入时需要连续编译内存，LCD 初始化后先整理堆。
     gc.collect()
-    __import__("styles.style_" + name)
+    custom_path = "/customStyles/style_" + name + ".py"
+    try:
+        os.stat(custom_path)
+        custom_exists = True
+    except OSError:
+        try:
+            os.stat(custom_path.lstrip("/"))
+            custom_exists = True
+        except OSError:
+            custom_exists = False
+    module_name = (
+        "customStyles.style_" + name
+        if custom_exists else "styles.style_" + name
+    )
+    __import__(module_name)
+    _STYLE_MODULES[name] = module_name
     # 及时释放导入期间产生的临时解析对象，为条带画布保留连续空间。
     gc.collect()

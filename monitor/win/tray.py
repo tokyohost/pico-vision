@@ -59,6 +59,9 @@ class WindowsTrayApplication:
         self.device_probe_window_open = False
         self.device_management_messages = queue.Queue()
         self.device_connection_messages = queue.Queue()
+        self.device_connection_lock = threading.Lock()
+        self.current_device_connection = {"connected": False}
+        self.custom_style_messages = queue.Queue()
         self.update_lock = threading.Lock()
         data_directory = Path(os.getenv("LOCALAPPDATA", Path.home())) / "PicoMonitor"
         data_directory.mkdir(parents=True, exist_ok=True)
@@ -159,14 +162,20 @@ class WindowsTrayApplication:
                     except json.JSONDecodeError:
                         result = {"status": "error", "message": "设备返回了无效响应"}
                     self.device_management_messages.put(result)
+                if line.startswith("CUSTOM_STYLE_LIST_RESULT:"):
+                    try:
+                        result = json.loads(line.split(":", 1)[1])
+                    except json.JSONDecodeError:
+                        result = {"status": "error", "message": "设备返回了无效响应"}
+                    self.custom_style_messages.put(result)
                 if "[串口关闭]" in line or "监控通信异常：" in line:
-                    self.device_connection_messages.put({"connected": False})
+                    self._update_device_connection({"connected": False})
                 connection = re.search(
                     r"\[串口连接\].*握手成功：开发板=(.*)，屏幕方案=(.*)，固件版本=(.*)，分辨率=(.*)$",
                     line.strip(),
                 )
                 if connection:
-                    self.device_connection_messages.put({
+                    self._update_device_connection({
                         "connected": True,
                         "board_model": connection.group(1),
                         "screen_color_profile": connection.group(2),
@@ -176,6 +185,18 @@ class WindowsTrayApplication:
         return_code = process.wait()
         if not self.stopping.is_set() and process is self.worker_process and self.icon is not None:
             self.icon.notify("后台监控已退出，返回码：{}".format(return_code), APPLICATION_NAME)
+
+    def _update_device_connection(self, connection):
+        """保存最新设备连接快照，并通知已打开的设备管理窗口。"""
+        snapshot = dict(connection)
+        with self.device_connection_lock:
+            self.current_device_connection = snapshot
+        self.device_connection_messages.put(snapshot)
+
+    def _get_device_connection(self):
+        """返回当前设备连接状态的独立快照。"""
+        with self.device_connection_lock:
+            return dict(self.current_device_connection)
 
     def _show_log(self, icon=None, item=None):
         """打开独立 PowerShell 窗口并持续显示 Monitor 日志。"""
@@ -228,7 +249,8 @@ class WindowsTrayApplication:
         root.attributes("-topmost", True)
         self._set_tk_window_icon(root)
 
-        status = tk.StringVar(value="正在探测 Pico LCD 设备，请稍候……")
+        # 显式绑定当前窗口的 Tcl 解释器，避免多个独立 Tk 线程共享默认根窗口。
+        status = tk.StringVar(master=root, value="正在探测 Pico LCD 设备，请稍候……")
         ttk.Label(root, textvariable=status).pack(fill=tk.X, padx=16, pady=(16, 8))
         progress = ttk.Progressbar(root, mode="indeterminate")
         progress.pack(fill=tk.X, padx=16, pady=(0, 12))
@@ -236,14 +258,24 @@ class WindowsTrayApplication:
 
         device_panel = ttk.LabelFrame(root, text="当前已连接设备", padding=12)
         device_panel.pack(fill=tk.X, padx=16, pady=(0, 12))
-        device_values = {
-            "Pico 开发板型号": tk.StringVar(value="未连接"),
-            "Pico 屏幕色彩方案": tk.StringVar(value="--"),
-            "Pico 固件版本": tk.StringVar(value="--"),
-            "Pico 屏幕分辨率": tk.StringVar(value="--"),
+        device_labels = {
+            "board_model": "开发板型号",
+            "screen_color_profile": "屏幕色彩方案",
+            "firmware_version": "固件版本",
+            "screen_resolution": "屏幕分辨率",
         }
-        for row, (label, value) in enumerate(device_values.items()):
-            ttk.Label(device_panel, text=label + "：", width=20).grid(
+        device_values = {
+            "board_model": tk.StringVar(master=root, value="未连接"),
+            "screen_color_profile": tk.StringVar(master=root, value="--"),
+            "firmware_version": tk.StringVar(master=root, value="--"),
+            "screen_resolution": tk.StringVar(master=root, value="--"),
+        }
+        for row, (field_name, value) in enumerate(device_values.items()):
+            ttk.Label(
+                device_panel,
+                text=device_labels[field_name] + "：",
+                width=20,
+            ).grid(
                 row=row, column=0, sticky=tk.W, pady=2
             )
             ttk.Label(device_panel, textvariable=value).grid(
@@ -272,13 +304,14 @@ class WindowsTrayApplication:
 
         messages = queue.Queue()
         reboot_state = {"started": None}
+        initial_connection = self._get_device_connection()
 
         def clear_connected_device():
             """清空已连接设备信息，并禁用依赖有效串口的重启操作。"""
-            device_values["Pico 开发板型号"].set("未连接")
-            device_values["Pico 屏幕色彩方案"].set("--")
-            device_values["Pico 固件版本"].set("--")
-            device_values["Pico 屏幕分辨率"].set("--")
+            device_values["board_model"].set("未连接")
+            device_values["screen_color_profile"].set("--")
+            device_values["firmware_version"].set("--")
+            device_values["screen_resolution"].set("--")
             reboot_button.configure(state=tk.DISABLED)
 
         def refresh_connection_state():
@@ -290,16 +323,16 @@ class WindowsTrayApplication:
                         clear_connected_device()
                         status.set("当前没有已连接设备")
                         continue
-                    device_values["Pico 开发板型号"].set(
+                    device_values["board_model"].set(
                         connection.get("board_model") or "未知"
                     )
-                    device_values["Pico 屏幕色彩方案"].set(
+                    device_values["screen_color_profile"].set(
                         connection.get("screen_color_profile") or "未知"
                     )
-                    device_values["Pico 固件版本"].set(
+                    device_values["firmware_version"].set(
                         connection.get("firmware_version") or "未知"
                     )
-                    device_values["Pico 屏幕分辨率"].set(
+                    device_values["screen_resolution"].set(
                         connection.get("screen_resolution") or "未知"
                     )
                     reboot_button.configure(state=tk.NORMAL)
@@ -324,8 +357,8 @@ class WindowsTrayApplication:
                     if message_type == "log":
                         append_log(content)
                         normalized = content.strip()
-                        for label, value in device_values.items():
-                            prefix = label + "："
+                        for field_name, value in device_values.items():
+                            prefix = "Pico " + device_labels[field_name] + "："
                             if normalized.startswith(prefix):
                                 value.set(normalized[len(prefix):].strip() or "未知")
                     else:
@@ -408,6 +441,15 @@ class WindowsTrayApplication:
 
         reboot_button.configure(command=reboot_device)
 
+        def show_connected_device(connection):
+            """将已连接设备快照显示到设备管理面板。"""
+            for field_name, value in device_values.items():
+                value.set(connection.get(field_name) or "未知")
+            reboot_button.configure(state=tk.NORMAL)
+            progress.stop()
+            progress.configure(mode="determinate", maximum=100, value=100)
+            status.set("设备已连接")
+
         def perform_probe():
             """暂停常驻监控，执行单次设备探测并在结束后恢复监控。"""
             worker_process = self.worker_process
@@ -447,10 +489,10 @@ class WindowsTrayApplication:
             status.set("正在主动探测 Pico LCD 设备，请稍候……")
             progress.configure(mode="indeterminate")
             progress.start(12)
-            device_values["Pico 开发板型号"].set("探测中……")
-            device_values["Pico 屏幕色彩方案"].set("--")
-            device_values["Pico 固件版本"].set("--")
-            device_values["Pico 屏幕分辨率"].set("--")
+            device_values["board_model"].set("探测中……")
+            device_values["screen_color_profile"].set("--")
+            device_values["firmware_version"].set("--")
+            device_values["screen_resolution"].set("--")
             threading.Thread(
                 target=perform_probe,
                 name="设备主动探测",
@@ -458,7 +500,10 @@ class WindowsTrayApplication:
             ).start()
 
         probe_button.configure(command=start_probe)
-        start_probe()
+        if initial_connection.get("connected"):
+            show_connected_device(initial_connection)
+        else:
+            start_probe()
         refresh_messages()
         refresh_connection_state()
         self._center_tk_window(root)
@@ -908,22 +953,23 @@ class WindowsTrayApplication:
         ttk.Label(body, text="显示设置可即时应用，其他配置保存后会重启监控服务", style="Hint.TLabel").pack(anchor="w", pady=(2, 18))
 
         variables = {
-            "port": tk.StringVar(value=self.settings["port"]),
-            "ping_target": tk.StringVar(value=self.settings["ping_target"]),
-            "interval": tk.StringVar(value=self.settings["interval"]),
-            "reconnect_interval": tk.StringVar(value=self.settings["reconnect_interval"]),
-            "serial_probe_interval": tk.StringVar(value=self.settings["serial_probe_interval"]),
-            "screen_rotation": tk.StringVar(value=str(self.settings["screen_rotation"])),
-            "lcd_brightness": tk.IntVar(value=self.settings["lcd_brightness"]),
-            "network_unit": tk.StringVar(value=self.settings["network_unit"]),
+            "port": tk.StringVar(master=root, value=self.settings["port"]),
+            "ping_target": tk.StringVar(master=root, value=self.settings["ping_target"]),
+            "interval": tk.StringVar(master=root, value=self.settings["interval"]),
+            "reconnect_interval": tk.StringVar(master=root, value=self.settings["reconnect_interval"]),
+            "serial_probe_interval": tk.StringVar(master=root, value=self.settings["serial_probe_interval"]),
+            "screen_rotation": tk.StringVar(master=root, value=str(self.settings["screen_rotation"])),
+            "lcd_brightness": tk.IntVar(master=root, value=self.settings["lcd_brightness"]),
+            "network_unit": tk.StringVar(master=root, value=self.settings["network_unit"]),
             "lcd_style": tk.StringVar(
+                master=root,
                 value=style_label(self.settings["lcd_style"], self.settings)
             ),
-            "qbittorrent_enabled": tk.BooleanVar(value=False),
-            "qbittorrent_address": tk.StringVar(value=self.settings["qbittorrent_address"]),
-            "qbittorrent_username": tk.StringVar(value=self.settings["qbittorrent_username"]),
-            "qbittorrent_password": tk.StringVar(value=self.settings["qbittorrent_password"]),
-            "qbittorrent_interval": tk.StringVar(value=self.settings["qbittorrent_interval"]),
+            "qbittorrent_enabled": tk.BooleanVar(master=root, value=False),
+            "qbittorrent_address": tk.StringVar(master=root, value=self.settings["qbittorrent_address"]),
+            "qbittorrent_username": tk.StringVar(master=root, value=self.settings["qbittorrent_username"]),
+            "qbittorrent_password": tk.StringVar(master=root, value=self.settings["qbittorrent_password"]),
+            "qbittorrent_interval": tk.StringVar(master=root, value=self.settings["qbittorrent_interval"]),
         }
 
         def card(title):
@@ -1185,6 +1231,7 @@ class WindowsTrayApplication:
         return pystray.Menu(
             pystray.MenuItem("配置...", self._show_settings, default=True),
             pystray.MenuItem("界面样式", style_menu),
+            pystray.MenuItem("自定义屏幕", self._show_custom_style),
             pystray.MenuItem("屏幕旋转", pystray.Menu(
                 pystray.MenuItem("0°", self._set_rotation(0), checked=lambda item: self.settings["screen_rotation"] == 0, radio=True),
                 pystray.MenuItem("180°", self._set_rotation(180), checked=lambda item: self.settings["screen_rotation"] == 180, radio=True),
@@ -1199,6 +1246,24 @@ class WindowsTrayApplication:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("退出", self._exit),
         )
+
+    def _show_custom_style(self, icon=None, item=None):
+        """打开自定义屏幕弹框，并通过后台进程向 Pico 获取最新清单。"""
+        del icon, item
+        from .customStyle.dialog import show_custom_style_dialog
+        show_custom_style_dialog(self)
+
+    def request_custom_style_catalog(self):
+        """向工作进程发送自定义样式清单查询请求。"""
+        process = self.worker_process
+        if process is None or process.poll() is not None or process.stdin is None:
+            return False
+        try:
+            process.stdin.write("CUSTOM_STYLE_LIST\n")
+            process.stdin.flush()
+            return True
+        except (BrokenPipeError, OSError):
+            return False
 
     def _reload_style_catalog(self):
         """从配置文件同步 Pico 样式清单及当前选择。"""

@@ -1,6 +1,7 @@
 """验证 Windows 托盘配置的纯数据行为。"""
 
 import json
+import queue
 import tempfile
 import threading
 import unittest
@@ -121,6 +122,21 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertNotIn("--worker", command)
         self.assertEqual("--pico-info", command[-1])
         self.assertEqual("COM9", command[-2])
+
+    def test_device_connection_snapshot_is_saved_and_copied(self):
+        """确认设备连接状态可供新打开的设备管理窗口安全读取。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.device_connection_lock = threading.Lock()
+        application.current_device_connection = {"connected": False}
+        application.device_connection_messages = queue.Queue()
+        connection = {"connected": True, "board_model": "rp2040"}
+
+        application._update_device_connection(connection)
+        snapshot = application._get_device_connection()
+        snapshot["connected"] = False
+
+        self.assertTrue(application._get_device_connection()["connected"])
+        self.assertEqual(connection, application.device_connection_messages.get_nowait())
 
     def test_every_style_has_a_chinese_label(self):
         for name in STYLE_NAMES:

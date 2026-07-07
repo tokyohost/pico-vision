@@ -142,6 +142,7 @@ class MonitorService:
         self.client = PicoJsonClient(arguments.port, arguments.serial_probe_interval)
         self.stopping = threading.Event()
         self.reboot_requested = threading.Event()
+        self.custom_style_catalog_requested = threading.Event()
         self.available_styles = set(BUILTIN_LCD_STYLES)
 
     def _synchronize_style_catalog(self):
@@ -176,6 +177,24 @@ class MonitorService:
         LOGGER.info("收到托盘退出请求，将在停止监控前重启 Pico")
         self.reboot_requested.set()
         self.stopping.set()
+
+    def request_custom_style_catalog(self):
+        """安排主循环在当前串口交互结束后查询自定义样式。"""
+        self.custom_style_catalog_requested.set()
+
+    def _publish_custom_style_catalog(self):
+        """通过 Pico 指令查询自定义样式并输出给托盘进程。"""
+        self.custom_style_catalog_requested.clear()
+        try:
+            styles = self.client.request_style_catalog()
+            result = {"status": "ok", "styles": styles}
+        except (OSError, RuntimeError, serial.SerialException) as error:
+            result = {"status": "error", "message": str(error), "styles": []}
+        print(
+            "CUSTOM_STYLE_LIST_RESULT:"
+            + json.dumps(result, ensure_ascii=False, separators=(",", ":")),
+            flush=True,
+        )
 
     def apply_display_config(self, payload):
         """校验并热更新 Windows 托盘下发的显示配置。"""
@@ -227,6 +246,8 @@ class MonitorService:
                     self._synchronize_style_catalog()
                 if self.arguments.upgrade_pico:
                     return self._upgrade_pico()
+                if self.custom_style_catalog_requested.is_set():
+                    self._publish_custom_style_catalog()
                 started = time.monotonic()
                 snapshot = self._collect_snapshot()
                 collection_elapsed = time.monotonic() - started
@@ -486,6 +507,8 @@ def main():
                         )
                     except (TypeError, ValueError, json.JSONDecodeError) as error:
                         LOGGER.warning("显示设置热更新失败：%s", error)
+                elif command == "CUSTOM_STYLE_LIST":
+                    service.request_custom_style_catalog()
 
         threading.Thread(
             target=listen_for_tray_commands,

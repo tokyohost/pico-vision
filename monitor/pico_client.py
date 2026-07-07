@@ -469,6 +469,30 @@ class PicoJsonClient:
                 raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
         raise RuntimeError("设备无响应，请重新拔插设备注册")
 
+    def request_style_catalog(self, timeout=5.0):
+        """请求 Pico 重新扫描并返回自定义样式清单。"""
+        if not self.is_connected:
+            raise RuntimeError("Pico 串口尚未连接")
+        request_id = "style-list-{}".format(int(time.time() * 1000))
+        packet = self.build_command_packet("style.list", request_id=request_id)
+        self.serial.write(packet)
+        self.serial.flush()
+        deadline = time.monotonic() + max(0.1, float(timeout))
+        while time.monotonic() < deadline:
+            response = self.serial.readline().strip()
+            frame = parse_frame(response)
+            if frame and frame[0] == "COMMAND":
+                result = json.loads(frame[1].decode("utf-8"))
+                if result.get("request_id") != request_id:
+                    continue
+                if result.get("status") != "ok":
+                    raise RuntimeError(result.get("error") or "样式清单查询失败")
+                styles = (result.get("data") or {}).get("styles", [])
+                return [item for item in styles if isinstance(item, dict)]
+            if frame and frame[0] == "ERR":
+                raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
+        raise RuntimeError("等待 Pico 返回自定义样式清单超时")
+
     def close(self):
         """安全关闭串口，并恢复为未连接状态。"""
         device, self.serial = self.serial, None
