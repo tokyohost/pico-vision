@@ -139,3 +139,16 @@ jobs:
           else
             echo "未生成可选的通用 Linux tar.gz，跳过上传。"
           fi
+
+      - name: 同步 Linux 制品到文档仓库
+        env:
+          GH_TOKEN: ${{ secrets.OMNIWATCH_DOC_TOKEN }}
+          GH_REPO: tokyohost/omniwatch-doc
+        run: |
+          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes "由 ${GITHUB_REPOSITORY} 自动同步的 ${GITHUB_REF_NAME} 版本制品。" || gh release view "${GITHUB_REF_NAME}" >/dev/null
+          fi
+          gh release upload "${GITHUB_REF_NAME}" release-assets/*.deb release-assets/SHA256SUMS-linux-deb.txt --clobber
+          if compgen -G "release-assets/*.tar.gz" >/dev/null; then
+            gh release upload "${GITHUB_REF_NAME}" release-assets/*.tar.gz --clobber
+          fi
