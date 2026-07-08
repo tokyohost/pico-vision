@@ -505,7 +505,6 @@ class PicoClientTest(unittest.TestCase):
     def test_sending_uses_latest_snapshot_without_waiting_for_next_collection(self):
         """确认后台采集尚未发布新结果时，发送链路立即复用最近成功快照。"""
         service = MonitorService.__new__(MonitorService)
-        service._snapshot_condition = threading.Condition()
         service._latest_collected_snapshot = {"version": 1, "sequence": 7}
         service._latest_collection_error = None
         service.stopping = mock.Mock()
@@ -516,6 +515,24 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertEqual(snapshot["sequence"], 7)
         service._collect_snapshot.assert_not_called()
+
+    def test_initial_snapshot_is_complete_and_marks_metrics_unavailable(self):
+        """确认首次采集完成前也能立即发送结构完整的默认数据。"""
+        arguments = SimpleNamespace(
+            interval=0.5,
+            screen_rotation=0,
+            lcd_brightness=57,
+            network_unit="MB",
+            lcd_style="horizontal_disk4x",
+        )
+
+        snapshot = MonitorService._create_initial_snapshot(arguments)
+
+        self.assertIsNone(snapshot["cpu"]["percent"])
+        self.assertIsNone(snapshot["memory"]["percent"])
+        self.assertFalse(snapshot["network"]["online"])
+        self.assertEqual(len(snapshot["cpu"]["history"]), 24)
+        self.assertEqual(snapshot["display"]["collection_interval_ms"], 500)
 
     def test_development_mode_stops_reconnecting_without_pico(self):
         """确认开发模式首次连接失败后直接进入 JSON 输出循环。"""
@@ -537,6 +554,8 @@ class PicoClientTest(unittest.TestCase):
         service.client.available_ports.return_value = frozenset()
         service.client.connect.side_effect = RuntimeError("未找到 Pico")
         service._run_development_loop = mock.Mock(return_value=0)
+        service._collection_thread = mock.Mock()
+        service._collection_thread.is_alive.return_value = True
 
         result = service.run()
 
@@ -565,6 +584,8 @@ class PicoClientTest(unittest.TestCase):
         service.client.is_connected = False
         service.client.available_ports.return_value = frozenset({"COM1"})
         service.client.connect.side_effect = RuntimeError("未找到 Pico")
+        service._collection_thread = mock.Mock()
+        service._collection_thread.is_alive.return_value = True
 
         self.assertEqual(service.run(), 0)
 
@@ -604,6 +625,9 @@ class PicoClientTest(unittest.TestCase):
         service.custom_style_deletes.empty.return_value = True
         service.reboot_requested = mock.Mock()
         service.reboot_requested.is_set.return_value = False
+        service._collection_thread = mock.Mock()
+        service._collection_thread.is_alive.return_value = True
+        service._latest_collected_snapshot = {"version": 1}
 
         self.assertEqual(service.run(), 0)
 

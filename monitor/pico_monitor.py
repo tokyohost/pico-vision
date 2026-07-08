@@ -18,8 +18,10 @@ import io
 import json
 import logging
 import os
+import platform
 import queue
 import signal
+import socket
 import sys
 import threading
 import time
@@ -199,10 +201,70 @@ class MonitorService:
         self.custom_style_deletes = queue.Queue()
         self.screenshot_requested = threading.Event()
         self.available_styles = set(BUILTIN_LCD_STYLES)
-        self._snapshot_condition = threading.Condition()
-        self._latest_collected_snapshot = None
+        self._latest_collected_snapshot = self._create_initial_snapshot(arguments)
         self._latest_collection_error = None
         self._collection_thread = None
+
+    @staticmethod
+    def _create_initial_snapshot(arguments):
+        """创建连接后立即发送的完整默认快照，真实采集结果稍后原子替换。"""
+        empty_history = [0] * 24
+        return {
+            "version": 1,
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "host": socket.gethostname(),
+            "platform": platform.system(),
+            "uptime_seconds": None,
+            "cpu": {
+                "percent": None,
+                "frequency_ghz": None,
+                "temperature_c": None,
+                "history": list(empty_history),
+            },
+            "memory": {
+                "percent": None,
+                "used_bytes": None,
+                "total_bytes": None,
+                "history": list(empty_history),
+            },
+            "disk": {"percent": None, "used_bytes": None, "total_bytes": None},
+            "disks": [],
+            "physical_disks": [],
+            "gpu": None,
+            "fps": {
+                "value": None,
+                "history": list(empty_history),
+                "source": "unavailable",
+                "process_id": None,
+                "process_name": "",
+            },
+            "power": {
+                "watts": None,
+                "source": "unavailable",
+                "scope": "unavailable",
+                "history": [],
+            },
+            "network": {
+                "upload_bps": None,
+                "download_bps": None,
+                "transmit_bytes": None,
+                "receive_bytes": None,
+                "link_speed_mbps": None,
+                "upload_history": list(empty_history),
+                "download_history": list(empty_history),
+                "ping_ms": None,
+                "online": False,
+                "ip": None,
+            },
+            "ext": {},
+            "display": {
+                "rotation": arguments.screen_rotation,
+                "brightness": getattr(arguments, "lcd_brightness", 100),
+                "collection_interval_ms": max(1, round(arguments.interval * 1000)),
+                "network_unit": arguments.network_unit,
+                "style": arguments.lcd_style,
+            },
+        }
 
     def _synchronize_style_catalog(self):
         """接收 Pico 样式清单并更新 monitor 的 JSON 配置文件。"""
@@ -380,6 +442,10 @@ class MonitorService:
         # 否则内部 OVERLAPPED 事件会被置空并触发 ctypes.byref(None) 异常。
         self.stopping.set()
 
+    def close(self):
+        """释放采集器持有的原生资源及其启动的外部子进程。"""
+        self.collector.close()
+
     def run(self):
         """持续连接设备、采集指标并发送最新系统快照。"""
         LOGGER.info("监控服务启动：端口=%s，Ping=%s，发送间隔=%.1f 秒，重连间隔=%.1f 秒，屏幕旋转=%d°，网络单位=%s，LCD 样式=%s，开发模式=%s", self.arguments.port or "自动发现", self.arguments.ping_target, self.arguments.interval, self.arguments.reconnect_interval, self.arguments.screen_rotation, self.arguments.network_unit, self.arguments.lcd_style, "开启" if self.arguments.dev else "关闭")
@@ -454,10 +520,7 @@ class MonitorService:
         return 0
 
     def _start_collection_worker(self):
-        """启动独立指标采集线程，避免慢速硬件查询阻塞串口发送。"""
-        # 使用 __new__ 构造的旧测试桩没有异步采集状态，此时保留同步行为。
-        if not hasattr(self, "_snapshot_condition"):
-            return
+        """启动唯一的指标采集线程，全部可能阻塞的操作都在该线程执行。"""
         if self._collection_thread is not None and self._collection_thread.is_alive():
             return
         self._collection_thread = threading.Thread(
@@ -473,32 +536,18 @@ class MonitorService:
             started = time.monotonic()
             try:
                 snapshot = self._collect_snapshot()
-                with self._snapshot_condition:
-                    self._latest_collected_snapshot = snapshot
-                    self._latest_collection_error = None
-                    self._snapshot_condition.notify_all()
+                # CPython 的对象引用赋值具备原子性；完整构造后一次发布，发送线程无需加锁。
+                self._latest_collected_snapshot = snapshot
+                self._latest_collection_error = None
             except (OSError, RuntimeError, TypeError, ValueError, psutil.Error) as error:
                 LOGGER.exception("后台系统指标采集失败，将继续发送最近一次成功快照：%s", error)
-                with self._snapshot_condition:
-                    self._latest_collection_error = error
-                    self._snapshot_condition.notify_all()
+                self._latest_collection_error = error
             remaining = self.arguments.interval - (time.monotonic() - started)
             self.stopping.wait(max(0.0, remaining))
 
     def _snapshot_for_sending(self):
-        """返回最近成功快照；仅首次采集尚未完成时等待后台线程。"""
-        if not hasattr(self, "_snapshot_condition"):
-            return self._collect_snapshot()
-        with self._snapshot_condition:
-            while self._latest_collected_snapshot is None and not self.stopping.is_set():
-                if self._latest_collection_error is not None:
-                    error = self._latest_collection_error
-                    self._latest_collection_error = None
-                    raise RuntimeError("首次系统指标采集失败：{}".format(error)) from error
-                self._snapshot_condition.wait(timeout=0.1)
-            if self._latest_collected_snapshot is None:
-                raise RuntimeError("系统指标采集已停止，无法生成发送快照")
-            return self._latest_collected_snapshot
+        """无锁返回采集线程原子发布的最近一次完整快照。"""
+        return self._latest_collected_snapshot
 
     def _wait_for_usb_addition(self, previous_ports):
         """等待新串口插入，拔出时只更新基线而不发起 Pico 握手。"""
@@ -539,7 +588,7 @@ class MonitorService:
         """未发现 Pico 时停止串口重试，并按采集周期持续打印 JSON。"""
         while not self.stopping.is_set():
             started = time.monotonic()
-            self._print_development_snapshot()
+            self._print_development_snapshot(self._snapshot_for_sending())
             if self.arguments.once:
                 return 0
             remaining = self.arguments.interval - (time.monotonic() - started)
@@ -724,6 +773,9 @@ def main():
                 if command == "EXIT_REBOOT":
                     service.request_reboot_and_stop()
                     return
+                if command == "EXIT":
+                    service.stop()
+                    return
                 if command.startswith("DISPLAY_CONFIG:"):
                     try:
                         service.apply_display_config(
@@ -761,7 +813,10 @@ def main():
     signal.signal(signal.SIGINT, service.stop)
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, service.stop)
-    return service.run()
+    try:
+        return service.run()
+    finally:
+        service.close()
 
 
 if __name__ == "__main__":

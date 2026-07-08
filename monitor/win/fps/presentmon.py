@@ -91,12 +91,22 @@ class PresentMonBackend:
         threading.Thread(target=self._run, name="PresentMon FPS 采集", daemon=True).start()
 
     def close(self):
-        """终止子进程且不阻塞应用退出。"""
+        """终止 PresentMon 子进程，等待退出并关闭管道句柄。"""
         self.running = False
         process = self.process
         if process is not None and process.poll() is None:
             try:
                 process.terminate()
+                process.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                try:
+                    process.kill()
+                    process.wait(timeout=2)
+                except (OSError, subprocess.TimeoutExpired):
+                    LOGGER.warning("PresentMon 子进程未能按时退出：PID=%s", process.pid)
+        if process is not None and process.stdout is not None:
+            try:
+                process.stdout.close()
             except OSError:
                 pass
 
@@ -231,9 +241,15 @@ class PresentMonBackend:
             self.diagnostic_reason = "PresentMon 启动失败：{}".format(error)
             LOGGER.warning("PresentMon FPS 采集启动失败：%s", error)
         finally:
-            exit_code = self.process.poll() if self.process is not None else None
+            process = self.process
+            exit_code = process.poll() if process is not None else None
             if self.running:
                 self.diagnostic_reason = "PresentMon 意外退出，退出码={}".format(exit_code)
                 LOGGER.warning("[FPS][PresentMon] 采集进程退出，退出码=%s", exit_code)
             self.running = False
+            if process is not None and process.stdout is not None:
+                try:
+                    process.stdout.close()
+                except OSError:
+                    pass
             self.process = None

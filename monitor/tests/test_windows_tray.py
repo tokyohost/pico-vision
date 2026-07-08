@@ -340,6 +340,24 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertEqual(payload["lcd_brightness"], 35)
         application.worker_process.stdin.flush.assert_called_once_with()
 
+    def test_stop_worker_requests_graceful_exit_before_termination(self):
+        """确认托盘退出先通知工作进程释放子进程与原生资源。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        process = mock.Mock()
+        process.poll.return_value = None
+        application.worker_process = process
+
+        application._stop_worker()
+
+        process.stdin.write.assert_called_once_with("EXIT\n")
+        process.stdin.flush.assert_called_once_with()
+        process.wait.assert_called_once_with(timeout=5)
+        process.terminate.assert_not_called()
+        process.kill.assert_not_called()
+        process.stdin.close.assert_called_once_with()
+        process.stdout.close.assert_called_once_with()
+        self.assertIsNone(application.worker_process)
+
     def test_managed_arguments_are_replaced_without_losing_worker_flag(self):
         settings = dict(
             DEFAULT_SETTINGS,

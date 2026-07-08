@@ -143,14 +143,34 @@ class WindowsTrayApplication:
         threading.Thread(target=self._collect_output, name="日志收集", daemon=True).start()
 
     def _stop_worker(self):
+        """优雅停止后台监控，超时后再逐级终止并回收进程句柄。"""
         process = self.worker_process
         if process is None or process.poll() is not None:
+            self.worker_process = None
             return
         try:
-            process.terminate()
-            process.wait(timeout=3)
-        except (OSError, subprocess.TimeoutExpired):
-            process.kill()
+            if process.stdin is not None:
+                process.stdin.write("EXIT\n")
+                process.stdin.flush()
+            process.wait(timeout=5)
+        except (BrokenPipeError, OSError, subprocess.TimeoutExpired):
+            try:
+                process.terminate()
+                process.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                try:
+                    process.kill()
+                    process.wait(timeout=2)
+                except (OSError, subprocess.TimeoutExpired):
+                    LOGGER.warning("后台监控进程无法在退出期限内结束：PID=%s", process.pid)
+        finally:
+            for stream in (process.stdin, process.stdout):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
+            self.worker_process = None
 
     def _restart_worker(self):
         self._stop_worker()
