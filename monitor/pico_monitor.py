@@ -434,6 +434,14 @@ class MonitorService:
             brightness, rotation, style, network_unit,
         )
 
+    def apply_dev_config(self, payload):
+        """热更新开发模式开关，不重启 Monitor 工作进程。"""
+        enabled = payload.get("enabled")
+        if not isinstance(enabled, bool):
+            raise ValueError("开发模式开关必须为布尔值")
+        self.arguments.dev = enabled
+        LOGGER.info("开发模式已热更新：%s", "开启" if enabled else "关闭")
+
     def stop(self, signum=None, frame=None):
         """请求主循环停止，由通信线程在退出阶段统一关闭串口。"""
         del signum, frame
@@ -461,7 +469,10 @@ class MonitorService:
                     except (OSError, RuntimeError, serial.SerialException):
                         if self.arguments.dev:
                             self.client.close()
-                            return self._run_development_loop()
+                            result = self._run_development_loop()
+                            if result is not None:
+                                return result
+                            continue
                         raise
                     LOGGER.info("Pico LCD 已连接：%s", self.client.port_name)
                     self._synchronize_style_catalog()
@@ -585,15 +596,15 @@ class MonitorService:
                 pass
 
     def _run_development_loop(self):
-        """未发现 Pico 时停止串口重试，并按采集周期持续打印 JSON。"""
-        while not self.stopping.is_set():
+        """未发现 Pico 时持续打印 JSON；关闭开发模式后返回连接循环。"""
+        while not self.stopping.is_set() and self.arguments.dev:
             started = time.monotonic()
             self._print_development_snapshot(self._snapshot_for_sending())
             if self.arguments.once:
                 return 0
             remaining = self.arguments.interval - (time.monotonic() - started)
             self.stopping.wait(max(0.0, remaining))
-        return 0
+        return 0 if self.stopping.is_set() else None
 
     def _collect_snapshot(self):
         """采集系统指标并补充 Pico 显示配置。"""
@@ -776,6 +787,14 @@ def main():
                 if command == "EXIT":
                     service.stop()
                     return
+                if command.startswith("DEV_CONFIG:"):
+                    try:
+                        service.apply_dev_config(
+                            json.loads(command[len("DEV_CONFIG:"):])
+                        )
+                    except (TypeError, ValueError, json.JSONDecodeError) as error:
+                        LOGGER.warning("开发模式热更新失败：%s", error)
+                    continue
                 if command.startswith("DISPLAY_CONFIG:"):
                     try:
                         service.apply_display_config(

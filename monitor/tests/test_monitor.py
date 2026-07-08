@@ -534,6 +534,15 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual(len(snapshot["cpu"]["history"]), 24)
         self.assertEqual(snapshot["display"]["collection_interval_ms"], 500)
 
+    def test_dev_mode_can_be_hot_updated_without_restarting_service(self):
+        """确认工作进程可以直接应用托盘下发的开发模式开关。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(dev=False)
+
+        service.apply_dev_config({"enabled": True})
+
+        self.assertTrue(service.arguments.dev)
+
     def test_development_mode_stops_reconnecting_without_pico(self):
         """确认开发模式首次连接失败后直接进入 JSON 输出循环。"""
         service = MonitorService.__new__(MonitorService)

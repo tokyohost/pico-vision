@@ -384,19 +384,22 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertNotIn("--dev", disabled)
         self.assertIn("--worker", disabled)
 
-    def test_toggle_dev_mode_persists_and_restarts_worker(self):
-        """确认托盘切换开发模式后保存配置并重启后台进程。"""
+    def test_toggle_dev_mode_persists_and_hot_updates_worker(self):
+        """确认托盘切换开发模式后保存配置并热更新现有进程。"""
         application = WindowsTrayApplication.__new__(WindowsTrayApplication)
         application.settings = dict(DEFAULT_SETTINGS, dev=False)
         application.settings_store = mock.Mock()
-        application._restart_worker = mock.Mock()
+        application.worker_process = mock.Mock()
+        application.worker_process.poll.return_value = None
         icon = mock.Mock()
 
         application._toggle_dev_mode(icon, None)
 
         self.assertTrue(application.settings["dev"])
         application.settings_store.save.assert_called_once_with(application.settings)
-        application._restart_worker.assert_called_once_with()
+        command = application.worker_process.stdin.write.call_args.args[0]
+        self.assertEqual(json.loads(command.removeprefix("DEV_CONFIG:")), {"enabled": True})
+        application.worker_process.stdin.flush.assert_called_once_with()
         icon.update_menu.assert_called_once_with()
         icon.notify.assert_called_once_with("开发模式已开启", APPLICATION_NAME)
 
