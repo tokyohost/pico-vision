@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+from custom_data import custom_data_task_defaults, custom_data_task_zh_names
 from collectTask import system_task_defaults, system_task_zh_names
 from collectTask.system_tasks import system_task_aliases
 
@@ -27,7 +28,9 @@ DEFAULT_STYLE_CATALOG = [
     for name, chinese_name in STYLE_NAMES.items()
 ]
 DEFAULT_COLLECTION_TASK_INTERVALS = system_task_defaults()
+DEFAULT_COLLECTION_TASK_INTERVALS.update(custom_data_task_defaults())
 COLLECTION_TASK_ZH_NAMES = system_task_zh_names()
+COLLECTION_TASK_ZH_NAMES.update(custom_data_task_zh_names())
 DEFAULT_SETTINGS = {
     "port": "",
     "ping_target": "www.baidu.com",

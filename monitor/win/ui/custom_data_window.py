@@ -44,16 +44,20 @@ class CustomDataWindowMixin:
         status = tk.StringVar(master=root, value="目录：{}".format(manager.custom_directory))
         tk.Label(root, textvariable=status, anchor="w", padx=10, pady=8).pack(fill=tk.X)
 
-        columns = ("file", "key", "interval", "status")
+        columns = ("file", "key", "task", "zh_name", "interval", "status")
         table = ttk.Treeview(root, columns=columns, show="headings", height=10)
         table.heading("file", text="文件")
         table.heading("key", text="JSON Key")
+        table.heading("task", text="任务 Key")
+        table.heading("zh_name", text="中文名称")
         table.heading("interval", text="间隔(秒)")
         table.heading("status", text="状态")
-        table.column("file", width=280, anchor="w")
-        table.column("key", width=140, anchor="w")
+        table.column("file", width=220, anchor="w")
+        table.column("key", width=110, anchor="w")
+        table.column("task", width=160, anchor="w")
+        table.column("zh_name", width=120, anchor="w")
         table.column("interval", width=90, anchor="center")
-        table.column("status", width=220, anchor="w")
+        table.column("status", width=160, anchor="w")
         table.pack(fill=tk.BOTH, expand=True, padx=10)
 
         button_frame = tk.Frame(root, padx=10, pady=8)
@@ -89,12 +93,14 @@ class CustomDataWindowMixin:
                 item = table.insert("", tk.END, values=(
                     definition.path.name,
                     definition.key,
+                    definition.task_name,
+                    definition.zh_name,
                     "{:g}".format(definition.interval),
                     status_text,
                 ))
                 path_by_item[item] = definition.path
             for script_path, error in errors.items():
-                item = table.insert("", tk.END, values=(Path(script_path).name, "加载失败", "-", error))
+                item = table.insert("", tk.END, values=(Path(script_path).name, "加载失败", "-", "-", "-", error))
                 path_by_item[item] = Path(script_path)
             status.set("目录：{}    已加载：{}，错误：{}".format(manager.custom_directory, len(items), len(errors)))
 
@@ -109,9 +115,11 @@ class CustomDataWindowMixin:
                 return
             try:
                 definition = manager.import_script(script_path)
-                write_output("加载成功：{}\nkey={}\ninterval={:g}s".format(
+                write_output("加载成功：{}\nkey={}\ntask={}\nzh_name={}\ninterval={:g}s".format(
                     definition.path.name,
                     definition.key,
+                    definition.task_name,
+                    definition.zh_name,
                     definition.interval,
                 ))
                 refresh()

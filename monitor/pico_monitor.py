@@ -35,7 +35,10 @@ import serial
 from pico_client import PicoJsonClient, PicoRestartingError
 from pico_upgrade import PicoFirmwareUpgrader, PicoUpgradeDownloader, PicoUpgradePackage
 from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
-from custom_data import get_manager as get_custom_data_manager
+from custom_data import (
+    custom_data_task_defaults,
+    get_manager as get_custom_data_manager,
+)
 from collectTask import (
     CollectionCoordinator,
     LockFreeSnapshotStore,
@@ -244,6 +247,7 @@ def config_flag(config, environment_name, default=False):
 def parse_collection_task_intervals(value):
     """解析任务采集频率配置，并只保留已发现任务的正数频率。"""
     defaults = system_task_defaults()
+    defaults.update(custom_data_task_defaults())
     aliases = system_task_aliases()
     if not value:
         return dict(defaults)
@@ -348,7 +352,8 @@ class MonitorService:
         self._latest_collected_snapshot = self._snapshot_store.snapshot()
         self._latest_collection_error = None
         self._collection_thread = None
-        extra_collection_tasks = [("custom_extension", self._collect_extension_fragment, 1.0, "自定义扩展")]
+        self.custom_data_manager = get_custom_data_manager()
+        extra_collection_tasks = self._custom_data_collection_tasks()
         if self.qbittorrent_monitor is not None:
             extra_collection_tasks.append(("qbittorrent", self._collect_qbittorrent_fragment, 1.0, "qBittorrent"))
         self._collection_coordinator = CollectionCoordinator(
@@ -712,9 +717,25 @@ class MonitorService:
         snapshot_store = getattr(self, "_snapshot_store", None)
         return snapshot_store.snapshot() if snapshot_store is not None else self._latest_collected_snapshot
 
-    def _collect_extension_fragment(self):
-        """采集到期的自定义扩展数据并返回独立快照片段。"""
-        return {"ext": get_custom_data_manager().collect_due_data()}
+    def _custom_data_collection_tasks(self):
+        """把启动时发现的每个自定义数据脚本封装为独立采集任务。"""
+        tasks = []
+        for definition in self.custom_data_manager.task_definitions():
+            tasks.append((
+                definition.task_name,
+                self._create_custom_data_collector(definition.name),
+                definition.interval,
+                definition.zh_name,
+            ))
+        return tasks
+
+    def _create_custom_data_collector(self, name):
+        """创建指定自定义数据脚本的采集回调。"""
+        def collect():
+            """执行一个自定义数据脚本并返回 ext 子字段片段。"""
+            return {"ext": self.custom_data_manager.collect_task_data(name)}
+
+        return collect
 
     def _collect_qbittorrent_fragment(self):
         """读取 qBittorrent 后台采样结果并返回独立快照片段。"""
@@ -725,6 +746,10 @@ class MonitorService:
         fragment = dict(fragment)
         if "disks" in fragment:
             self._apply_disk_health_test(fragment)
+        if "ext" in fragment:
+            ext = dict(self._snapshot_store.snapshot().get("ext") or {})
+            ext.update(fragment["ext"])
+            fragment["ext"] = ext
         fragment["display"] = {
             "rotation": self.arguments.screen_rotation,
             "brightness": getattr(self.arguments, "lcd_brightness", 100),
@@ -794,7 +819,10 @@ class MonitorService:
         self._apply_disk_health_test(snapshot)
         disk_test_elapsed = time.monotonic() - stage_started
         stage_started = time.monotonic()
-        snapshot["ext"] = get_custom_data_manager().collect_due_data()
+        custom_ext = {}
+        for definition in self.custom_data_manager.task_definitions():
+            custom_ext.update(self.custom_data_manager.collect_task_data(definition.name))
+        snapshot["ext"] = custom_ext
         custom_elapsed = time.monotonic() - stage_started
         snapshot["display"] = {
             "rotation": self.arguments.screen_rotation,
