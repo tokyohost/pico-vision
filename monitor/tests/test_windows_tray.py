@@ -1,6 +1,7 @@
 """验证 Windows 托盘配置的纯数据行为。"""
 
 import json
+import logging
 import queue
 import tempfile
 import threading
@@ -19,6 +20,7 @@ from windows_tray import (
     style_names,
 )
 from win.tray import APPLICATION_NAME
+from win.worker_controller import MAXIMUM_LOG_SIZE, WorkerControllerMixin
 from style_validator import ValidatedStyle
 
 
@@ -34,6 +36,11 @@ class WindowsTraySettingsTest(unittest.TestCase):
         application = WindowsTrayApplication.__new__(WindowsTrayApplication)
         application.data_directory = data_directory
         application.log_path = data_directory / "pico-monitor.log"
+        application.settings = dict(
+            DEFAULT_SETTINGS,
+            lcd_brightness=66,
+            qbittorrent_password="不能导出的密码",
+        )
         return application
 
     def test_recent_log_export_is_limited_to_one_megabyte(self):
@@ -50,6 +57,56 @@ class WindowsTraySettingsTest(unittest.TestCase):
         application.log_path.write_bytes("甲乙丙".encode("utf-8"))
 
         self.assertEqual("乙丙".encode("utf-8"), application._read_recent_log(7))
+
+    def test_runtime_log_keeps_only_latest_fifteen_megabytes(self):
+        """确认运行日志超过十五兆字节后仅保留最新内容。"""
+        log_path = Path(self.temporary_directory.name) / "pico-monitor.log"
+        latest_content = b"b" * MAXIMUM_LOG_SIZE
+        log_path.write_bytes(b"old" + latest_content)
+
+        with log_path.open("r+b") as log_file:
+            log_file.seek(0, 2)
+            WorkerControllerMixin._truncate_log_file(log_file)
+
+        self.assertEqual(MAXIMUM_LOG_SIZE, log_path.stat().st_size)
+        self.assertEqual(latest_content, log_path.read_bytes())
+
+    def test_runtime_log_truncation_keeps_complete_chinese_characters(self):
+        """确认运行日志截断后不会留下不完整的中文 UTF-8 字符。"""
+        log_path = Path(self.temporary_directory.name) / "pico-monitor.log"
+        log_path.write_bytes("甲乙丙".encode("utf-8"))
+
+        with log_path.open("r+b") as log_file:
+            log_file.seek(0, 2)
+            WorkerControllerMixin._truncate_log_file(log_file, 7)
+
+        self.assertEqual("乙丙", log_path.read_text(encoding="utf-8"))
+
+    def test_error_log_is_created_only_for_error_level_messages(self):
+        """确认错误消息会自动写入以 error.log 结尾的独立日志文件。"""
+        application = self._create_log_application()
+        error_log_path = application._configure_error_logging()
+        logger = logging.getLogger("pico-monitor.test-error-log")
+
+        def remove_error_handler():
+            """关闭测试添加的错误处理器，避免 Windows 持有临时文件。"""
+            root_logger = logging.getLogger()
+            for handler in list(root_logger.handlers):
+                if getattr(handler, "baseFilename", None) == str(error_log_path.resolve()):
+                    root_logger.removeHandler(handler)
+                    handler.close()
+
+        self.addCleanup(remove_error_handler)
+
+        logger.warning("普通警告")
+        logger.error("测试错误")
+        for handler in logging.getLogger().handlers:
+            handler.flush()
+
+        self.assertTrue(error_log_path.name.endswith("error.log"))
+        content = error_log_path.read_text(encoding="utf-8")
+        self.assertIn("测试错误", content)
+        self.assertNotIn("普通警告", content)
 
     @mock.patch("win.tray.WindowsTrayApplication._show_copyable_error_dialog")
     @mock.patch("win.tray.WindowsTrayApplication._configure_tk_runtime")
@@ -116,7 +173,12 @@ class WindowsTraySettingsTest(unittest.TestCase):
 
         exported_files = list((application.data_directory / "exports").glob("*.log"))
         self.assertEqual(1, len(exported_files))
-        self.assertEqual("测试日志", exported_files[0].read_text(encoding="utf-8"))
+        exported_text = exported_files[0].read_text(encoding="utf-8")
+        self.assertTrue(exported_text.startswith("===== OmniWatch 配置信息 ====="))
+        self.assertIn('"lcd_brightness": 66', exported_text)
+        self.assertIn('"qbittorrent_password": "******（已配置）"', exported_text)
+        self.assertNotIn("不能导出的密码", exported_text)
+        self.assertTrue(exported_text.endswith("===== 运行日志 =====\n测试日志"))
         popen.assert_called_once_with(
             ["explorer.exe", "/select,", str(exported_files[0])],
             creationflags=0x08000000,
@@ -166,6 +228,18 @@ class WindowsTraySettingsTest(unittest.TestCase):
         thread_class.assert_called_once()
         thread_class.return_value.start.assert_called_once_with()
         self.assertTrue(application.about_window_open)
+
+    @mock.patch("win.ui.about_window.subprocess.Popen")
+    def test_about_window_can_open_log_directory(self, popen):
+        """确认关于应用窗口可以使用资源管理器打开日志目录。"""
+        application = self._create_log_application()
+
+        self.assertTrue(application._open_log_directory())
+
+        popen.assert_called_once_with(
+            ["explorer.exe", str(application.data_directory)],
+            creationflags=0x08000000,
+        )
 
     @mock.patch("PIL.ImageTk.PhotoImage")
     @mock.patch("PIL.Image.open")
@@ -454,6 +528,20 @@ class WindowsTraySettingsTest(unittest.TestCase):
             icon,
             "https://api.github.com/repos/tokyohost/omniwatch-doc/releases/latest",
         )
+
+    @mock.patch("tkinter.messagebox.askyesno", return_value=False)
+    @mock.patch("tkinter.Tk")
+    def test_application_update_requires_user_confirmation(self, tk_class, ask_yes_no):
+        """确认托盘检查到新版本后会展示更新说明并等待用户确认。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application._configure_tk_runtime = mock.Mock()
+        application._set_tk_window_icon = mock.Mock()
+
+        confirmed = application._confirm_application_update("2.0.0", "修复设备连接问题")
+
+        self.assertFalse(confirmed)
+        self.assertIn("修复设备连接问题", ask_yes_no.call_args.args[1])
+        tk_class.return_value.destroy.assert_called_once_with()
 
     def test_empty_update_address_uses_default(self):
         """确认更新地址留空时使用正式构建内置的默认地址。"""

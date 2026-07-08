@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import tempfile
 import urllib.request
 from pathlib import Path
@@ -23,8 +24,8 @@ class WindowsReleaseUpdater:
             return ""
         return "https://api.github.com/repos/{}/releases/latest".format(self.repository)
 
-    def latest_release(self, update_url=None):
-        """读取最新发布元数据，并返回规范化版本与资源清单。"""
+    def latest_release(self, update_url=None, include_notes=False):
+        """读取最新发布元数据，并按需返回版本、资源清单及更新说明。"""
         url = str(update_url or self.default_update_url()).strip()
         if not url:
             raise RuntimeError("未配置更新地址")
@@ -32,11 +33,33 @@ class WindowsReleaseUpdater:
         version = str(release.get("tag_name") or "").lstrip("v")
         if not version:
             raise RuntimeError("更新元数据缺少版本标签")
-        return version, release.get("assets") or []
+        assets = release.get("assets") or []
+        if include_notes:
+            return version, assets, str(release.get("body") or "").strip()
+        return version, assets
 
     def update_available(self, latest_version):
         """判断最新 Release 是否与当前版本不同。"""
         return str(latest_version) != self.current_version
+
+    @staticmethod
+    def firmware_update_available(current_version, latest_version):
+        """按数字版本号判断 Release 固件是否比设备当前固件更新。"""
+        def version_key(version):
+            """把常见点分版本转换为可比较的数字元组。"""
+            matched = re.match(r"^v?(\d+(?:\.\d+)*)", str(version or "").strip())
+            if matched is None:
+                return None
+            return tuple(int(part) for part in matched.group(1).split("."))
+
+        current_key = version_key(current_version)
+        latest_key = version_key(latest_version)
+        if current_key is None or latest_key is None:
+            return str(current_version or "").strip() != str(latest_version or "").strip()
+        length = max(len(current_key), len(latest_key))
+        current_key += (0,) * (length - len(current_key))
+        latest_key += (0,) * (length - len(latest_key))
+        return latest_key > current_key
 
     def select_monitor_asset(self, assets, version):
         """按当前 Python 进程位数和发布版本选择 Windows Monitor 安装包。"""

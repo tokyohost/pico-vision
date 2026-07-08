@@ -35,6 +35,7 @@ def _run_custom_style_dialog(application):
     from tkinter import filedialog, messagebox, scrolledtext, ttk
 
     root = tk.Tk()
+    root.withdraw()
     root.title("自定义屏幕")
     root.geometry("760x680")
     root.minsize(680, 560)
@@ -267,4 +268,5 @@ def _run_custom_style_dialog(application):
     root.after(100, poll_upload_result)
     root.after(100, poll_upload_logs)
     root.after(100, poll_delete_result)
+    application._show_centered_tk_window(root)
     root.mainloop()

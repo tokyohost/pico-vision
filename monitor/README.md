@@ -26,6 +26,7 @@ CPU 数据通过顶层 `cpu` 对象发送，其中 `frequency_ghz` 是当前 GHz
 - 设备拔插、休眠唤醒或通信失败后自动重连。
 - 完整记录握手、JSON 原文、数据块数量、Pico 响应、异常和超时。
 - Windows 单文件 EXE、托盘运行、日志查看和当前用户自启动。
+- 自定义数据支持目录或 ZIP 插件包、插件独立虚拟环境、第三方依赖安装和超时子进程隔离。
 - Debian/Ubuntu DEB、systemd 守护、异常自动重启和开机启动。
 - 全部源码采用无 BOM UTF-8，类和方法包含规范中文注释。
 
@@ -86,6 +87,10 @@ build-exe.bat
 安装包和生成的 Windows EXE 清单均要求管理员权限，启动时系统会显示 UAC 提权确认窗口；用户拒绝提权时程序不会运行。
 
 最终发布文件为 `dist\OmniWatch-windows-x64-setup-v<版本>.exe`，`dist\pico-monitor.exe` 仅作为安装包构建的中间产物。安装完成后从开始菜单或桌面快捷方式启动，程序会驻留系统托盘，运行日志位于 `%LOCALAPPDATA%\PicoMonitor\pico-monitor.log`。右键托盘图标选择“日志导出”，可导出最近 1 MB 日志并打开导出文件目录；勾选“Dev 模式”会保存配置并重启后台监控，使开发模式立即生效。选择“检查更新”可在弹窗中确认或修改更新地址，程序会先更新 Pico 固件，再运行 Monitor 安装包并自动重启。
+
+构建脚本会从 Python 官方 NuGet 源下载固定版本的便携 Runtime，生成 `dist\plugin-runtime` 并一同写入安装包。这个 Runtime 只负责为自定义数据插件创建独立虚拟环境，不参与 Monitor 主程序执行。构建机需要能够访问 `www.nuget.org`。
+
+自定义数据只接受包含 `plugin.json` 的标准插件目录或 ZIP 插件包，不再扫描、导入或校验旧版单文件 `.py`。首次创建用户数据目录时会生成 `custom_data_plugin_template` 目录模板，该目录仅供复制开发，不会作为已安装插件运行。
 
 日志使用 `[Monitor -> Pico]` 和 `[Pico -> Monitor]` 标识通信方向。Linux 服务可通过 `journalctl -u pico-monitor -f` 实时查看相同内容。
 

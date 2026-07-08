@@ -43,6 +43,7 @@ class LogWindowMixin:
         from tkinter import messagebox, ttk
 
         root = tk.Tk()
+        root.withdraw()
         root.title("系统监控日志")
         root.geometry("900x600")
         root.minsize(620, 380)
@@ -115,5 +116,5 @@ class LogWindowMixin:
         ttk.Button(action_frame, text="复制全部", command=copy_all).pack(side=tk.LEFT)
         ttk.Button(action_frame, text="导出日志", command=export_log).pack(side=tk.RIGHT)
         refresh_log()
-        self._center_tk_window(root)
+        self._show_centered_tk_window(root)
         root.mainloop()

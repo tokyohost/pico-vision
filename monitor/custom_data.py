@@ -1,72 +1,85 @@
 #!/usr/bin/env python3
-"""管理 monitor 自定义数据脚本的加载、校验、执行和结果缓存。"""
+"""管理 Monitor 自定义数据插件的导入、依赖环境、执行和结果缓存。"""
 
-import importlib.util
+import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import threading
 import time
 import traceback
+import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 CUSTOM_DATA_DIRECTORY_NAME = "customData"
-CUSTOM_DATA_TEMPLATE_NAME = "custom_data_template.py"
+CUSTOM_DATA_ENVIRONMENT_DIRECTORY_NAME = "pluginEnvs"
+CUSTOM_DATA_MANIFEST_NAME = "plugin.json"
+CUSTOM_DATA_REQUIREMENTS_NAME = "requirements.txt"
+CUSTOM_DATA_TEMPLATE_DIRECTORY_NAME = "custom_data_plugin_template"
 CUSTOM_DATA_KEY_PATTERN = r"^[A-Za-z_][A-Za-z0-9_]{0,63}$"
 CUSTOM_DATA_TASK_PREFIX = "custom_data."
 DEFAULT_SCRIPT_TIMEOUT_SECONDS = 10.0
+PLUGIN_PROTOCOL_VERSION = 1
 
-TEMPLATE_CONTENT = '''#!/usr/bin/env python3
-"""自定义数据采集脚本模板。"""
+TEMPLATE_MANIFEST_CONTENT = '''{
+  "protocol": 1,
+  "key": "my_data",
+  "name": "my_data",
+  "zh_name": "我的数据",
+  "interval": 5,
+  "entry": "main.py"
+}
+'''
+
+TEMPLATE_SCRIPT_CONTENT = '''#!/usr/bin/env python3
+"""自定义数据插件入口模板。"""
 
 import datetime as dt
 
 
-# JSON 中 ext 节点下使用的字段名，必须在所有自定义脚本中唯一。
-CUSTOM_DATA_KEY = "my_data"
-
-# 采集任务英文标识，用于 collection_tasks.intervals 配置，必须在所有自定义脚本中唯一。
-CUSTOM_DATA_NAME = "my_data"
-
-# 采集任务中文名称，用于 Windows 配置页和日志展示。
-CUSTOM_DATA_ZH_NAME = "我的数据"
-
-# monitor 调用 collect 的间隔，单位为秒，必须大于 0。
-CUSTOM_DATA_INTERVAL = 5
-
-
 def collect():
-    """采集用户自定义数据并返回可 JSON 序列化的对象。"""
+    """采集自定义数据并返回可进行 JSON 序列化的对象。"""
     return {
         "time": dt.datetime.now().isoformat(timespec="seconds"),
         "value": 0,
     }
 '''
 
-
 @dataclass(frozen=True)
 class CustomDataDefinition:
-    """保存已通过校验的自定义数据脚本定义。"""
+    """保存已通过校验的自定义数据插件定义。"""
 
     path: Path
+    plugin_directory: Path
     key: str
     name: str
     zh_name: str
     interval: float
     modified_time: float
+    requirements_path: Path = None
+    environment_directory: Path = None
 
     @property
     def task_name(self):
         """返回调度器使用的完整自定义数据任务标识。"""
         return CUSTOM_DATA_TASK_PREFIX + self.name
 
+    @property
+    def has_dependencies(self):
+        """返回插件是否声明了需要安装的第三方依赖。"""
+        if not self.requirements_path or not self.requirements_path.is_file():
+            return False
+        lines = self.requirements_path.read_text(encoding="utf-8-sig").splitlines()
+        return any(line.strip() and not line.lstrip().startswith("#") for line in lines)
+
 
 @dataclass
 class CustomDataState:
-    """保存单个自定义数据脚本的运行状态和最近结果。"""
+    """保存单个自定义数据插件的运行状态和最近结果。"""
 
     definition: CustomDataDefinition
     last_run_time: float = 0.0
@@ -75,136 +88,233 @@ class CustomDataState:
 
 
 class CustomDataError(Exception):
-    """表示自定义数据脚本校验或执行失败。"""
+    """表示自定义数据插件校验、安装或执行失败。"""
+
+
+def get_data_root():
+    """返回 Monitor 当前用户数据根目录。"""
+    if sys.platform == "win32" and os.environ.get("LOCALAPPDATA"):
+        return Path(os.environ["LOCALAPPDATA"]) / "PicoMonitor"
+    return Path.home() / "PicoMonitor"
 
 
 def get_custom_data_directory():
-    """返回自定义数据脚本目录，并在首次使用时自动创建目录和模板。"""
-    data_root = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "PicoMonitor"
-    custom_directory = data_root / CUSTOM_DATA_DIRECTORY_NAME
+    """返回插件目录，并在首次使用时创建标准目录插件模板。"""
+    custom_directory = get_data_root() / CUSTOM_DATA_DIRECTORY_NAME
     custom_directory.mkdir(parents=True, exist_ok=True)
-    template_path = custom_directory / CUSTOM_DATA_TEMPLATE_NAME
-    if not template_path.exists():
-        template_path.write_text(TEMPLATE_CONTENT, encoding="utf-8", newline="\n")
+    _create_plugin_template(custom_directory)
     return custom_directory
 
 
-def _load_module_from_path(script_path):
-    """从指定 py 文件路径加载一个独立模块实例。"""
-    module_name = f"pico_custom_data_{abs(hash(script_path))}_{time.time_ns()}"
-    specification = importlib.util.spec_from_file_location(module_name, script_path)
-    if specification is None or specification.loader is None:
-        raise CustomDataError("无法加载脚本模块")
-    module = importlib.util.module_from_spec(specification)
-    sys.modules[module_name] = module
-    try:
-        specification.loader.exec_module(module)
-    finally:
-        sys.modules.pop(module_name, None)
-    return module
+def _create_plugin_template(custom_directory):
+    """创建不会参与扫描的标准目录插件模板，并保留用户已经修改的文件。"""
+    template_directory = Path(custom_directory) / CUSTOM_DATA_TEMPLATE_DIRECTORY_NAME
+    template_directory.mkdir(parents=True, exist_ok=True)
+    template_files = {
+        CUSTOM_DATA_MANIFEST_NAME: TEMPLATE_MANIFEST_CONTENT,
+        "main.py": TEMPLATE_SCRIPT_CONTENT,
+        CUSTOM_DATA_REQUIREMENTS_NAME: "# 在此按行填写插件依赖，例如 requests==2.32.3。\n",
+    }
+    for filename, content in template_files.items():
+        target = template_directory / filename
+        if not target.exists():
+            target.write_text(content, encoding="utf-8", newline="\n")
 
 
-def _validate_json_serializable(value):
-    """校验脚本返回值是否可以转换为 JSON。"""
-    try:
-        json.dumps(value, ensure_ascii=False)
-    except (TypeError, ValueError) as error:
-        raise CustomDataError(f"collect 返回值不是合法 JSON 数据：{error}") from error
+def get_environment_root():
+    """返回保存插件独立虚拟环境的根目录。"""
+    environment_root = get_data_root() / CUSTOM_DATA_ENVIRONMENT_DIRECTORY_NAME
+    environment_root.mkdir(parents=True, exist_ok=True)
+    return environment_root
 
 
-def validate_script(script_path, existing_keys=None, existing_names=None):
-    """校验自定义数据脚本格式、任务名称、key 唯一性和返回值类型。"""
+def get_runtime_python():
+    """返回用于创建和运行插件环境的完整 Python 解释器。"""
+    configured = os.environ.get("PICO_MONITOR_PLUGIN_PYTHON")
+    if configured:
+        return Path(configured)
+    if sys.platform == "win32":
+        executable_directory = Path(sys.executable).resolve().parent
+        for bundled in (
+            executable_directory / "plugin-runtime" / "python.exe",
+            executable_directory / "plugin-runtime" / "Scripts" / "python.exe",
+        ):
+            if bundled.is_file():
+                return bundled
+    return Path(sys.executable).resolve()
+
+
+def _environment_python(environment_directory):
+    """返回指定虚拟环境中的 Python 解释器路径。"""
+    if sys.platform == "win32":
+        return Path(environment_directory) / "Scripts" / "python.exe"
+    return Path(environment_directory) / "bin" / "python"
+
+
+def _runner_path():
+    """返回插件子进程入口脚本路径，并兼容 PyInstaller 数据目录。"""
+    bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return bundle_root / "custom_data_runner.py"
+
+
+def _validate_identifier(value, field_name):
+    """校验插件英文标识并返回原值。"""
     import re
 
-    script_path = Path(script_path).resolve()
-    if script_path.suffix.lower() != ".py":
-        raise CustomDataError("只能加载 .py 文件")
+    if not isinstance(value, str) or not value:
+        raise CustomDataError("必须定义非空字符串 {}".format(field_name))
+    if re.match(CUSTOM_DATA_KEY_PATTERN, value) is None:
+        raise CustomDataError("{} 只能包含字母、数字和下划线，且不能以数字开头".format(field_name))
+    return value
+
+
+def _load_definition(plugin_path, environment_root):
+    """从插件目录读取并校验插件定义。"""
+    plugin_path = Path(plugin_path).resolve()
+    if not plugin_path.is_dir():
+        raise CustomDataError("自定义数据插件必须是包含 plugin.json 的目录")
+    manifest_path = plugin_path / CUSTOM_DATA_MANIFEST_NAME
+    try:
+        values = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, UnicodeError) as error:
+        raise CustomDataError("plugin.json 读取失败：{}".format(error)) from error
+    if values.get("protocol", PLUGIN_PROTOCOL_VERSION) != PLUGIN_PROTOCOL_VERSION:
+        raise CustomDataError("plugin.json protocol 版本不受支持")
+    entry = values.get("entry", "main.py")
+    if not isinstance(entry, str) or Path(entry).name != entry or not entry.lower().endswith(".py"):
+        raise CustomDataError("plugin.json entry 必须是插件根目录内的 py 文件名")
+    script_path = plugin_path / entry
     if not script_path.is_file():
-        raise CustomDataError("脚本文件不存在")
-
-    module = _load_module_from_path(script_path)
-    key = getattr(module, "CUSTOM_DATA_KEY", None)
-    if not isinstance(key, str) or not key:
-        raise CustomDataError("必须定义非空字符串 CUSTOM_DATA_KEY")
-    if re.match(CUSTOM_DATA_KEY_PATTERN, key) is None:
-        raise CustomDataError("CUSTOM_DATA_KEY 只能包含字母、数字和下划线，且不能以数字开头")
-    if existing_keys and key in existing_keys:
-        raise CustomDataError(f"CUSTOM_DATA_KEY 重复：{key}")
-
-    name = getattr(module, "CUSTOM_DATA_NAME", key)
-    if not isinstance(name, str) or not name:
-        raise CustomDataError("必须定义非空字符串 CUSTOM_DATA_NAME")
-    if re.match(CUSTOM_DATA_KEY_PATTERN, name) is None:
-        raise CustomDataError("CUSTOM_DATA_NAME 只能包含字母、数字和下划线，且不能以数字开头")
-    if existing_names and name in existing_names:
-        raise CustomDataError(f"CUSTOM_DATA_NAME 重复：{name}")
-
-    zh_name = getattr(module, "CUSTOM_DATA_ZH_NAME", None)
+        raise CustomDataError("插件入口文件不存在：{}".format(entry))
+    plugin_directory = plugin_path
+    requirements_path = plugin_path / CUSTOM_DATA_REQUIREMENTS_NAME
+    key = _validate_identifier(values.get("CUSTOM_DATA_KEY", values.get("key")), "CUSTOM_DATA_KEY")
+    name = _validate_identifier(values.get("CUSTOM_DATA_NAME", values.get("name", key)), "CUSTOM_DATA_NAME")
+    zh_name = values.get("CUSTOM_DATA_ZH_NAME", values.get("zh_name", name))
     if not isinstance(zh_name, str) or not zh_name.strip():
         zh_name = name
-    zh_name = zh_name.strip()
-
-    interval = getattr(module, "CUSTOM_DATA_INTERVAL", None)
-    if not isinstance(interval, (int, float)) or interval <= 0:
+    interval = values.get("CUSTOM_DATA_INTERVAL", values.get("interval"))
+    if not isinstance(interval, (int, float)) or isinstance(interval, bool) or interval <= 0:
         raise CustomDataError("必须定义大于 0 的 CUSTOM_DATA_INTERVAL")
-    if not callable(getattr(module, "collect", None)):
-        raise CustomDataError("必须定义 collect() 方法")
-
-    result = module.collect()
-    _validate_json_serializable(result)
+    tracked_paths = [script_path, plugin_directory, manifest_path]
+    if requirements_path.is_file():
+        tracked_paths.append(requirements_path)
+    modified_time = max(path.stat().st_mtime for path in tracked_paths)
     return CustomDataDefinition(
         path=script_path,
+        plugin_directory=plugin_directory,
         key=key,
         name=name,
-        zh_name=zh_name,
+        zh_name=zh_name.strip(),
         interval=float(interval),
-        modified_time=script_path.stat().st_mtime,
+        modified_time=modified_time,
+        requirements_path=requirements_path,
+        environment_directory=Path(environment_root) / name,
     )
 
 
-def run_script(definition):
-    """执行指定自定义数据脚本并返回 collect 的 JSON 数据。"""
-    module = _load_module_from_path(definition.path)
-    collect = getattr(module, "collect", None)
-    if not callable(collect):
-        raise CustomDataError("collect() 方法不存在")
-    result = collect()
-    _validate_json_serializable(result)
-    return result
+def _validate_uniqueness(definition, existing_keys=None, existing_names=None):
+    """校验插件数据 key 和任务名是否与现有插件重复。"""
+    if existing_keys and definition.key in existing_keys:
+        raise CustomDataError("CUSTOM_DATA_KEY 重复：{}".format(definition.key))
+    if existing_names and definition.name in existing_names:
+        raise CustomDataError("CUSTOM_DATA_NAME 重复：{}".format(definition.name))
+
+
+def _safe_extract_zip(archive_path, target_directory):
+    """安全解压插件 ZIP，拒绝绝对路径、路径穿越和符号链接。"""
+    with zipfile.ZipFile(archive_path) as archive:
+        members = archive.infolist()
+        if len(members) > 2000 or sum(member.file_size for member in members) > 50 * 1024 * 1024:
+            raise CustomDataError("ZIP 插件包解压后不能超过 50 MB 或 2000 个文件")
+        for member in members:
+            path = PurePosixPath(member.filename.replace("\\", "/"))
+            if path.is_absolute() or ".." in path.parts:
+                raise CustomDataError("ZIP 包包含不安全路径：{}".format(member.filename))
+            if (member.external_attr >> 16) & 0o170000 == 0o120000:
+                raise CustomDataError("ZIP 包不能包含符号链接")
+        archive.extractall(target_directory)
+
+
+def _locate_manifest_root(extracted_directory):
+    """在解压目录中定位唯一的插件清单根目录。"""
+    manifests = list(Path(extracted_directory).rglob(CUSTOM_DATA_MANIFEST_NAME))
+    if len(manifests) != 1:
+        raise CustomDataError("ZIP 插件包必须且只能包含一个 plugin.json")
+    return manifests[0].parent
+
+
+def run_script(definition, timeout=DEFAULT_SCRIPT_TIMEOUT_SECONDS):
+    """在插件独立虚拟环境的子进程中执行 collect 并返回 JSON 数据。"""
+    python_path = _environment_python(definition.environment_directory)
+    if not python_path.is_file():
+        raise CustomDataError("插件环境尚未安装，请先在自定义数据窗口安装依赖")
+    command = [str(python_path), str(_runner_path()), str(definition.path)]
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(definition.plugin_directory),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise CustomDataError("collect 执行超过 {:g} 秒，已终止子进程".format(timeout)) from error
+    try:
+        envelope = json.loads(completed.stdout)
+    except ValueError as error:
+        if completed.returncode != 0:
+            detail = completed.stderr.strip() or completed.stdout.strip() or "未知错误"
+            raise CustomDataError("插件子进程执行失败：{}".format(detail)) from error
+        raise CustomDataError("插件子进程未返回合法 JSON：{}".format(completed.stdout.strip())) from error
+    if not envelope.get("ok"):
+        raise CustomDataError(envelope.get("error", "插件执行失败"))
+    if completed.returncode != 0:
+        raise CustomDataError("插件子进程异常退出，退出码：{}".format(completed.returncode))
+    return envelope.get("data")
 
 
 class CustomDataManager:
-    """协调自定义数据脚本扫描、去重、按间隔执行和结果读取。"""
+    """协调插件扫描、导入、独立环境、子进程执行和结果读取。"""
 
-    def __init__(self, custom_directory=None):
-        """初始化自定义数据目录、脚本状态表和线程锁。"""
+    def __init__(self, custom_directory=None, environment_root=None):
+        """初始化插件目录、虚拟环境根目录、状态表和线程锁。"""
         self.custom_directory = Path(custom_directory) if custom_directory else get_custom_data_directory()
+        self.custom_directory.mkdir(parents=True, exist_ok=True)
+        self.environment_root = Path(environment_root) if environment_root else get_environment_root()
+        self.environment_root.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
         self.states = {}
         self.load_errors = {}
         self.last_scan_time = 0.0
         self.reload_scripts()
 
+    def _plugin_candidates(self):
+        """返回目录中包含 plugin.json 的插件目录候选项。"""
+        return sorted(
+            path for path in self.custom_directory.iterdir()
+            if path.is_dir()
+            and path.name != CUSTOM_DATA_TEMPLATE_DIRECTORY_NAME
+            and (path / CUSTOM_DATA_MANIFEST_NAME).is_file()
+        )
+
     def reload_scripts(self):
-        """重新扫描目录下所有 py 文件并校验脚本 key 是否重复。"""
+        """重新扫描所有插件并校验数据 key 与任务名唯一性。"""
         with self.lock:
             definitions = {}
-            names = set()
+            keys = set()
             errors = {}
-            for script_path in sorted(self.custom_directory.glob("*.py")):
-                if script_path.name == CUSTOM_DATA_TEMPLATE_NAME:
-                    continue
+            for plugin_path in self._plugin_candidates():
                 try:
-                    definition = validate_script(
-                        script_path,
-                        existing_keys={item.key for item in definitions.values()},
-                        existing_names=names,
-                    )
+                    definition = _load_definition(plugin_path, self.environment_root)
+                    _validate_uniqueness(definition, keys, definitions)
                     definitions[definition.name] = definition
-                    names.add(definition.name)
+                    keys.add(definition.key)
                 except Exception as error:
-                    errors[str(script_path)] = traceback.format_exception_only(type(error), error)[-1].strip()
-
+                    errors[str(plugin_path)] = traceback.format_exception_only(type(error), error)[-1].strip()
             old_states = self.states
             self.states = {}
             for name, definition in definitions.items():
@@ -218,19 +328,103 @@ class CustomDataManager:
             self.last_scan_time = time.monotonic()
 
     def reload_if_changed(self):
-        """检测脚本文件列表或修改时间变化，并在变化时自动重载。"""
+        """检测插件入口、清单或目录列表变化，并在变化时自动重载。"""
         with self.lock:
-            paths = {state.definition.path: state.definition.modified_time for state in self.states.values()}
-            current_paths = {
-                path.resolve(): path.stat().st_mtime
-                for path in self.custom_directory.glob("*.py")
-                if path.name != CUSTOM_DATA_TEMPLATE_NAME
-            }
-            if paths != current_paths:
+            known = {(state.definition.path, state.definition.modified_time) for state in self.states.values()}
+            current = set()
+            for candidate in self._plugin_candidates():
+                try:
+                    definition = _load_definition(candidate, self.environment_root)
+                    current.add((definition.path, definition.modified_time))
+                except Exception:
+                    self.reload_scripts()
+                    return
+            if known != current:
                 self.reload_scripts()
 
+    def environment_status(self, definition):
+        """返回插件独立环境和依赖的中文状态。"""
+        python_path = _environment_python(definition.environment_directory)
+        if not python_path.is_file():
+            return "环境未安装"
+        marker = definition.environment_directory / ".dependencies-ready"
+        if definition.has_dependencies and (
+            not marker.is_file() or marker.read_text(encoding="utf-8", errors="replace").strip() != self._requirements_digest(definition)
+        ):
+            return "依赖未安装"
+        return "环境就绪"
+
+    def _requirements_digest(self, definition):
+        """返回当前依赖声明的 SHA-256 摘要。"""
+        if not definition.has_dependencies:
+            return "无第三方依赖"
+        return hashlib.sha256(definition.requirements_path.read_bytes()).hexdigest()
+
+    def install_dependencies(self, name, progress_callback=None):
+        """创建插件独立虚拟环境，并安装 requirements.txt 中的依赖。"""
+        with self.lock:
+            state = self.states.get(name)
+            if state is None:
+                raise CustomDataError("插件不存在或尚未加载")
+            definition = state.definition
+        runtime_python = get_runtime_python()
+        if not runtime_python.is_file():
+            raise CustomDataError("未找到插件 Python Runtime：{}".format(runtime_python))
+        environment_python = _environment_python(definition.environment_directory)
+        if not environment_python.is_file():
+            if progress_callback:
+                progress_callback("正在创建插件独立虚拟环境：{}".format(definition.environment_directory))
+            self._run_install_command(
+                [str(runtime_python), "-m", "venv", str(definition.environment_directory)],
+                progress_callback,
+            )
+            if progress_callback:
+                progress_callback("独立虚拟环境创建完成。")
+        elif progress_callback:
+            progress_callback("检测到已有独立虚拟环境，将继续检查依赖。")
+        if definition.has_dependencies:
+            if progress_callback:
+                progress_callback("正在读取 requirements.txt 并执行 pip 安装……")
+            self._run_install_command(
+                [str(environment_python), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(definition.requirements_path)],
+                progress_callback,
+            )
+            if progress_callback:
+                progress_callback("requirements.txt 中的依赖安装完成。")
+        elif progress_callback:
+            progress_callback("插件未声明第三方依赖，无需执行 pip 安装。")
+        (definition.environment_directory / ".dependencies-ready").write_text(
+            self._requirements_digest(definition), encoding="utf-8", newline="\n"
+        )
+        if progress_callback:
+            progress_callback("依赖状态已经记录，插件环境可以使用。")
+        return self.environment_status(definition)
+
+    def _run_install_command(self, command, progress_callback=None):
+        """执行环境创建或 pip 安装命令，并逐行回传安装日志。"""
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        lines = []
+        try:
+            for line in process.stdout:
+                lines.append(line)
+                if progress_callback:
+                    progress_callback(line.rstrip())
+            return_code = process.wait()
+        finally:
+            process.stdout.close()
+        if return_code != 0:
+            raise CustomDataError("依赖安装失败：\n{}".format("".join(lines).strip()))
+
     def collect_due_data(self):
-        """按各脚本调用间隔执行到期脚本，并返回 ext 字段需要的 key-data 映射。"""
+        """按各插件调用间隔执行到期任务，并返回 ext 字段映射。"""
         now = time.monotonic()
         self.reload_if_changed()
         with self.lock:
@@ -244,14 +438,10 @@ class CustomDataManager:
                     state.error = traceback.format_exc()
                 finally:
                     state.last_run_time = now
-            return {
-                state.definition.key: state.data
-                for state in self.states.values()
-                if state.error == "" and state.data is not None
-            }
+            return {state.definition.key: state.data for state in self.states.values() if not state.error and state.data is not None}
 
     def collect_task_data(self, name):
-        """执行指定自定义数据任务，并返回 ext 字段需要合并的 key-data 映射。"""
+        """在子进程中执行指定插件任务，并返回 ext 字段映射。"""
         self.reload_if_changed()
         with self.lock:
             state = self.states.get(name)
@@ -268,79 +458,84 @@ class CustomDataManager:
                 state.last_run_time = time.monotonic()
 
     def task_definitions(self):
-        """返回启动时可注册为采集任务的自定义数据脚本定义。"""
+        """返回启动时可注册为采集任务的插件定义。"""
         self.reload_if_changed()
         with self.lock:
             return tuple(state.definition for state in self.states.values())
 
     def list_items(self):
-        """返回弹窗列表需要展示的脚本定义和加载错误。"""
+        """返回管理窗口需要展示的插件状态和加载错误。"""
         self.reload_if_changed()
         with self.lock:
-            items = list(self.states.values())
-            errors = dict(self.load_errors)
-        return items, errors
+            return list(self.states.values()), dict(self.load_errors)
 
-    def import_script(self, source_path):
-        """复制用户选择的 py 文件到 customData 目录并完成格式校验。"""
+    def _existing_identifiers(self, ignored_path=None):
+        """返回除指定路径外已占用的数据 key 和任务名。"""
+        ignored_path = Path(ignored_path).resolve() if ignored_path else None
+        keys = {state.definition.key for state in self.states.values() if state.definition.plugin_directory.resolve() != ignored_path}
+        names = {state.definition.name for state in self.states.values() if state.definition.plugin_directory.resolve() != ignored_path}
+        return keys, names
+
+    def import_plugin(self, source_path):
+        """从插件目录或 ZIP 包导入自定义数据插件。"""
         source_path = Path(source_path).resolve()
-        existing_keys = {
-            state.definition.key
-            for state in self.states.values()
-            if state.definition.path.resolve() != source_path
-        }
-        existing_names = {
-            state.definition.name
-            for state in self.states.values()
-            if state.definition.path.resolve() != source_path
-        }
-        definition = validate_script(
-            source_path,
-            existing_keys=existing_keys,
-            existing_names=existing_names,
-        )
-        target_path = self.custom_directory / source_path.name
-        if target_path.resolve() != source_path:
-            if target_path.exists():
-                raise CustomDataError(f"目标文件已存在：{target_path.name}")
-            shutil.copy2(source_path, target_path)
-            definition = validate_script(
-                target_path,
-                existing_keys=existing_keys,
-                existing_names=existing_names,
-            )
-        self.reload_scripts()
-        return definition
+        if source_path.is_dir():
+            source_root = source_path
+            cleanup_root = None
+        elif source_path.suffix.lower() == ".zip":
+            import tempfile
 
-    def delete_script(self, script_path):
-        """删除指定自定义数据脚本并重新加载脚本列表。"""
-        script_path = Path(script_path).resolve()
-        if script_path.parent != self.custom_directory.resolve():
-            raise CustomDataError("只能删除 customData 目录内的脚本")
-        if script_path.name == CUSTOM_DATA_TEMPLATE_NAME:
-            raise CustomDataError("不能删除基础模板")
-        script_path.unlink(missing_ok=True)
-        self.reload_scripts()
-
-    def test_script(self, script_path):
-        """测试执行指定脚本并返回格式化后的 JSON 或错误详情。"""
+            cleanup_root = tempfile.TemporaryDirectory()
+            try:
+                _safe_extract_zip(source_path, cleanup_root.name)
+                source_root = _locate_manifest_root(cleanup_root.name)
+            except Exception:
+                cleanup_root.cleanup()
+                raise
+        else:
+            raise CustomDataError("仅支持包含 plugin.json 的插件目录或 ZIP 插件包，不再支持单文件 .py 插件")
         try:
-            keys = {
-                state.definition.key
-                for state in self.states.values()
-                if state.definition.path.resolve() != Path(script_path).resolve()
-            }
-            names = {
-                state.definition.name
-                for state in self.states.values()
-                if state.definition.path.resolve() != Path(script_path).resolve()
-            }
-            definition = validate_script(script_path, existing_keys=keys, existing_names=names)
-            result = run_script(definition)
-            return json.dumps(result, ensure_ascii=False, indent=2)
-        except Exception:
-            return traceback.format_exc()
+            definition = _load_definition(source_root, self.environment_root)
+            keys, names = self._existing_identifiers()
+            _validate_uniqueness(definition, keys, names)
+            target = self.custom_directory / definition.name
+            if target.exists():
+                raise CustomDataError("目标插件已存在：{}".format(definition.name))
+            shutil.copytree(source_root, target, ignore=shutil.ignore_patterns(".venv", "venv", "__pycache__", "*.pyc"))
+        finally:
+            if cleanup_root is not None:
+                cleanup_root.cleanup()
+        self.reload_scripts()
+        return self.states[definition.name].definition
 
+    def delete_plugin(self, plugin_path):
+        """删除指定插件及其独立虚拟环境。"""
+        plugin_path = Path(plugin_path).resolve()
+        if plugin_path.parent != self.custom_directory.resolve():
+            raise CustomDataError("只能删除 customData 目录内的插件")
+        definition = None
+        for state in self.states.values():
+            if state.definition.plugin_directory.resolve() == plugin_path or state.definition.path.resolve() == plugin_path:
+                definition = state.definition
+                break
+        if definition is None:
+            raise CustomDataError("未找到要删除的插件")
+        shutil.rmtree(definition.plugin_directory)
+        if definition.environment_directory.is_dir():
+            shutil.rmtree(definition.environment_directory)
+        self.reload_scripts()
+
+    def test_plugin(self, name):
+        """测试执行指定插件并返回格式化 JSON 或中文错误详情。"""
+        with self.lock:
+            state = self.states.get(name)
+            if state is None:
+                return "插件不存在或尚未加载"
+            try:
+                result = run_script(state.definition)
+                return json.dumps(result, ensure_ascii=False, indent=2)
+            except Exception:
+                return traceback.format_exc()
 
 _manager = None
 
@@ -355,15 +550,9 @@ def get_manager():
 
 def custom_data_task_defaults():
     """返回自定义数据任务完整标识到默认采集频率的映射。"""
-    return {
-        definition.task_name: definition.interval
-        for definition in get_manager().task_definitions()
-    }
+    return {definition.task_name: definition.interval for definition in get_manager().task_definitions()}
 
 
 def custom_data_task_zh_names():
     """返回自定义数据任务完整标识到中文名称的映射。"""
-    return {
-        definition.task_name: definition.zh_name
-        for definition in get_manager().task_definitions()
-    }
+    return {definition.task_name: definition.zh_name for definition in get_manager().task_definitions()}

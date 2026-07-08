@@ -1,6 +1,7 @@
 """Windows 关于应用窗口。"""
 
 import logging
+import subprocess
 import threading
 
 from build_info import MONITOR_VERSION
@@ -38,6 +39,26 @@ class AboutWindowMixin:
             with self.about_window_lock:
                 self.about_window_open = False
 
+    def _open_log_directory(self, parent=None):
+        """确保日志目录存在，并使用 Windows 资源管理器打开该目录。"""
+        from tkinter import messagebox
+
+        try:
+            self.data_directory.mkdir(parents=True, exist_ok=True)
+            subprocess.Popen(
+                ["explorer.exe", str(self.data_directory)],
+                creationflags=0x08000000,
+            )
+            return True
+        except OSError as error:
+            LOGGER.exception("打开日志目录失败：%s", error)
+            messagebox.showerror(
+                "打开日志目录",
+                "无法打开日志目录：{}".format(error),
+                parent=parent,
+            )
+            return False
+
     def _run_about_window(self):
         """显示版本、作者、联系方式和店铺二维码。"""
         self._configure_tk_runtime()
@@ -45,6 +66,7 @@ class AboutWindowMixin:
         from PIL import Image, ImageTk
 
         root = tk.Tk()
+        root.withdraw()
         root.title("关于应用")
         root.resizable(False, False)
         root.attributes("-topmost", True)
@@ -64,7 +86,20 @@ class AboutWindowMixin:
         image_label = tk.Label(frame, image=photo)
         image_label.image = photo
         image_label.pack()
-        tk.Button(frame, text="确定", width=12, command=root.destroy).pack(pady=(14, 0))
+        button_frame = tk.Frame(frame)
+        button_frame.pack(pady=(14, 0))
+        tk.Button(
+            button_frame,
+            text="打开日志目录",
+            width=14,
+            command=lambda: self._open_log_directory(root),
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Button(
+            button_frame,
+            text="确定",
+            width=12,
+            command=root.destroy,
+        ).pack(side=tk.LEFT)
         root.protocol("WM_DELETE_WINDOW", root.destroy)
-        self._center_tk_window(root)
+        self._show_centered_tk_window(root)
         root.mainloop()

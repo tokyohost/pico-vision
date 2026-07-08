@@ -50,6 +50,7 @@ class SettingsWindowMixin:
         from tkinter import messagebox, ttk
 
         root = tk.Tk()
+        root.withdraw()
         self.settings_window = root
         root.title("OmniWatch 配置")
         self._set_tk_window_icon(root)
@@ -402,5 +403,5 @@ class SettingsWindowMixin:
             """关闭配置窗口。"""
             root.destroy()
         root.protocol("WM_DELETE_WINDOW", closed)
-        self._center_tk_window(root)
+        self._show_centered_tk_window(root)
         root.mainloop()

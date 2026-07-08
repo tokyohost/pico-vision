@@ -7,6 +7,9 @@ import subprocess
 import threading
 from datetime import datetime
 
+from build_info import GITHUB_REPOSITORY
+from windows_update import WindowsReleaseUpdater
+
 from ..constants import APPLICATION_NAME
 
 LOGGER = logging.getLogger("pico-monitor.windows-update")
@@ -44,9 +47,10 @@ class DeviceWindowMixin:
         """展示已连接设备信息，并提供带等待进度的设备重启操作。"""
         self._configure_tk_runtime()
         import tkinter as tk
-        from tkinter import ttk
+        from tkinter import messagebox, ttk
 
         root = tk.Tk()
+        root.withdraw()
         root.title("设备管理")
         root.geometry("720x520")
         root.minsize(560, 320)
@@ -90,6 +94,12 @@ class DeviceWindowMixin:
         action_frame.pack(fill=tk.X, padx=16, pady=(0, 12))
         probe_button = ttk.Button(action_frame, text="主动探测")
         probe_button.pack(side=tk.LEFT)
+        firmware_button = ttk.Button(
+            action_frame,
+            text="检查设备固件更新",
+            state=tk.DISABLED,
+        )
+        firmware_button.pack(side=tk.LEFT, padx=(8, 0))
         reboot_button = ttk.Button(action_frame, text="重启设备", state=tk.DISABLED)
         reboot_button.pack(side=tk.RIGHT)
 
@@ -108,6 +118,7 @@ class DeviceWindowMixin:
 
         messages = queue.Queue()
         reboot_state = {"started": None}
+        firmware_state = {"current_version": None}
         initial_connection = self._get_device_connection()
 
         def clear_connected_device():
@@ -117,6 +128,8 @@ class DeviceWindowMixin:
             device_values["firmware_version"].set("--")
             device_values["screen_resolution"].set("--")
             reboot_button.configure(state=tk.DISABLED)
+            firmware_button.configure(state=tk.DISABLED)
+            firmware_state["current_version"] = None
 
         def refresh_connection_state():
             """消费后台串口状态事件，实时同步设备面板和操作按钮。"""
@@ -140,6 +153,8 @@ class DeviceWindowMixin:
                         connection.get("screen_resolution") or "未知"
                     )
                     reboot_button.configure(state=tk.NORMAL)
+                    firmware_button.configure(state=tk.NORMAL)
+                    firmware_state["current_version"] = connection.get("firmware_version")
                     status.set("设备已连接")
             except queue.Empty:
                 pass
@@ -165,7 +180,7 @@ class DeviceWindowMixin:
                             prefix = "OmniWatch " + device_labels[field_name] + "："
                             if normalized.startswith(prefix):
                                 value.set(normalized[len(prefix):].strip() or "未知")
-                    else:
+                    elif message_type == "done":
                         progress.stop()
                         progress.configure(mode="determinate", maximum=100, value=100)
                         success = content == 0
@@ -174,6 +189,60 @@ class DeviceWindowMixin:
                         probe_button.configure(state=tk.NORMAL)
                         if not success:
                             clear_connected_device()
+                    elif message_type == "firmware_checked":
+                        updater, latest_version, release_notes, asset = content
+                        current_version = firmware_state["current_version"] or "未知"
+                        if asset is None:
+                            progress.stop()
+                            progress.configure(mode="determinate", maximum=100, value=100)
+                            status.set("设备固件已是最新版本：{}".format(current_version))
+                            append_log("设备固件已是最新版本：{}\n".format(current_version))
+                            firmware_button.configure(state=tk.NORMAL)
+                            self.update_lock.release()
+                        elif messagebox.askyesno(
+                            "设备固件更新",
+                            "发现新固件版本 {}，当前版本为 {}。\n\n"
+                            "更新说明：\n{}\n\n"
+                            "是否立即更新？\n\n"
+                            "更新期间请勿断开设备或关闭电源。".format(
+                                latest_version,
+                                current_version,
+                                release_notes or "暂无更新说明",
+                            ),
+                            parent=root,
+                        ):
+                            status.set("正在更新设备固件，请勿断开设备……")
+                            append_log("开始更新设备固件至 {}。\n".format(latest_version))
+                            threading.Thread(
+                                target=install_firmware,
+                                args=(updater, asset, latest_version),
+                                name="设备固件更新",
+                                daemon=True,
+                            ).start()
+                        else:
+                            progress.stop()
+                            progress.configure(mode="determinate", maximum=100, value=0)
+                            status.set("已取消设备固件更新")
+                            reboot_button.configure(state=tk.NORMAL)
+                            firmware_button.configure(state=tk.NORMAL)
+                            self.update_lock.release()
+                    elif message_type == "firmware_finished":
+                        success, detail = content
+                        progress.stop()
+                        progress.configure(mode="determinate", maximum=100, value=100 if success else 0)
+                        status.set(detail)
+                        append_log(detail + "\n")
+                        firmware_button.configure(state=tk.NORMAL)
+                        reboot_button.configure(state=tk.NORMAL)
+                        self.update_lock.release()
+                    elif message_type == "firmware_error":
+                        progress.stop()
+                        progress.configure(mode="determinate", maximum=100, value=0)
+                        status.set("检查设备固件更新失败")
+                        append_log("检查设备固件更新失败：{}\n".format(content))
+                        reboot_button.configure(state=tk.NORMAL)
+                        firmware_button.configure(state=tk.NORMAL)
+                        self.update_lock.release()
             except queue.Empty:
                 pass
             if root.winfo_exists():
@@ -245,11 +314,73 @@ class DeviceWindowMixin:
 
         reboot_button.configure(command=reboot_device)
 
+        def check_firmware():
+            """读取最新 Release，并比较设备当前固件版本。"""
+            try:
+                updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, "")
+                latest_version, assets, release_notes = updater.latest_release(
+                    include_notes=True
+                )
+                asset = None
+                if updater.firmware_update_available(
+                    firmware_state["current_version"], latest_version
+                ):
+                    asset = updater.select_pico_asset(assets, latest_version)
+                messages.put((
+                    "firmware_checked",
+                    (updater, latest_version, release_notes, asset),
+                ))
+            except Exception as error:
+                LOGGER.exception("检查设备固件更新失败：%s", error)
+                messages.put(("firmware_error", str(error)))
+
+        def install_firmware(updater, asset, latest_version):
+            """下载已确认的新固件包，通过现有串口升级流程安装。"""
+            package_path = None
+            try:
+                package_path = updater.download(asset, ".zip")
+                self._stop_worker()
+                self._upgrade_pico_from_package(package_path)
+                messages.put((
+                    "firmware_finished",
+                    (True, "设备固件已更新至 {}，正在重新连接设备".format(latest_version)),
+                ))
+            except Exception as error:
+                LOGGER.exception("设备固件更新失败：%s", error)
+                messages.put(("firmware_finished", (False, "设备固件更新失败：{}".format(error))))
+            finally:
+                if package_path is not None:
+                    updater.remove_file(package_path)
+                if not self.stopping.is_set() and (
+                    self.worker_process is None or self.worker_process.poll() is not None
+                ):
+                    self._start_worker()
+
+        def start_firmware_check():
+            """锁定更新任务并在后台启动设备固件版本检查。"""
+            if not self.update_lock.acquire(blocking=False):
+                status.set("已有更新任务正在执行，请稍候")
+                return
+            firmware_button.configure(state=tk.DISABLED)
+            reboot_button.configure(state=tk.DISABLED)
+            progress.configure(mode="indeterminate")
+            progress.start(12)
+            status.set("正在检查设备固件更新……")
+            threading.Thread(
+                target=check_firmware,
+                name="设备固件检查",
+                daemon=True,
+            ).start()
+
+        firmware_button.configure(command=start_firmware_check)
+
         def show_connected_device(connection):
             """将已连接设备快照显示到设备管理面板。"""
             for field_name, value in device_values.items():
                 value.set(connection.get(field_name) or "未知")
             reboot_button.configure(state=tk.NORMAL)
+            firmware_button.configure(state=tk.NORMAL)
+            firmware_state["current_version"] = connection.get("firmware_version")
             progress.stop()
             progress.configure(mode="determinate", maximum=100, value=100)
             status.set("设备已连接")
@@ -310,5 +441,5 @@ class DeviceWindowMixin:
             start_probe()
         refresh_messages()
         refresh_connection_state()
-        self._center_tk_window(root)
+        self._show_centered_tk_window(root)
         root.mainloop()

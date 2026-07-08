@@ -77,6 +77,8 @@ class WindowsTrayApplication(
             application.data_directory = Path(
                 os.getenv("LOCALAPPDATA", Path.home())
             ) / "PicoMonitor"
+            application.data_directory.mkdir(parents=True, exist_ok=True)
+            application._configure_error_logging()
             application.settings_window = None
             application.crash_dialog_lock = threading.Lock()
             application._report_unhandled_crash(
@@ -121,6 +123,7 @@ class WindowsTrayApplication(
         self.data_directory = data_directory
         self.screenshot_directory = data_directory / "screenshot"
         self.log_path = data_directory / "pico-monitor.log"
+        self._configure_error_logging()
         self.settings_store = TraySettingsStore(data_directory / "settings.json")
         settings_existed = self.settings_store.path.exists()
         self.settings = self.settings_store.load()
@@ -255,15 +258,21 @@ class WindowsTrayApplication(
         return dialog.result
 
     def _perform_update(self, icon, update_url):
-        """下载最新 Release，先升级 Pico，再安排运行 Monitor 安装包。"""
+        """检查最新 Release，经用户确认后升级 Pico 并安装 Monitor。"""
         updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, MONITOR_VERSION)
         monitor_path = None
         pico_path = None
         try:
             icon.notify("正在检查最新版本", APPLICATION_NAME)
-            latest_version, assets = updater.latest_release(update_url)
+            latest_version, assets, release_notes = updater.latest_release(
+                update_url,
+                include_notes=True,
+            )
             if not updater.update_available(latest_version):
                 icon.notify("当前已是最新版本：{}".format(MONITOR_VERSION), APPLICATION_NAME)
+                return
+            if not self._confirm_application_update(latest_version, release_notes):
+                icon.notify("已取消 OmniWatch 更新", APPLICATION_NAME)
                 return
             pico_asset = updater.select_pico_asset(assets, latest_version)
             monitor_asset = updater.select_monitor_asset(assets, latest_version)
@@ -292,6 +301,31 @@ class WindowsTrayApplication(
             if monitor_path is not None:
                 updater.remove_file(monitor_path)
             self.update_lock.release()
+
+    def _confirm_application_update(self, latest_version, release_notes):
+        """显示应用更新确认弹窗，并展示目标版本及 Release 更新说明。"""
+        self._configure_tk_runtime()
+        import tkinter as tk
+        from tkinter import messagebox
+
+        root = tk.Tk()
+        self._set_tk_window_icon(root)
+        root.withdraw()
+        try:
+            root.attributes("-topmost", True)
+            return messagebox.askyesno(
+                "检查更新",
+                "发现新版本 {}，当前版本为 {}。\n\n"
+                "更新说明：\n{}\n\n"
+                "是否立即更新？".format(
+                    latest_version,
+                    MONITOR_VERSION,
+                    release_notes or "暂无更新说明",
+                ),
+                parent=root,
+            )
+        finally:
+            root.destroy()
 
     def _upgrade_pico_from_package(self, package_path):
         """启动一次性隐藏进程，把已下载升级包发送给 Pico。"""

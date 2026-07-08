@@ -14,6 +14,9 @@ from .settings import apply_worker_arguments
 
 LOGGER = logging.getLogger("pico-monitor.windows-update")
 
+# 主运行日志允许占用的最大磁盘空间，超限后仅保留末尾的最新内容。
+MAXIMUM_LOG_SIZE = 15 * 1024 * 1024
+
 
 class WorkerControllerMixin:
     """为托盘应用提供独立的业务能力。"""
@@ -35,6 +38,9 @@ class WorkerControllerMixin:
         environment.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1"})
         environment["PICO_MONITOR_SETTINGS_PATH"] = str(self.settings_store.path)
         environment["PICO_MONITOR_SCREENSHOT_DIR"] = str(self.screenshot_directory)
+        environment["PICO_MONITOR_ERROR_LOG_PATH"] = str(
+            self.data_directory / "pico-monitor-error.log"
+        )
         self.worker_process = subprocess.Popen(
             self._worker_command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
@@ -120,10 +126,13 @@ class WorkerControllerMixin:
     def _collect_output(self):
         """收集工作进程日志，并在 Pico 样式清单变化后刷新托盘菜单。"""
         process = self.worker_process
-        with self.log_path.open("a", encoding="utf-8", newline="") as log_file:
+        self.log_path.touch(exist_ok=True)
+        with self.log_path.open("r+b") as log_file:
+            log_file.seek(0, os.SEEK_END)
             for line in process.stdout:
-                log_file.write(line)
+                log_file.write(line.encode("utf-8"))
                 log_file.flush()
+                self._truncate_log_file(log_file)
                 if self.custom_style_upload_active.is_set():
                     self.custom_style_upload_logs.put(line.rstrip("\r\n"))
                 if "STYLE_CATALOG_UPDATED" in line:
@@ -178,6 +187,20 @@ class WorkerControllerMixin:
         return_code = process.wait()
         if not self.stopping.is_set() and process is self.worker_process and self.icon is not None:
             self.icon.notify("后台监控已退出，返回码：{}".format(return_code), APPLICATION_NAME)
+
+    @staticmethod
+    def _truncate_log_file(log_file, maximum_size=MAXIMUM_LOG_SIZE):
+        """在日志超过限制时删除最旧内容，并保留完整 UTF-8 编码的最新内容。"""
+        if log_file.tell() <= maximum_size:
+            return
+        log_file.seek(-maximum_size, os.SEEK_END)
+        latest_content = log_file.read(maximum_size)
+        while latest_content and latest_content[0] & 0xC0 == 0x80:
+            latest_content = latest_content[1:]
+        log_file.seek(0)
+        log_file.write(latest_content)
+        log_file.truncate()
+        log_file.seek(0, os.SEEK_END)
 
     def _update_device_connection(self, connection):
         """保存最新设备连接快照，并通知已打开的设备管理窗口。"""

@@ -16,7 +16,7 @@ analysis = Analysis(
     ["pico_monitor.py"],
     pathex=[],
     binaries=optional_fps_binaries,
-    datas=[("icon/icon.png", "icon"), ("assert/fishQr.png", "assert"), ("win/fps/PRESENTMON_LICENSE.txt", "win/fps")],
+    datas=[("icon/icon.png", "icon"), ("assert/fishQr.png", "assert"), ("win/fps/PRESENTMON_LICENSE.txt", "win/fps"), ("custom_data_runner.py", ".")],
     hiddenimports=["psutil", "serial", "serial.tools.list_ports", "custom_data", "collectTask", "collectTask.coordinator", "collectTask.executor", "collectTask.result_store", "collectTask.system_tasks", "tkinter", "tkinter.filedialog", "tkinter.messagebox", "tkinter.scrolledtext", "tkinter.ttk", "pystray._win32", "PIL.Image", "PIL.ImageTk", "pico_upgrade", "build_info", "windows_update"] + collect_submodules("collectTask.tasks"),
     hookspath=[],
     hooksconfig={},

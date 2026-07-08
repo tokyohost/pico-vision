@@ -20,6 +20,20 @@ class WindowsReleaseUpdaterTest(unittest.TestCase):
         ):
             self.assertEqual(("1.1.0", assets), updater.latest_release("https://updates.example/latest"))
 
+    def test_latest_release_can_return_release_notes(self):
+        """确认设备固件检查可以同时取得 Release 更新说明。"""
+        updater = WindowsReleaseUpdater("owner/repository", "1.0.0")
+        assets = [{"name": "asset"}]
+        with mock.patch.object(
+            updater,
+            "_request_json",
+            return_value={"tag_name": "v1.1.0", "assets": assets, "body": "修复显示问题"},
+        ):
+            self.assertEqual(
+                ("1.1.0", assets, "修复显示问题"),
+                updater.latest_release("https://updates.example/latest", include_notes=True),
+            )
+
     def test_selects_matching_windows_and_pico_assets(self):
         """确认按进程位数和版本选择两个更新资源。"""
         assets = [
@@ -42,6 +56,12 @@ class WindowsReleaseUpdaterTest(unittest.TestCase):
         updater = WindowsReleaseUpdater("", "development")
         with self.assertRaisesRegex(RuntimeError, "未配置更新地址"):
             updater.latest_release()
+
+    def test_firmware_update_requires_newer_numeric_version(self):
+        """确认固件检查只把更高数字版本识别为可用更新。"""
+        self.assertTrue(WindowsReleaseUpdater.firmware_update_available("1.2.3", "1.3.0"))
+        self.assertFalse(WindowsReleaseUpdater.firmware_update_available("1.3.0", "1.2.3"))
+        self.assertFalse(WindowsReleaseUpdater.firmware_update_available("1.3", "1.3.0"))
 
 
 if __name__ == "__main__":

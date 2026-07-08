@@ -718,7 +718,7 @@ class MonitorService:
         return snapshot_store.snapshot() if snapshot_store is not None else self._latest_collected_snapshot
 
     def _custom_data_collection_tasks(self):
-        """把启动时发现的每个自定义数据脚本封装为独立采集任务。"""
+        """把启动时发现的每个自定义数据插件封装为独立采集任务。"""
         tasks = []
         for definition in self.custom_data_manager.task_definitions():
             tasks.append((
@@ -730,9 +730,9 @@ class MonitorService:
         return tasks
 
     def _create_custom_data_collector(self, name):
-        """创建指定自定义数据脚本的采集回调。"""
+        """创建指定自定义数据插件的采集回调。"""
         def collect():
-            """执行一个自定义数据脚本并返回 ext 子字段片段。"""
+            """执行一个自定义数据插件并返回 ext 子字段片段。"""
             return {"ext": self.custom_data_manager.collect_task_data(name)}
 
         return collect
@@ -883,9 +883,21 @@ class MonitorService:
 
 def configure_logging():
     """配置适合终端、systemd 和 Windows 托盘收集的日志格式。"""
-    handler = logging.StreamHandler(_configure_standard_streams())
-    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-    logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    stream_handler = logging.StreamHandler(_configure_standard_streams())
+    stream_handler.setFormatter(formatter)
+    handlers = [stream_handler]
+    error_log_path = str(os.getenv("PICO_MONITOR_ERROR_LOG_PATH") or "").strip()
+    if error_log_path:
+        error_handler = logging.FileHandler(
+            error_log_path,
+            encoding="utf-8",
+            delay=True,
+        )
+        error_handler.setLevel(logging.ERROR)
+        error_handler.setFormatter(formatter)
+        handlers.append(error_handler)
+    logging.basicConfig(level=logging.INFO, handlers=handlers, force=True)
 
 
 def log_monitor_version():

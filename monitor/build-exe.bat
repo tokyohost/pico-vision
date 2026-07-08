@@ -7,6 +7,8 @@ if exist ".venv\Scripts\python.exe" (set "PYTHON=.venv\Scripts\python.exe") else
 if errorlevel 1 exit /b 1
 "%PYTHON%" -m PyInstaller --clean --noconfirm pico_monitor.spec
 if errorlevel 1 exit /b 1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0prepare-plugin-runtime.ps1" -OutputDirectory "%~dp0dist\plugin-runtime"
+if errorlevel 1 exit /b 1
 set "ISCC=ISCC.exe"
 where "%ISCC%" >nul 2>nul
 if errorlevel 1 (
@@ -18,7 +20,7 @@ if errorlevel 1 (
     exit /b 1
   )
 )
-"%ISCC%" /DAppVersion=development /DArchitecture=x64 /DSourceExe=dist\pico-monitor.exe pico_monitor_setup.iss
+"%ISCC%" /DAppVersion=development /DArchitecture=x64 /DSourceExe=dist\pico-monitor.exe /DPluginRuntime=dist\plugin-runtime pico_monitor_setup.iss
 if errorlevel 1 exit /b 1
 echo Windows 安装包已生成：dist\OmniWatch-windows-x64-setup-vdevelopment.exe
 endlocal

@@ -56,6 +56,12 @@ class TkSupportMixin:
         y = max(0, (window.winfo_screenheight() - height) // 2)
         window.geometry("{}x{}+{}+{}".format(width, height, x, y))
 
+    @classmethod
+    def _show_centered_tk_window(cls, window):
+        """完成窗口居中定位后再显示，避免 Windows 在左上角短暂闪现。"""
+        cls._center_tk_window(window)
+        window.deiconify()
+
     def _set_tk_window_icon(self, window):
         """为当前窗口及其后续弹框统一设置托盘程序图标。"""
         import tkinter as tk
@@ -82,6 +88,7 @@ class TkSupportMixin:
 
         owner = parent if parent is not None else self.settings_window
         dialog = tk.Toplevel(owner) if owner is not None else tk.Tk()
+        dialog.withdraw()
         dialog.title(title_text)
         dialog.resizable(True, True)
         dialog.configure(bg="#f5f7fa")
@@ -161,7 +168,7 @@ class TkSupportMixin:
         ).pack(side=tk.LEFT)
 
         dialog.bind("<Escape>", lambda event: dialog.destroy())
-        self._center_tk_window(dialog)
+        self._show_centered_tk_window(dialog)
         dialog.focus_force()
         dialog.wait_window()
 

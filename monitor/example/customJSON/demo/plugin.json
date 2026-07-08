@@ -1,0 +1,8 @@
+{
+  "protocol": 1,
+  "key": "demo",
+  "name": "demo",
+  "zh_name": "演示数据",
+  "interval": 5,
+  "entry": "main.py"
+}

@@ -12,6 +12,10 @@
 #define Architecture "x64"
 #endif
 
+#ifndef PluginRuntime
+#define PluginRuntime "dist\plugin-runtime"
+#endif
+
 [Setup]
 AppId={{B7BA6741-67A0-4B49-89F2-5BC22215E90B}
 AppName=OmniWatch Monitor
@@ -38,6 +42,7 @@ Name: "chinesesimplified"; MessagesFile: "packaging\languages\ChineseSimplified.
 
 [Files]
 Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "pico-monitor.exe"; Flags: ignoreversion
+Source: "{#PluginRuntime}\*"; DestDir: "{app}\plugin-runtime"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\OmniWatch Monitor"; Filename: "{app}\pico-monitor.exe"

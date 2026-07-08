@@ -74,12 +74,15 @@ jobs:
         run: |
           python -m PyInstaller --clean --noconfirm pico_monitor.spec
           Move-Item -LiteralPath "dist/pico-monitor.exe" -Destination "dist/${{ matrix.exe_name }}"
+          $runtimePackage = if ("${{ matrix.architecture }}" -eq "x86") { "pythonx86" } else { "python" }
+          & .\prepare-plugin-runtime.ps1 -OutputDirectory "$PWD\dist\plugin-runtime" -PythonVersion "3.13.5" -PackageId $runtimePackage
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "dist/${{ matrix.exe_name }}" --help
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "dist/${{ matrix.exe_name }}" --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $version = if ($env:GITHUB_REF_NAME.StartsWith("v")) { $env:GITHUB_REF_NAME.Substring(1) } else { "development" }
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion="$version" /DArchitecture=${{ matrix.installer_arch }} /DSourceExe="dist\${{ matrix.exe_name }}" pico_monitor_setup.iss
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion="$version" /DArchitecture=${{ matrix.installer_arch }} /DSourceExe="dist\${{ matrix.exe_name }}" /DPluginRuntime="dist\plugin-runtime" pico_monitor_setup.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $assetName = "OmniWatch-windows-${{ matrix.installer_arch }}-setup-v$version.exe"
           if (-not (Test-Path -LiteralPath "dist/$assetName")) { throw "未生成安装包：dist/$assetName" }
