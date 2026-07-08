@@ -85,16 +85,20 @@ class WindowsTraySettingsTest(unittest.TestCase):
     def test_error_log_is_created_only_for_error_level_messages(self):
         """确认错误消息会自动写入以 error.log 结尾的独立日志文件。"""
         application = self._create_log_application()
+        root_logger = logging.getLogger()
+        original_handlers = set(root_logger.handlers)
         error_log_path = application._configure_error_logging()
+        error_handler = next(
+            handler
+            for handler in root_logger.handlers
+            if handler not in original_handlers
+        )
         logger = logging.getLogger("pico-monitor.test-error-log")
 
         def remove_error_handler():
             """关闭测试添加的错误处理器，避免 Windows 持有临时文件。"""
-            root_logger = logging.getLogger()
-            for handler in list(root_logger.handlers):
-                if getattr(handler, "baseFilename", None) == str(error_log_path.resolve()):
-                    root_logger.removeHandler(handler)
-                    handler.close()
+            root_logger.removeHandler(error_handler)
+            error_handler.close()
 
         self.addCleanup(remove_error_handler)
 

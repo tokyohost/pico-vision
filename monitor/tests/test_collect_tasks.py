@@ -1,12 +1,11 @@
 """验证后台采集线程池、任务调度和无锁快照发布行为。"""
 
-import sys
 import threading
 import types
 import unittest
 from unittest import mock
 
-sys.modules.setdefault("psutil", types.SimpleNamespace())
+import psutil  # 提前加载真实依赖，避免测试替身污染后续测试模块。
 
 from collectTask.coordinator import CollectionCoordinator
 from collectTask.executor import BoundedElasticThreadPool, TaskRejectedError
