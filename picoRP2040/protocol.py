@@ -422,10 +422,8 @@ class JsonProtocol:
             json_elapsed_ms,
             gc_count,
         )
-        self._write_frame("EVENT", timing.encode("ascii", "replace"))
-
         try:
-            return self._handle_json_message(message)
+            return self._handle_json_message(message, timing)
         except MemoryError as error:
             self._write_frame("ERR", _json_error_payload("MEMORY_JSON_HANDLE", error))
             return None
@@ -436,7 +434,7 @@ class JsonProtocol:
             self._write_frame("ERR", _json_error_payload("JSON_HANDLE_UNKNOWN", error))
             return None
 
-    def _handle_json_message(self, message):
+    def _handle_json_message(self, message, timing=None):
         """按 JSON 信封模式分发快照或命令，并兼容旧裸快照。"""
         if not isinstance(message, dict):
             raise ValueError("JSON_OBJECT_REQUIRED")
@@ -452,7 +450,12 @@ class JsonProtocol:
             snapshot = message
         else:
             raise ValueError("UNKNOWN_JSON_MODE")
-        self._write_frame("ACK", b"JSON")
+        request_id = message.get("request_id")
+        display = snapshot.get("display") or {}
+        if display.get("dev") and timing:
+            self._write_frame("EVENT", timing.encode("ascii", "replace"))
+        ack_payload = "JSON:{}".format(request_id) if request_id is not None else "JSON"
+        self._write_frame("ACK", ack_payload.encode("ascii", "replace"))
         return snapshot
 
     def _dispatch_command(self, message):

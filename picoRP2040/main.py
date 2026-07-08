@@ -87,6 +87,7 @@ class Application:
         )
         self._monitor_interval_ms = 500
         self._monitor_connected = False
+        self._dev_mode = False
 
     def _write_custom_style_log(self, message):
         """向 Monitor 输出自定义样式启动加载结果。"""
@@ -222,6 +223,7 @@ class Application:
                 and (has_new_snapshot or idle_refresh_due)
             ):
                 display = snapshot.get("display", {}) if snapshot else {}
+                self._dev_mode = bool(display.get("dev"))
                 requested_interval_ms = display.get(
                     "collection_interval_ms", self._monitor_interval_ms
                 )
@@ -285,7 +287,7 @@ class Application:
             # system_boot 等待页使用尚未打开的应用 CDC；此时若发送帧完成
             # ACK，CDC 写缓冲会持续返回零并阻塞主循环。仅在 Monitor 已
             # 恢复连接后发送渲染性能信息，等待动画本身仍可正常推进。
-            if render_completed and self._monitor_connected:
+            if render_completed and self._monitor_connected and self._dev_mode:
                 canvas_us, lcd_us, region_count = self._renderer.last_profile()
                 profile = self._renderer.last_detailed_profile()
                 memory_used, memory_total = memory_usage()

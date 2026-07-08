@@ -22,13 +22,19 @@ def _load_module(script_path):
     return module
 
 
-def _collect(script_path):
-    """执行插件 collect 方法并校验返回值可序列化。"""
+def _load_collect(script_path):
+    """加载插件并返回经过校验的 collect 方法。"""
     with contextlib.redirect_stdout(sys.stderr):
         module = _load_module(script_path)
         collect = getattr(module, "collect", None)
         if not callable(collect):
             raise RuntimeError("插件入口必须定义 collect() 方法")
+    return collect
+
+
+def _collect(collect):
+    """执行已加载的 collect 方法并校验返回值可序列化。"""
+    with contextlib.redirect_stdout(sys.stderr):
         result = collect()
     json.dumps(result, ensure_ascii=False)
     return result
@@ -40,12 +46,22 @@ def main():
         print(json.dumps({"ok": False, "error": "缺少插件入口路径"}, ensure_ascii=False))
         return 2
     try:
-        data = _collect(Path(sys.argv[1]).resolve())
-        print(json.dumps({"ok": True, "data": data}, ensure_ascii=False))
-        return 0
+        collect = _load_collect(Path(sys.argv[1]).resolve())
     except Exception:
-        print(json.dumps({"ok": False, "error": traceback.format_exc()}, ensure_ascii=False))
+        print(json.dumps({"ok": False, "error": traceback.format_exc()}, ensure_ascii=False), flush=True)
         return 1
+    for line in sys.stdin:
+        try:
+            request = json.loads(line)
+            if request.get("command") == "stop":
+                return 0
+            if request.get("command") != "collect":
+                raise RuntimeError("不支持的插件进程命令")
+            response = {"ok": True, "data": _collect(collect)}
+        except Exception:
+            response = {"ok": False, "error": traceback.format_exc()}
+        print(json.dumps(response, ensure_ascii=False), flush=True)
+    return 0
 
 
 if __name__ == "__main__":

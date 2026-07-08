@@ -129,6 +129,7 @@ class PicoJsonClient:
         self.screen_width = None
         self.screen_height = None
         self.styles = []
+        self._json_request_sequence = 0
 
     @property
     def is_connected(self):
@@ -348,14 +349,40 @@ class PicoJsonClient:
         ).encode("utf-8")
 
     @staticmethod
-    def build_packet(snapshot):
+    def build_packet(snapshot, request_id=None):
         """把 JSON 编码为带长度与 CRC 的 PV1 数据帧。"""
         snapshot_payload = PicoJsonClient.build_json_payload(snapshot)
-        payload = json.dumps({
+        envelope = {
             "mode": "snapshot",
             "data": json.loads(snapshot_payload.decode("utf-8")),
-        }, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+        }
+        if request_id is not None:
+            envelope["request_id"] = request_id
+        payload = json.dumps(envelope, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
         return PicoJsonClient._build_jsonz_packet(payload)
+
+    def _next_json_request_id(self):
+        """生成进程内单调递增的 JSON 快照请求序号。"""
+        self._json_request_sequence = (self._json_request_sequence + 1) & 0x7FFFFFFF
+        return self._json_request_sequence
+
+    def _drain_json_responses(self):
+        """非阻塞消费已经到达的 JSON 响应，避免 ACK 反向缓存持续积压。"""
+        device = self.serial
+        while device is not None and getattr(device, "in_waiting", 0) > 0:
+            frame = self._read_protocol_frame("JSONZ 异步响应")
+            if not frame:
+                continue
+            if frame[0] == "ACK" and frame[1].startswith(b"JSON"):
+                continue
+            if frame[0] == "ERR":
+                LOGGER.warning(
+                    "[JSONZ 异步错误][%s] %s",
+                    self.port_name,
+                    frame[1].decode("utf-8", errors="replace"),
+                )
+            elif _is_restarting_fatal(frame):
+                raise PicoRestartingError("Pico 发生不可恢复的渲染错误，设备正在自动重启")
 
     @staticmethod
     def _build_jsonz_packet(payload):
@@ -531,48 +558,15 @@ class PicoJsonClient:
         raise RuntimeError(default_error + "：等待 Pico 响应超时")
 
     def send(self, snapshot):
-        """分块发送单行 JSON 数据，并等待 Pico 返回接收确认。"""
+        """发送带请求序号的 JSON 快照，不同步等待 Pico 确认。"""
         if not self.is_connected:
             raise RuntimeError("Pico 串口尚未连接")
+        self._drain_json_responses()
+        request_id = self._next_json_request_id()
         build_started = time.monotonic()
-        packet = self.build_packet(snapshot)
+        packet = self.build_packet(snapshot, request_id=request_id)
         build_elapsed_ms = (time.monotonic() - build_started) * 1000
-        self._write_packet(packet, "JSONZ", build_elapsed_ms)
-        ack_wait_started = time.monotonic()
-        deadline = time.monotonic() + JSON_ACK_TIMEOUT
-        while time.monotonic() < deadline:
-            frame = self._read_protocol_frame("JSONZ")
-            if frame == ("ACK", b"JSON"):
-                ack_wait_ms = (time.monotonic() - ack_wait_started) * 1000
-                total_ms = (time.monotonic() - build_started) * 1000
-                LOGGER.info(
-                    "[协议耗时][%s][JSONZ 交互完成] ACK等待=%.1f ms，构帧到ACK总计=%.1f ms",
-                    self.port_name,
-                    ack_wait_ms,
-                    total_ms,
-                )
-                return
-            if frame and frame[0] == "EVENT" and frame[1].startswith(b"PROTOCOL_TIMING:TYPE=JSONZ:"):
-                # 收到解析耗时事件说明 Pico 已完成 JSONZ 解码，后续 ACK 可能紧随其后。
-                deadline = max(deadline, time.monotonic() + JSON_PROGRESS_GRACE_SECONDS)
-                continue
-            if (
-                frame
-                and frame[0] == "ERR"
-                and frame[1].startswith(b"BAD_JSON")
-            ):
-                LOGGER.warning(
-                    "[数据帧丢弃][%s] Pico 无法解析本次 JSON，保持串口连接并等待下一帧：%s",
-                    self.port_name,
-                    frame[1].decode("utf-8", errors="replace"),
-                )
-                return
-            if _is_restarting_fatal(frame):
-                raise PicoRestartingError("Pico 发生不可恢复的渲染错误，设备正在自动重启")
-            if frame and frame[0] == "ERR":
-                raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
-        LOGGER.error("[交互超时][%s] %.1f 秒内未收到 ACK:JSON", self.port_name, JSON_ACK_TIMEOUT)
-        raise RuntimeError("等待 Pico JSON 接收确认超时")
+        self._write_packet(packet, "JSONZ#{}".format(request_id), build_elapsed_ms)
 
     def reboot(self, timeout=30.0):
         """请求 Pico 执行软重启，并在指定秒数内等待设备确认。"""

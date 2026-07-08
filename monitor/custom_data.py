@@ -196,9 +196,10 @@ def _load_definition(plugin_path, environment_root):
     interval = values.get("CUSTOM_DATA_INTERVAL", values.get("interval"))
     if not isinstance(interval, (int, float)) or isinstance(interval, bool) or interval <= 0:
         raise CustomDataError("必须定义大于 0 的 CUSTOM_DATA_INTERVAL")
-    tracked_paths = [script_path, plugin_directory, manifest_path]
-    if requirements_path.is_file():
-        tracked_paths.append(requirements_path)
+    tracked_paths = [
+        path for path in plugin_directory.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts and path.suffix.lower() not in (".pyc", ".pyo")
+    ]
     modified_time = max(path.stat().st_mtime for path in tracked_paths)
     return CustomDataDefinition(
         path=script_path,
@@ -244,37 +245,70 @@ def _locate_manifest_root(extracted_directory):
     return manifests[0].parent
 
 
-def run_script(definition, timeout=DEFAULT_SCRIPT_TIMEOUT_SECONDS):
-    """在插件独立虚拟环境的子进程中执行 collect 并返回 JSON 数据。"""
-    python_path = _environment_python(definition.environment_directory)
-    if not python_path.is_file():
-        raise CustomDataError("插件环境尚未安装，请先在自定义数据窗口安装依赖")
-    command = [str(python_path), str(_runner_path()), str(definition.path)]
-    try:
-        completed = subprocess.run(
-            command,
-            cwd=str(definition.plugin_directory),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            check=False,
+class CustomDataWorker:
+    """维护单个插件的常驻隔离进程，避免高频采集反复启动解释器。"""
+
+    def __init__(self, definition):
+        """保存插件定义并初始化尚未启动的进程状态。"""
+        self.definition = definition
+        self.process = None
+        self.lock = threading.RLock()
+
+    def _start(self):
+        """启动插件常驻进程并建立行式 JSON 通信管道。"""
+        python_path = _environment_python(self.definition.environment_directory)
+        if not python_path.is_file():
+            raise CustomDataError("插件环境尚未安装，请先在自定义数据窗口安装依赖")
+        self.process = subprocess.Popen(
+            [str(python_path), str(_runner_path()), str(self.definition.path)],
+            cwd=str(self.definition.plugin_directory), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", bufsize=1,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-    except subprocess.TimeoutExpired as error:
-        raise CustomDataError("collect 执行超过 {:g} 秒，已终止子进程".format(timeout)) from error
-    try:
-        envelope = json.loads(completed.stdout)
-    except ValueError as error:
-        if completed.returncode != 0:
-            detail = completed.stderr.strip() or completed.stdout.strip() or "未知错误"
-            raise CustomDataError("插件子进程执行失败：{}".format(detail)) from error
-        raise CustomDataError("插件子进程未返回合法 JSON：{}".format(completed.stdout.strip())) from error
-    if not envelope.get("ok"):
-        raise CustomDataError(envelope.get("error", "插件执行失败"))
-    if completed.returncode != 0:
-        raise CustomDataError("插件子进程异常退出，退出码：{}".format(completed.returncode))
-    return envelope.get("data")
+
+    def collect(self, timeout=DEFAULT_SCRIPT_TIMEOUT_SECONDS):
+        """请求常驻进程执行一次采集，超时或退出时终止进程以便下次重建。"""
+        with self.lock:
+            if self.process is None or self.process.poll() is not None:
+                self.stop()
+                self._start()
+            try:
+                self.process.stdin.write('{"command":"collect"}\n')
+                self.process.stdin.flush()
+                result = []
+                reader = threading.Thread(target=lambda: result.append(self.process.stdout.readline()), daemon=True)
+                reader.start()
+                reader.join(timeout)
+                if reader.is_alive():
+                    self.stop()
+                    raise CustomDataError("collect 执行超过 {:g} 秒，已重启插件进程".format(timeout))
+                if not result or not result[0]:
+                    self.stop()
+                    raise CustomDataError("插件进程异常退出")
+                envelope = json.loads(result[0])
+            except (OSError, ValueError) as error:
+                self.stop()
+                raise CustomDataError("插件进程通信失败：{}".format(error)) from error
+            if not envelope.get("ok"):
+                raise CustomDataError(envelope.get("error", "插件执行失败"))
+            return envelope.get("data")
+
+    def stop(self):
+        """终止插件进程并关闭通信管道。"""
+        with self.lock:
+            process, self.process = self.process, None
+            if process is None:
+                return
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+            for stream in (process.stdin, process.stdout):
+                if stream:
+                    stream.close()
 
 
 class CustomDataManager:
@@ -288,9 +322,24 @@ class CustomDataManager:
         self.environment_root.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
         self.states = {}
+        self.workers = {}
         self.load_errors = {}
         self.last_scan_time = 0.0
         self.reload_scripts()
+
+    def close(self):
+        """停止全部插件常驻进程并释放通信管道。"""
+        with self.lock:
+            workers, self.workers = tuple(self.workers.values()), {}
+        for worker in workers:
+            worker.stop()
+
+    def __del__(self):
+        """在管理器回收时尽力清理仍在运行的插件进程。"""
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def _plugin_candidates(self):
         """返回目录中包含 plugin.json 的插件目录候选项。"""
@@ -316,7 +365,9 @@ class CustomDataManager:
                 except Exception as error:
                     errors[str(plugin_path)] = traceback.format_exception_only(type(error), error)[-1].strip()
             old_states = self.states
+            old_workers = self.workers
             self.states = {}
+            self.workers = {}
             for name, definition in definitions.items():
                 old_state = old_states.get(name)
                 if old_state and old_state.definition.path == definition.path:
@@ -324,6 +375,16 @@ class CustomDataManager:
                     self.states[name] = old_state
                 else:
                     self.states[name] = CustomDataState(definition=definition)
+                old_worker = old_workers.pop(name, None)
+                if old_worker and old_worker.definition.modified_time == definition.modified_time:
+                    old_worker.definition = definition
+                    self.workers[name] = old_worker
+                else:
+                    if old_worker:
+                        old_worker.stop()
+                    self.workers[name] = CustomDataWorker(definition)
+            for worker in old_workers.values():
+                worker.stop()
             self.load_errors = errors
             self.last_scan_time = time.monotonic()
 
@@ -367,6 +428,9 @@ class CustomDataManager:
             if state is None:
                 raise CustomDataError("插件不存在或尚未加载")
             definition = state.definition
+            worker = self.workers.get(name)
+            if worker:
+                worker.stop()
         runtime_python = get_runtime_python()
         if not runtime_python.is_file():
             raise CustomDataError("未找到插件 Python Runtime：{}".format(runtime_python))
@@ -432,7 +496,7 @@ class CustomDataManager:
                 if state.last_run_time and now - state.last_run_time < state.definition.interval:
                     continue
                 try:
-                    state.data = run_script(state.definition)
+                    state.data = self.workers[state.definition.name].collect()
                     state.error = ""
                 except Exception:
                     state.error = traceback.format_exc()
@@ -441,20 +505,25 @@ class CustomDataManager:
             return {state.definition.key: state.data for state in self.states.values() if not state.error and state.data is not None}
 
     def collect_task_data(self, name):
-        """在子进程中执行指定插件任务，并返回 ext 字段映射。"""
+        """通过独立常驻进程执行指定插件，且不阻塞其他插件采集。"""
         self.reload_if_changed()
         with self.lock:
             state = self.states.get(name)
             if state is None:
                 return {}
-            try:
-                state.data = run_script(state.definition)
+            worker = self.workers[name]
+        try:
+            data = worker.collect()
+            with self.lock:
+                state.data = data
                 state.error = ""
-                return {state.definition.key: state.data}
-            except Exception:
+            return {state.definition.key: data}
+        except Exception:
+            with self.lock:
                 state.error = traceback.format_exc()
-                return {}
-            finally:
+            return {}
+        finally:
+            with self.lock:
                 state.last_run_time = time.monotonic()
 
     def task_definitions(self):
@@ -520,6 +589,9 @@ class CustomDataManager:
                 break
         if definition is None:
             raise CustomDataError("未找到要删除的插件")
+        worker = self.workers.get(definition.name)
+        if worker:
+            worker.stop()
         shutil.rmtree(definition.plugin_directory)
         if definition.environment_directory.is_dir():
             shutil.rmtree(definition.environment_directory)
@@ -531,11 +603,12 @@ class CustomDataManager:
             state = self.states.get(name)
             if state is None:
                 return "插件不存在或尚未加载"
-            try:
-                result = run_script(state.definition)
-                return json.dumps(result, ensure_ascii=False, indent=2)
-            except Exception:
-                return traceback.format_exc()
+            worker = self.workers[name]
+        try:
+            result = worker.collect()
+            return json.dumps(result, ensure_ascii=False, indent=2)
+        except Exception:
+            return traceback.format_exc()
 
 _manager = None
 

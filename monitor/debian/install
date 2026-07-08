@@ -1,4 +1,5 @@
 pico_monitor.py usr/lib/pico-monitor
+monitor_core usr/lib/pico-monitor
 pico_client.py usr/lib/pico-monitor
 pico_upgrade.py usr/lib/pico-monitor
 monitor_update.py usr/lib/pico-monitor

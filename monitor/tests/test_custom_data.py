@@ -60,6 +60,24 @@ class CustomDataTaskTest(unittest.TestCase):
 
         self.assertEqual(result, {"demo_json": {"value": 2}})
 
+    def test_high_frequency_collection_reuses_plugin_process(self):
+        """确认连续采集复用同一个插件进程，避免反复启动解释器。"""
+        with tempfile.TemporaryDirectory() as directory:
+            plugin = self._create_plugin(directory)
+            (plugin / "main.py").write_text(
+                'import os\n\ndef collect():\n    """返回当前插件进程编号。"""\n    return {"pid": os.getpid()}\n',
+                encoding="utf-8",
+                newline="\n",
+            )
+            manager = custom_data.CustomDataManager(directory, Path(directory) / "envs")
+            self._create_test_environment(manager.task_definitions()[0])
+
+            first = manager.collect_task_data("demo_task")
+            second = manager.collect_task_data("demo_task")
+            manager.close()
+
+        self.assertEqual(first["demo_json"]["pid"], second["demo_json"]["pid"])
+
     def test_single_python_file_is_ignored_and_rejected_for_import(self):
         """确认旧版单文件不会被扫描，也不能再通过导入接口加载。"""
         with tempfile.TemporaryDirectory() as directory:
