@@ -1,12 +1,23 @@
 """验证后台采集线程池、任务调度和无锁快照发布行为。"""
 
+import sys
 import threading
+import types
 import unittest
 from unittest import mock
+
+sys.modules.setdefault("psutil", types.SimpleNamespace())
 
 from collectTask.coordinator import CollectionCoordinator
 from collectTask.executor import BoundedElasticThreadPool, TaskRejectedError
 from collectTask.result_store import LockFreeSnapshotStore
+from collectTask.system_tasks import system_task_defaults
+from collectTask.tasks.disk_common import (
+    DISK_CAPACITY_HEALTH_FIELDS,
+    DISK_RATE_FIELDS,
+    DISK_TEMPERATURE_FIELDS,
+    publish_disk_snapshot,
+)
 
 
 class BoundedElasticThreadPoolTest(unittest.TestCase):
@@ -72,6 +83,57 @@ class LockFreeSnapshotStoreTest(unittest.TestCase):
 
 class CollectionCoordinatorTest(unittest.TestCase):
     """验证单个采集子任务完成后立即发布对应结果。"""
+
+    def test_disk_tasks_are_split_with_expected_default_intervals(self):
+        """确认磁盘容量健康、温度和读写速率任务拥有独立默认频率。"""
+        defaults = system_task_defaults()
+        self.assertEqual(defaults["磁盘容量与健康采集"], 60.0)
+        self.assertEqual(defaults["磁盘温度采集"], 5.0)
+        self.assertEqual(defaults["磁盘读写速率采集"], 1.0)
+        self.assertNotIn("磁盘采集", defaults)
+
+    def test_split_disk_task_fragments_keep_previous_fields(self):
+        """确认拆分后的磁盘任务按字段合并，不覆盖其他任务已有结果。"""
+        collector = types.SimpleNamespace()
+        capacity = publish_disk_snapshot(
+            collector,
+            disk={"percent": 50.0, "used_bytes": 50, "total_bytes": 100},
+            disks=[{"name": "DISK0", "used_bytes": 50, "total_bytes": 100, "percent": 50.0, "health": 1}],
+            physical_disks=[{"name": "DISK0", "health": 1}],
+            disk_fields=DISK_CAPACITY_HEALTH_FIELDS,
+            physical_fields=DISK_CAPACITY_HEALTH_FIELDS,
+        )
+        self.assertEqual(capacity["disks"][0]["health"], 1)
+        temperature = publish_disk_snapshot(
+            collector,
+            disks=[{"name": "DISK0", "temperature_c": 42.0}],
+            physical_disks=[{"name": "DISK0", "temperature_c": 42.0}],
+            disk_fields=DISK_TEMPERATURE_FIELDS,
+            physical_fields=DISK_TEMPERATURE_FIELDS,
+        )
+        self.assertEqual(temperature["disks"][0]["used_bytes"], 50)
+        self.assertEqual(temperature["disks"][0]["temperature_c"], 42.0)
+        rate = publish_disk_snapshot(
+            collector,
+            disks=[{"name": "DISK0", "read_bps": 10, "write_bps": 20}],
+            physical_disks=[{"name": "DISK0", "read_bps": 10, "write_bps": 20}],
+            disk_fields=DISK_RATE_FIELDS,
+            physical_fields=DISK_RATE_FIELDS,
+        )
+        self.assertEqual(rate["disks"][0]["temperature_c"], 42.0)
+        self.assertEqual(rate["disks"][0]["read_bps"], 10)
+        replaced = publish_disk_snapshot(
+            collector,
+            disks=[{"name": "DISK0", "used_bytes": 60, "total_bytes": 100, "percent": 60.0, "health": 1}],
+            physical_disks=[{"name": "DISK0", "health": 1}],
+            disk_fields=DISK_CAPACITY_HEALTH_FIELDS,
+            physical_fields=DISK_CAPACITY_HEALTH_FIELDS,
+            replace_disks=True,
+            replace_physical_disks=True,
+        )
+        self.assertEqual(len(replaced["disks"]), 1)
+        self.assertEqual(replaced["disks"][0]["temperature_c"], 42.0)
+        self.assertEqual(replaced["disks"][0]["used_bytes"], 60)
 
     def test_task_completion_publishes_fragment_immediately(self):
         """确认协调器无需等待同批其他任务即可更新快照。"""
