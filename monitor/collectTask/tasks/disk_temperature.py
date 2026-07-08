@@ -7,7 +7,8 @@ from .disk_common import DISK_TEMPERATURE_FIELDS, publish_disk_snapshot
 class DiskTemperatureTask(CollectionTask):
     """采集磁盘温度，并合并到已有磁盘容量和读写速率快照。"""
 
-    name = "磁盘温度采集"
+    name = "disk_temperature"
+    zh_name = "磁盘温度采集"
     default_interval = 5.0
     order = 31
 

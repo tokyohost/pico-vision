@@ -7,7 +7,8 @@ from .disk_common import DISK_CAPACITY_HEALTH_FIELDS, publish_disk_snapshot
 class DiskCapacityHealthTask(CollectionTask):
     """采集磁盘容量和健康度，低频刷新较重的磁盘基础信息。"""
 
-    name = "磁盘容量与健康采集"
+    name = "disk_capacity_health"
+    zh_name = "磁盘容量与健康采集"
     default_interval = 60.0
     order = 30
 

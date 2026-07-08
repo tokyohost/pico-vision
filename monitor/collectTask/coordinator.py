@@ -4,7 +4,7 @@ import logging
 import time
 
 from .executor import BoundedElasticThreadPool, TaskRejectedError
-from .system_tasks import CallbackCollectionTask, create_system_tasks
+from .system_tasks import CallbackCollectionTask, create_system_tasks, system_task_aliases
 
 
 LOGGER = logging.getLogger("pico-monitor.collector")
@@ -44,13 +44,13 @@ class CollectionCoordinator:
                 self.executor.submit(self._execute_and_publish, task)
                 LOGGER.info(
                     "采集任务已提交：任务=%s，频率=%.3f秒，%s",
-                    task.name,
+                    self._task_label(task),
                     task.interval,
                     self._pool_state_text(),
                 )
             except TaskRejectedError:
                 task.mark_finished()
-                LOGGER.warning("采集任务被丢弃：任务=%s，%s", task.name, self._pool_state_text())
+                LOGGER.warning("采集任务被丢弃：任务=%s，%s", self._task_label(task), self._pool_state_text())
 
     def next_schedule_delay(self):
         """返回距离下一次任务到期的等待秒数，用于驱动多频率调度循环。"""
@@ -76,14 +76,20 @@ class CollectionCoordinator:
         if len(item) == 2:
             name, callback = item
             interval = 1.0
-        else:
+            zh_name = None
+        elif len(item) == 3:
             name, callback, interval = item
-        return CallbackCollectionTask(collector, callback, name, interval)
+            zh_name = None
+        else:
+            name, callback, interval, zh_name = item
+        return CallbackCollectionTask(collector, callback, name, interval, zh_name)
 
     def _apply_task_intervals(self, task_intervals):
         """按任务名称应用外部采集频率配置。"""
         task_by_name = {task.name: task for task in self.tasks}
+        aliases = system_task_aliases()
         for name, interval in task_intervals.items():
+            name = aliases.get(name, name)
             task = task_by_name.get(name)
             if task is None:
                 LOGGER.warning("忽略未知采集任务频率配置：任务=%s，频率=%s", name, interval)
@@ -95,7 +101,7 @@ class CollectionCoordinator:
 
     def _task_interval_text(self):
         """把所有任务当前采集频率格式化为日志文本。"""
-        return "、".join("{}={}秒".format(task.name, task.interval) for task in self.tasks)
+        return "、".join("{}={}秒".format(self._task_label(task), task.interval) for task in self.tasks)
 
     def _pool_state_text(self):
         """把线程池实时状态格式化为统一的中文日志文本。"""
@@ -105,10 +111,17 @@ class CollectionCoordinator:
             "活跃={active}，空闲={idle}，排队={queued}/{queue_capacity}]"
         ).format(**state)
 
+    @staticmethod
+    def _task_label(task):
+        """返回日志中使用的任务中文名称和英文标识。"""
+        zh_name = getattr(task, "zh_name", task.name)
+        return "{}({})".format(zh_name, task.name) if zh_name != task.name else task.name
+
     def _execute_and_publish(self, task):
         """执行单个子任务，并在完成时立即无锁发布对应采样结果。"""
         started = time.monotonic()
-        LOGGER.info("采集任务开始：任务=%s，%s", task.name, self._pool_state_text())
+        task_label = self._task_label(task)
+        LOGGER.info("采集任务开始：任务=%s，%s", task_label, self._pool_state_text())
         try:
             fragment = task.collect()
             if self.result_transform is not None:
@@ -116,7 +129,7 @@ class CollectionCoordinator:
             self.result_store.publish(fragment)
             LOGGER.info(
                 "采集任务完成：任务=%s，耗时=%.3f秒，更新字段=%s，%s",
-                task.name,
+                task_label,
                 time.monotonic() - started,
                 "、".join(fragment.keys()) or "无",
                 self._pool_state_text(),
@@ -124,7 +137,7 @@ class CollectionCoordinator:
         except Exception as error:
             LOGGER.exception(
                 "采集任务失败：任务=%s，耗时=%.3f秒，错误=%s，%s",
-                task.name,
+                task_label,
                 time.monotonic() - started,
                 error,
                 self._pool_state_text(),

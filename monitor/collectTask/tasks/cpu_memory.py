@@ -12,7 +12,8 @@ from ..system_tasks import CollectionTask
 class CpuMemoryTask(CollectionTask):
     """采集 CPU、内存、CPU 频率与温度并维护对应历史序列。"""
 
-    name = "CPU与内存采集"
+    name = "cpu_memory"
+    zh_name = "CPU与内存采集"
     default_interval = 1.0
     order = 20
 

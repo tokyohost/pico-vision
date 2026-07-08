@@ -5,8 +5,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=-/etc/pico-monitor.conf
-ExecStart=/usr/local/bin/pico-monitor
+ExecStart=/usr/local/bin/pico-monitor --config /etc/pico-monitor.conf
 Restart=always
 RestartSec=3
 User=root

@@ -13,7 +13,8 @@ LOGGER = logging.getLogger("pico-monitor.collector")
 class CollectionTask:
     """定义采集子任务的运行状态、默认频率和统一执行接口。"""
 
-    name = "未命名采集任务"
+    name = "unnamed"
+    zh_name = "未命名采集任务"
     default_interval = 1.0
     order = 100
 
@@ -54,11 +55,12 @@ class CallbackCollectionTask(CollectionTask):
 
     order = 1000
 
-    def __init__(self, collector, callback, name, default_interval=1.0):
-        """保存附加采集函数、中文任务名称和默认采集频率。"""
+    def __init__(self, collector, callback, name, default_interval=1.0, zh_name=None):
+        """保存附加采集函数、任务标识、中文名称和默认采集频率。"""
         super().__init__(collector)
         self.callback = callback
         self.name = name
+        self.zh_name = zh_name or name
         self.default_interval = float(default_interval)
         self.interval = float(default_interval)
 
@@ -95,11 +97,27 @@ def system_task_classes():
 
 
 def system_task_defaults():
-    """返回任务名称到默认采集频率的映射，供命令行、托盘和 Linux 配置展示。"""
+    """返回英文任务标识到默认采集频率的映射，供命令行、托盘和 Linux 配置展示。"""
     return {
         task_class.name: float(getattr(task_class, "default_interval", 1.0))
         for task_class in system_task_classes()
     }
+
+
+def system_task_zh_names():
+    """返回英文任务标识到中文任务名称的映射，供界面展示和旧配置迁移。"""
+    return {
+        task_class.name: getattr(task_class, "zh_name", task_class.name)
+        for task_class in system_task_classes()
+    }
+
+
+def system_task_aliases():
+    """返回旧中文任务名称到英文任务标识的映射，兼容历史配置。"""
+    aliases = {}
+    for name, zh_name in system_task_zh_names().items():
+        aliases[zh_name] = name
+    return aliases
 
 
 def create_system_tasks(collector):
@@ -107,6 +125,6 @@ def create_system_tasks(collector):
     tasks = tuple(task_class(collector) for task_class in system_task_classes())
     LOGGER.info(
         "已发现系统采集任务：%s",
-        "、".join("{}={}秒".format(task.name, task.interval) for task in tasks),
+        "、".join("{}({})={}秒".format(task.zh_name, task.name, task.interval) for task in tasks),
     )
     return tasks

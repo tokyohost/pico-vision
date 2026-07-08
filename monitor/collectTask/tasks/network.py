@@ -10,7 +10,8 @@ from ..system_tasks import CollectionTask
 class NetworkTask(CollectionTask):
     """采集主通信网卡、速率、累计流量、IP 和网络延迟。"""
 
-    name = "网络采集"
+    name = "network"
+    zh_name = "网络采集"
     default_interval = 1.0
     order = 40
 

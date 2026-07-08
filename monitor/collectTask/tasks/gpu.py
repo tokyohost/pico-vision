@@ -10,7 +10,8 @@ from ..system_tasks import CollectionTask
 class GpuTask(CollectionTask):
     """读取 GPU 后台采样结果并维护 GPU 使用率历史。"""
 
-    name = "GPU采集"
+    name = "gpu"
+    zh_name = "GPU采集"
     default_interval = 1.0
     order = 60
 

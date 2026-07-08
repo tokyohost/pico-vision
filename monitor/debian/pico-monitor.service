@@ -5,14 +5,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-Environment=PICO_MONITOR_PORT=
-Environment=PICO_MONITOR_PING_TARGET=www.baidu.com
-Environment=PICO_MONITOR_INTERVAL=1.0
-Environment=PICO_MONITOR_RECONNECT_INTERVAL=3.0
-Environment=PICO_MONITOR_SCREEN_ROTATION=0
-Environment=PICO_MONITOR_NETWORK_UNIT=MB
-EnvironmentFile=-/etc/pico-monitor.conf
-ExecStart=/usr/bin/pico-monitor
+ExecStart=/usr/bin/pico-monitor --config /etc/pico-monitor.conf
 Restart=always
 RestartSec=3
 User=root

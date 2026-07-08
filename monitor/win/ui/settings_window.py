@@ -7,6 +7,7 @@ from qbittorrent_monitor import QbittorrentApiClient
 
 from ..constants import APPLICATION_NAME
 from ..settings import (
+    COLLECTION_TASK_ZH_NAMES,
     DEFAULT_COLLECTION_TASK_INTERVALS,
     normalize_collection_task_intervals,
     style_label,
@@ -242,10 +243,11 @@ class SettingsWindowMixin:
         collection_tasks = card("系统采集任务")
         for row, (task_name, variable) in enumerate(collection_task_variables.items()):
             default_interval = DEFAULT_COLLECTION_TASK_INTERVALS[task_name]
+            task_label = COLLECTION_TASK_ZH_NAMES.get(task_name, task_name)
             field(
                 collection_tasks,
                 row,
-                "{}（默认 {:g} 秒）".format(task_name, default_interval),
+                "{}（{}，默认 {:g} 秒）".format(task_label, task_name, default_interval),
                 ttk.Entry(collection_tasks, textvariable=variable),
             )
 

@@ -3,7 +3,8 @@
 import json
 from pathlib import Path
 
-from collectTask import system_task_defaults
+from collectTask import system_task_defaults, system_task_zh_names
+from collectTask.system_tasks import system_task_aliases
 
 
 STYLE_NAMES = {
@@ -26,6 +27,7 @@ DEFAULT_STYLE_CATALOG = [
     for name, chinese_name in STYLE_NAMES.items()
 ]
 DEFAULT_COLLECTION_TASK_INTERVALS = system_task_defaults()
+COLLECTION_TASK_ZH_NAMES = system_task_zh_names()
 DEFAULT_SETTINGS = {
     "port": "",
     "ping_target": "www.baidu.com",
@@ -100,9 +102,11 @@ def normalize_style_catalog(catalog):
 def normalize_collection_task_intervals(intervals):
     """校验系统采集任务频率配置，并补齐新增任务的默认频率。"""
     normalized = dict(DEFAULT_COLLECTION_TASK_INTERVALS)
+    aliases = system_task_aliases()
     if not isinstance(intervals, dict):
         return normalized
     for name, interval in intervals.items():
+        name = aliases.get(name, name)
         if name not in normalized:
             continue
         try:

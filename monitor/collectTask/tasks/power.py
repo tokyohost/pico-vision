@@ -10,7 +10,8 @@ from ..system_tasks import CollectionTask
 class PowerTask(CollectionTask):
     """采集系统功耗并维护可用功耗的历史序列。"""
 
-    name = "功耗采集"
+    name = "power"
+    zh_name = "功耗采集"
     default_interval = 1.0
     order = 50
 

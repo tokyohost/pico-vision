@@ -10,7 +10,8 @@ from ..system_tasks import CollectionTask
 class FpsTask(CollectionTask):
     """读取前台应用 FPS 后台采样结果。"""
 
-    name = "FPS采集"
+    name = "fps"
+    zh_name = "FPS采集"
     default_interval = 1.0
     order = 70
 

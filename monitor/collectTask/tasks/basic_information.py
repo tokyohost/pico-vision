@@ -13,7 +13,8 @@ from ..system_tasks import CollectionTask
 class BasicInformationTask(CollectionTask):
     """采集主机身份、系统平台、时间戳和运行时长。"""
 
-    name = "基础信息采集"
+    name = "basic_information"
+    zh_name = "基础信息采集"
     default_interval = 1.0
     order = 10
 

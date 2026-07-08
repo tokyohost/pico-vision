@@ -16,6 +16,7 @@
 
 import json
 import os
+import tempfile
 import threading
 import unittest
 import zlib
@@ -29,7 +30,9 @@ from pico_monitor import (
     MonitorService,
     create_argument_parser,
     format_pico_information,
+    load_monitor_config,
     log_monitor_version,
+    parse_monitor_arguments,
     show_pico_information,
     validate_arguments,
 )
@@ -688,6 +691,68 @@ class PicoClientTest(unittest.TestCase):
         arguments = create_argument_parser().parse_args(["--ping-target", "1.1.1.1", "--network-unit", "Mbps"])
         self.assertEqual(arguments.ping_target, "1.1.1.1")
         self.assertEqual(arguments.network_unit, "Mbps")
+
+    def test_yaml_config_supplies_nested_defaults(self):
+        """确认 Linux YAML 配置能作为命令行参数默认值。"""
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as config_file:
+            config_file.write(
+                "\n".join((
+                    "serial:",
+                    "  port: /dev/ttyACM1",
+                    "network:",
+                    "  ping_target: 1.1.1.1",
+                    "  unit: Mbps",
+                    "monitor:",
+                    "  interval: 2.5",
+                    "  dev: false",
+                    "screen:",
+                    "  lcd_brightness: 80",
+                    "collection_tasks:",
+                    "  intervals:",
+                    "    cpu_memory: 2",
+                    "qbittorrent:",
+                    "  enabled: true",
+                    "  address: http://127.0.0.1:8080",
+                    "  username: admin",
+                    "  password: password",
+                ))
+            )
+            config_path = config_file.name
+        try:
+            arguments = parse_monitor_arguments(["--config", config_path])
+        finally:
+            os.unlink(config_path)
+
+        self.assertEqual(arguments.port, "/dev/ttyACM1")
+        self.assertEqual(arguments.ping_target, "1.1.1.1")
+        self.assertEqual(arguments.network_unit, "Mbps")
+        self.assertEqual(arguments.interval, 2.5)
+        self.assertEqual(arguments.lcd_brightness, 80)
+        self.assertFalse(arguments.dev)
+        self.assertEqual(arguments.collection_task_intervals["cpu_memory"], 2)
+        self.assertTrue(arguments.qbittorrent_enabled)
+        validate_arguments(arguments)
+
+    def test_legacy_environment_config_is_still_supported(self):
+        """确认旧版 EnvironmentFile 配置升级后仍可读取。"""
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as config_file:
+            config_file.write(
+                "\n".join((
+                    'PICO_MONITOR_PING_TARGET="8.8.8.8"',
+                    'PICO_MONITOR_NETWORK_UNIT="Mbps"',
+                    'PICO_MONITOR_COLLECTION_TASK_INTERVALS="{\\"网络采集\\": 3}"',
+                ))
+            )
+            config_path = config_file.name
+        try:
+            config = load_monitor_config(config_path)
+            arguments = create_argument_parser(config).parse_args([])
+        finally:
+            os.unlink(config_path)
+
+        self.assertEqual(arguments.ping_target, "8.8.8.8")
+        self.assertEqual(arguments.network_unit, "Mbps")
+        self.assertEqual(arguments.collection_task_intervals["network"], 3)
 
     def test_lcd_style_argument(self):
         """确认 monitor 可以选择固件提供的内置 LCD 样式。"""

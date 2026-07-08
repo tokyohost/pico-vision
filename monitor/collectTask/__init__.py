@@ -3,7 +3,7 @@
 from .coordinator import CollectionCoordinator
 from .executor import BoundedElasticThreadPool, TaskRejectedError
 from .result_store import LockFreeSnapshotStore
-from .system_tasks import system_task_defaults
+from .system_tasks import system_task_defaults, system_task_zh_names
 
 __all__ = [
     "BoundedElasticThreadPool",
@@ -11,4 +11,5 @@ __all__ = [
     "LockFreeSnapshotStore",
     "TaskRejectedError",
     "system_task_defaults",
+    "system_task_zh_names",
 ]

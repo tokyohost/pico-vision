@@ -1,5 +1,6 @@
 psutil>=5.9
 pyserial>=3.5
+PyYAML>=6.0
 pyroute2>=0.7; sys_platform == "linux"
 Pillow>=10.0; sys_platform == "win32"
 pystray>=0.19; sys_platform == "win32"

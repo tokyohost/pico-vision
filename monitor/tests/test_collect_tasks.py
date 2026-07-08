@@ -11,7 +11,7 @@ sys.modules.setdefault("psutil", types.SimpleNamespace())
 from collectTask.coordinator import CollectionCoordinator
 from collectTask.executor import BoundedElasticThreadPool, TaskRejectedError
 from collectTask.result_store import LockFreeSnapshotStore
-from collectTask.system_tasks import system_task_defaults
+from collectTask.system_tasks import system_task_defaults, system_task_zh_names
 from collectTask.tasks.disk_common import (
     DISK_CAPACITY_HEALTH_FIELDS,
     DISK_RATE_FIELDS,
@@ -87,9 +87,11 @@ class CollectionCoordinatorTest(unittest.TestCase):
     def test_disk_tasks_are_split_with_expected_default_intervals(self):
         """确认磁盘容量健康、温度和读写速率任务拥有独立默认频率。"""
         defaults = system_task_defaults()
-        self.assertEqual(defaults["磁盘容量与健康采集"], 60.0)
-        self.assertEqual(defaults["磁盘温度采集"], 5.0)
-        self.assertEqual(defaults["磁盘读写速率采集"], 1.0)
+        zh_names = system_task_zh_names()
+        self.assertEqual(defaults["disk_capacity_health"], 60.0)
+        self.assertEqual(defaults["disk_temperature"], 5.0)
+        self.assertEqual(defaults["disk_rate"], 1.0)
+        self.assertEqual(zh_names["disk_capacity_health"], "磁盘容量与健康采集")
         self.assertNotIn("磁盘采集", defaults)
 
     def test_split_disk_task_fragments_keep_previous_fields(self):
@@ -143,7 +145,8 @@ class CollectionCoordinatorTest(unittest.TestCase):
         coordinator.result_store = store
         coordinator.result_transform = None
         task = mock.Mock()
-        task.name = "CPU与内存采集"
+        task.name = "cpu_memory"
+        task.zh_name = "CPU与内存采集"
         task.collect.return_value = {"cpu": {"percent": 42.0}}
         task.scheduled = True
         coordinator.executor = BoundedElasticThreadPool()
@@ -151,8 +154,8 @@ class CollectionCoordinatorTest(unittest.TestCase):
             coordinator._execute_and_publish(task)
         self.assertEqual(store.snapshot()["cpu"]["percent"], 42.0)
         self.assertFalse(task.scheduled)
-        self.assertIn("采集任务开始：任务=CPU与内存采集", logs.output[0])
-        self.assertIn("采集任务完成：任务=CPU与内存采集", logs.output[1])
+        self.assertIn("采集任务开始：任务=CPU与内存采集(cpu_memory)", logs.output[0])
+        self.assertIn("采集任务完成：任务=CPU与内存采集(cpu_memory)", logs.output[1])
         self.assertIn("线程池[核心=3，最大=8", logs.output[1])
 
 
