@@ -22,6 +22,7 @@ CONFIG_ENV_MAP = {
     "PICO_MONITOR_NETWORK_UNIT": ("network", "unit"),
     "PICO_MONITOR_LCD_STYLE": ("screen", "lcd_style"),
     "PICO_MONITOR_DEV": ("monitor", "dev"),
+    "PICO_MONITOR_LOG_LEVEL": ("logging", "level"),
     "PICO_MONITOR_QBITTORRENT_ENABLED": ("qbittorrent", "enabled"),
     "PICO_MONITOR_QBITTORRENT_ADDRESS": ("qbittorrent", "address"),
     "PICO_MONITOR_QBITTORRENT_USERNAME": ("qbittorrent", "username"),
@@ -151,5 +152,4 @@ def parse_collection_task_intervals(value):
             raise argparse.ArgumentTypeError("{} 的采集频率必须大于 0".format(name))
         intervals[name] = interval
     return intervals
-
 

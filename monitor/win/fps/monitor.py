@@ -68,7 +68,7 @@ class FpsMonitor:
             sample["value"] = value
             log_state = (sample.get("source"), sample.get("process_id"), value)
             if log_state != self._last_log_state:
-                LOGGER.info(
+                LOGGER.debug(
                     "[FPS] 获取成功：value=%.1f，source=%s，pid=%s，process=%s",
                     value,
                     sample.get("source", ""),

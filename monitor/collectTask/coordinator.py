@@ -42,7 +42,7 @@ class CollectionCoordinator:
             task.mark_scheduled(now)
             try:
                 self.executor.submit(self._execute_and_publish, task)
-                LOGGER.info(
+                LOGGER.debug(
                     "采集任务已提交：任务=%s，频率=%.3f秒，%s",
                     self._task_label(task),
                     task.interval,
@@ -121,13 +121,13 @@ class CollectionCoordinator:
         """执行单个子任务，并在完成时立即无锁发布对应采样结果。"""
         started = time.monotonic()
         task_label = self._task_label(task)
-        LOGGER.info("采集任务开始：任务=%s，%s", task_label, self._pool_state_text())
+        LOGGER.debug("采集任务开始：任务=%s，%s", task_label, self._pool_state_text())
         try:
             fragment = task.collect()
             if self.result_transform is not None:
                 fragment = self.result_transform(fragment)
             self.result_store.publish(fragment)
-            LOGGER.info(
+            LOGGER.debug(
                 "采集任务完成：任务=%s，耗时=%.3f秒，更新字段=%s，%s",
                 task_label,
                 time.monotonic() - started,

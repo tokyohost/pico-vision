@@ -1,14 +1,39 @@
 """控制台编码、版本输出和日志配置工具。"""
 
 import argparse
+import atexit
 import io
 import logging
+import logging.handlers
 import os
+import queue
 import sys
 
 from build_info import MONITOR_VERSION
 
 LOGGER = logging.getLogger("pico-monitor")
+_LOG_LISTENER = None
+
+
+def _normalize_log_level(level_name):
+    """把配置中的日志级别名称转换为 logging 可识别的整数级别。"""
+    if isinstance(level_name, int):
+        return level_name
+    normalized = str(level_name or "INFO").strip().upper()
+    level = getattr(logging, normalized, None)
+    if not isinstance(level, int):
+        raise SystemExit("日志级别无效：{}，可选 DEBUG、INFO、WARNING、ERROR、CRITICAL".format(level_name))
+    return level
+
+
+def _stop_log_listener():
+    """停止异步日志监听器，确保进程退出前刷完队列中的日志。"""
+    global _LOG_LISTENER
+    listener = _LOG_LISTENER
+    if listener is None:
+        return
+    _LOG_LISTENER = None
+    listener.stop()
 
 def _ensure_utf8_text_stream(stream):
     """确保日志输出流使用 UTF-8 编码，避免 Windows 打包后中文日志乱码。"""
@@ -84,12 +109,16 @@ class MonitorVersionAction(argparse.Action):
 
 
 
-def configure_logging():
-    """配置适合终端、systemd 和 Windows 托盘收集的日志格式。"""
+def configure_logging(level_name="INFO"):
+    """配置适合终端、systemd 和 Windows 托盘收集的异步日志格式。"""
+    global _LOG_LISTENER
+    _stop_log_listener()
+    log_level = _normalize_log_level(level_name)
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
     stream_handler = logging.StreamHandler(_configure_standard_streams())
+    stream_handler.setLevel(log_level)
     stream_handler.setFormatter(formatter)
-    handlers = [stream_handler]
+    target_handlers = [stream_handler]
     error_log_path = str(os.getenv("PICO_MONITOR_ERROR_LOG_PATH") or "").strip()
     if error_log_path:
         error_handler = logging.FileHandler(
@@ -99,12 +128,24 @@ def configure_logging():
         )
         error_handler.setLevel(logging.ERROR)
         error_handler.setFormatter(formatter)
-        handlers.append(error_handler)
-    logging.basicConfig(level=logging.INFO, handlers=handlers, force=True)
+        target_handlers.append(error_handler)
+    log_queue = queue.Queue()
+    queue_handler = logging.handlers.QueueHandler(log_queue)
+    queue_handler.setLevel(log_level)
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(log_level)
+    root_logger.addHandler(queue_handler)
+    _LOG_LISTENER = logging.handlers.QueueListener(
+        log_queue,
+        *target_handlers,
+        respect_handler_level=True,
+    )
+    _LOG_LISTENER.start()
+    atexit.register(_stop_log_listener)
 
 
 def log_monitor_version():
     """在服务启动阶段记录当前 Monitor 构建版本。"""
     LOGGER.info("Pico Monitor 启动：版本=%s", MONITOR_VERSION)
-
 

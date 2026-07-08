@@ -26,7 +26,8 @@ def create_argument_parser(config=None):
     parser.add_argument("--screen-rotation", type=int, choices=(0, 180), default=int(config_value(config, "PICO_MONITOR_SCREEN_ROTATION", "0")), help="Pico 屏幕旋转角度，可选 0 或 180")
     parser.add_argument("--lcd-brightness", type=int, choices=range(1, 101), default=int(config_value(config, "PICO_MONITOR_LCD_BRIGHTNESS", "50")), help="Pico LCD 背光亮度百分比，范围为 1 至 100")
     parser.add_argument("--network-unit", choices=("MB", "Mbps"), default=config_value(config, "PICO_MONITOR_NETWORK_UNIT", "MB"), help="网络速率模式：MB 自动使用 B/KB/MB/GB，Mbps 自动使用 bps/Kbps/Mbps/Gbps")
-    parser.add_argument("--lcd-style", default=config_value(config, "PICO_MONITOR_LCD_STYLE", "horizontal_disk4x"), help="Pico LCD 界面样式名称")
+    parser.add_argument("--lcd-style", default=config_value(config, "PICO_MONITOR_LCD_STYLE", "game"), help="Pico LCD 界面样式名称")
+    parser.add_argument("--log-level", type=lambda value: str(value).upper(), choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"), default=str(config_value(config, "PICO_MONITOR_LOG_LEVEL", "INFO")).upper(), help="日志输出级别，默认 INFO；排障时可设为 DEBUG")
     qbittorrent_group = parser.add_mutually_exclusive_group()
     qbittorrent_group.add_argument("--qbittorrent-enabled", dest="qbittorrent_enabled", action="store_true", help="开启 qBittorrent 指标采集")
     qbittorrent_group.add_argument("--no-qbittorrent", dest="qbittorrent_enabled", action="store_false", help="关闭 qBittorrent 指标采集")
@@ -51,6 +52,7 @@ def create_argument_parser(config=None):
 
 def validate_arguments(arguments):
     """校验通用间隔以及启用 qBittorrent 后的必填连接参数。"""
+    arguments.log_level = str(arguments.log_level).strip().upper()
     exclusive_actions = sum(bool(value) for value in (
         arguments.pico_info, arguments.upgrade_pico, arguments.update,
     ))
@@ -90,5 +92,3 @@ def parse_monitor_arguments(argv=None):
     arguments = create_argument_parser(config).parse_args(argv)
     arguments.config = config_path
     return arguments
-
-

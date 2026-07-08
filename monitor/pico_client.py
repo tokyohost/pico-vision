@@ -157,13 +157,13 @@ class PicoJsonClient:
         if not self.configured_port and len(candidates) > 1:
             self._connect_parallel(candidates)
             return
-        LOGGER.info("[串口发现] 候选端口：%s", ", ".join(candidates) if candidates else "无")
+        LOGGER.debug("[串口发现] 候选端口：%s", ", ".join(candidates) if candidates else "无")
         errors = []
         for port in candidates:
             if self.cancellation_event is not None and self.cancellation_event.is_set():
                 raise RuntimeError("设备探测已取消")
             try:
-                LOGGER.info("[串口打开] 正在打开 %s，波特率 115200", port)
+                LOGGER.debug("[串口打开] 正在打开 %s，波特率 115200", port)
                 device = serial.Serial(port, 115200, timeout=0.3, write_timeout=10)
                 if self.cancellation_event is None:
                     time.sleep(1.0)
@@ -268,7 +268,7 @@ class PicoJsonClient:
                     time.sleep(self.probe_interval)
                 elif self.cancellation_event.wait(self.probe_interval):
                     return False
-            LOGGER.info(
+            LOGGER.debug(
                 "[Monitor -> Pico][%s][握手 %d/3][PV1 %d 字节] repr=%r hex=%s",
                 device.port,
                 attempt,
@@ -286,7 +286,7 @@ class PicoJsonClient:
                     )
                 written += count
             device.flush()
-            LOGGER.info(
+            LOGGER.debug(
                 "[Monitor -> Pico][%s][握手 %d/3][实际发送 %d/%d 字节]",
                 device.port,
                 attempt,
@@ -300,7 +300,7 @@ class PicoJsonClient:
                 raw_message = device.readline()
                 message = raw_message.decode("utf-8", errors="replace").strip()
                 if message:
-                    LOGGER.info("[Pico -> Monitor][%s][握手响应] %s", device.port, message)
+                    LOGGER.debug("[Pico -> Monitor][%s][握手响应] %s", device.port, message)
                 try:
                     frame = parse_frame(raw_message)
                 except ValueError as error:
@@ -413,7 +413,7 @@ class PicoJsonClient:
         """按统一分块策略写入一条 PV1 帧，并输出串口写入耗时日志。"""
         packet = memoryview(packet)
         total_chunks = (len(packet) + SERIAL_WRITE_CHUNK_SIZE - 1) // SERIAL_WRITE_CHUNK_SIZE
-        LOGGER.info(
+        LOGGER.debug(
             "[Monitor -> Pico][%s][%s][发送帧 %d 字节，共 %d 块]",
             self.port_name,
             label,
@@ -434,7 +434,7 @@ class PicoJsonClient:
             slowest_write_ms = max(slowest_write_ms, chunk_elapsed_ms)
             chunk_count += 1
             total_written += written or 0
-            LOGGER.info(
+            LOGGER.debug(
                 "[协议耗时][%s][%s 写入 %d/%d] offset=%d，请求=%d 字节，实际=%s 字节，耗时=%.1f ms",
                 self.port_name,
                 label,
@@ -461,7 +461,7 @@ class PicoJsonClient:
         self.serial.flush()
         flush_elapsed_ms = (time.monotonic() - flush_started) * 1000
         send_elapsed_ms = (time.monotonic() - send_started) * 1000
-        LOGGER.info(
+        LOGGER.debug(
             "[协议耗时][%s][%s 写入汇总] 构帧=%.1f ms，write合计=%.1f ms，最慢write=%.1f ms，flush=%.1f ms，发送阶段=%.1f ms，总写入=%d/%d 字节，共%d块",
             self.port_name,
             label,
@@ -489,7 +489,7 @@ class PicoJsonClient:
                 raise serial.SerialException("读取 Pico 响应时串口已关闭") from error
             raise
         if response:
-            LOGGER.info(
+            LOGGER.debug(
                 "[Pico -> Monitor][%s][%s 响应] %s",
                 self.port_name,
                 label,
@@ -516,7 +516,7 @@ class PicoJsonClient:
             if frame and frame[0] == "COMMAND":
                 result = json.loads(frame[1].decode("utf-8"))
                 if result.get("request_id") != request_id:
-                    LOGGER.info(
+                    LOGGER.debug(
                         "[Pico -> Monitor][%s][%s 忽略响应] request_id=%s，期望=%s",
                         self.port_name,
                         label,
@@ -534,7 +534,7 @@ class PicoJsonClient:
                         result,
                     )
                     raise RuntimeError(result.get("error") or default_error)
-                LOGGER.info(
+                LOGGER.debug(
                     "[Pico -> Monitor][%s][%s 成功] COMMAND等待=%.1f ms，data=%s",
                     self.port_name,
                     label,
