@@ -57,6 +57,7 @@ class CustomDataTaskTest(unittest.TestCase):
             manager = custom_data.CustomDataManager(directory, Path(directory) / "envs")
             self._create_test_environment(manager.task_definitions()[0])
             result = manager.collect_task_data("demo_task")
+            manager.close()
 
         self.assertEqual(result, {"demo_json": {"value": 2}})
 
@@ -128,6 +129,7 @@ class CustomDataTaskTest(unittest.TestCase):
             self._create_test_environment(definition)
 
             result = manager.collect_task_data(definition.name)
+            manager.close()
 
         self.assertEqual(definition.zh_name, "压缩包插件")
         self.assertEqual(result, {"zip_data": {"source": "zip"}})

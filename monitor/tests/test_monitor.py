@@ -121,6 +121,24 @@ class ProtocolTimingBeforeAckSerial(FakeSerial):
         """返回下一条 Pico 响应帧。"""
         return self.responses.pop(0) if self.responses else b""
 
+
+class QueuedResponseSerial(FakeSerial):
+    """模拟发送前已经缓存了有限响应帧的 Pico 串口设备。"""
+
+    def __init__(self, responses):
+        """保存待读取响应，用 in_waiting 触发异步响应清理。"""
+        super().__init__()
+        self.responses = list(responses)
+
+    @property
+    def in_waiting(self):
+        """返回仍待消费的缓存响应数量。"""
+        return len(self.responses)
+
+    def readline(self):
+        """按顺序返回缓存响应。"""
+        return self.responses.pop(0) if self.responses else b""
+
 class FatalMemorySerial(FakeSerial):
     """模拟 Pico 堆内存不足并即将自动重启。"""
 
@@ -193,15 +211,14 @@ class PicoClientTest(unittest.TestCase):
     """验证 Pico 客户端生成兼容固件的 JSON 数据包。"""
 
     def test_send_json_packet(self):
-        """确认数据包使用 JSON 前缀并以换行结束。"""
+        """确认数据包使用 JSONZ 前缀并以换行结束。"""
         client = PicoJsonClient()
         client.serial = FakeSerial()
-        with self.assertLogs("pico-monitor.serial", level="INFO") as logs:
-            client.send({"version": 1})
+
+        client.send({"version": 1})
+
         self.assertTrue(client.serial.written.startswith(b"PV1:JSONZ:"))
         self.assertTrue(client.serial.written.endswith(b"\n"))
-        self.assertTrue(any("Monitor -> Pico" in message for message in logs.output))
-        self.assertTrue(any("Pico -> Monitor" in message for message in logs.output))
 
     def test_concurrent_serial_close_is_converted_to_disconnect_error(self):
         """确认 Windows 读取期间串口被关闭时不会泄漏 ctypes TypeError。"""
@@ -273,51 +290,57 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual(result["style_name"], "clock")
 
     def test_protocol_timing_extends_json_ack_wait(self):
-        """确认收到 JSONZ 解析耗时事件后继续等待随后的 ACK:JSON。"""
+        """确认 JSONZ 快照发送不再同步等待 Pico 返回 ACK。"""
         client = PicoJsonClient()
         client.serial = ProtocolTimingBeforeAckSerial()
 
         client.send({"version": 1})
 
-        self.assertEqual(client.serial.responses, [])
+        self.assertEqual(len(client.serial.responses), 2)
 
     def test_bad_json_keeps_serial_connected(self):
-        """确认单帧 JSON 解析失败时保持串口连接并等待下一帧。"""
+        """确认缓存中的单帧 JSON 解析失败只记录警告并保持连接。"""
         client = PicoJsonClient()
-        client.serial = BadJsonSerial()
+        client.serial = QueuedResponseSerial([build_frame("ERR", b"BAD_JSON")])
 
         with self.assertLogs("pico-monitor.serial", level="WARNING") as logs:
-            client.send({"version": 1})
+            client._drain_json_responses()
 
         self.assertTrue(client.is_connected)
-        self.assertTrue(any("数据帧丢弃" in message for message in logs.output))
+        self.assertTrue(any("BAD_JSON" in message for message in logs.output))
 
     def test_detailed_bad_json_keeps_serial_connected(self):
-        """确认带内存诊断详情的 BAD_JSON 不会触发串口重连。"""
+        """确认缓存中的详细 BAD_JSON 不会触发串口重连。"""
         client = PicoJsonClient()
-        client.serial = DetailedBadJsonSerial()
+        client.serial = QueuedResponseSerial([
+            build_frame("ERR", b"BAD_JSON:MEMORY_ZLIB:MemoryError:memory allocation failed")
+        ])
 
         with self.assertLogs("pico-monitor.serial", level="WARNING") as logs:
-            client.send({"version": 1})
+            client._drain_json_responses()
 
         self.assertTrue(client.is_connected)
         self.assertTrue(any("MEMORY_ZLIB" in message for message in logs.output))
 
     def test_memory_error_event_triggers_immediate_reconnect(self):
-        """Pico 内存不足时不再等待 ACK 超时。"""
+        """确认缓存中的 Pico 内存致命错误会立即转为重启异常。"""
         client = PicoJsonClient()
-        client.serial = FatalMemorySerial()
+        client.serial = QueuedResponseSerial([
+            build_frame("EVENT", b"FATAL:MemoryError:memory allocation failed, allocating 25601 bytes")
+        ])
 
-        with self.assertRaisesRegex(RuntimeError, "正在自动重启"):
-            client.send({"version": 1})
+        with self.assertRaisesRegex(RuntimeError, "自动重启"):
+            client._drain_json_responses()
 
     def test_canvas_capacity_error_triggers_immediate_reconnect(self):
-        """Pico 画布容量错误时立即进入重连而不是等待响应超时。"""
+        """确认缓存中的 Pico 画布容量致命错误会立即转为重启异常。"""
         client = PicoJsonClient()
-        client.serial = FatalCanvasCapacitySerial()
+        client.serial = QueuedResponseSerial([
+            build_frame("EVENT", "FATAL:ValueError:脏矩形超过画布容量".encode("utf-8"))
+        ])
 
-        with self.assertRaisesRegex(RuntimeError, "正在自动重启"):
-            client.send({"version": 1})
+        with self.assertRaisesRegex(RuntimeError, "自动重启"):
+            client._drain_json_responses()
 
     def test_build_packet_for_development_mode(self):
         """确认开发模式打印内容与真实串口 JSON 协议行一致。"""

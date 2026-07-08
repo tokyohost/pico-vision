@@ -149,7 +149,7 @@ class CollectionCoordinatorTest(unittest.TestCase):
         task.collect.return_value = {"cpu": {"percent": 42.0}}
         task.scheduled = True
         coordinator.executor = BoundedElasticThreadPool()
-        with self.assertLogs("pico-monitor.collector", level="INFO") as logs:
+        with self.assertLogs("pico-monitor.collector", level="DEBUG") as logs:
             coordinator._execute_and_publish(task)
         self.assertEqual(store.snapshot()["cpu"]["percent"], 42.0)
         self.assertFalse(task.scheduled)
