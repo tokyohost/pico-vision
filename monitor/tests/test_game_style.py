@@ -116,8 +116,8 @@ class GameStyleTest(unittest.TestCase):
         self.assertEqual(GameStyle._usage_color(80), GAME_ORANGE)
         self.assertEqual(GameStyle._usage_color(90), RED)
 
-    def test_draws_design_metrics_and_six_trend_layers(self):
-        """完整绘制应包含设计稿指标，并为三张图绘制填充层和折线层。"""
+    def test_draws_design_metrics_and_trend_layers(self):
+        """完整绘制应包含设计稿指标，并让 CPU 图使用实心分级面积。"""
         canvas = RecordingCanvas()
         history = [49, 50, 48]
         snapshot = {
@@ -151,10 +151,18 @@ class GameStyleTest(unittest.TestCase):
         self.assertIn("AVG", values)
         self.assertIn("MAX", values)
         self.assertEqual(values.count("60"), 2)
+        self.assertNotIn("80", values)
+        self.assertNotIn("90", values)
         self.assertIn("3.8GHz", values)
         self.assertIn("4/4G", values)
         self.assertIn("41.6/63.9G", values)
-        self.assertEqual(len(canvas.charts), 8)
+        self.assertEqual(len(canvas.charts), 7)
+        cpu_chart = canvas.charts[2][0]
+        self.assertTrue(cpu_chart["filled"])
+        self.assertEqual(
+            cpu_chart["regions"],
+            ((60, GREEN), (80, YELLOW), (90, GAME_ORANGE), (101, RED)),
+        )
         self.assertIn((13, 122, 151, 122, 0xE71C), canvas.lines)
         self.assertIn((171, 34, "CPU"), canvas.texts)
         self.assertIn((273, 34, "49%"), canvas.texts)

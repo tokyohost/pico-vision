@@ -193,6 +193,21 @@ class GameStyle:
                 canvas.line(x, average_y, x + width - 1, average_y, WHITE)
 
     @classmethod
+    def _draw_cpu_history(cls, canvas, x, y, width, height, data):
+        """绘制按负载等级着色的 CPU 实心历史面积图。"""
+        values = cls._history(data, percentage=True)
+        canvas.line(x, y + height - 1, x + width - 1, y + height - 1, GRAY)
+        if len(values) >= 2:
+            canvas.draw_line_chart({
+                "x": x, "y": y, "width": width, "height": height,
+                "maximum": 100, "color": GREEN, "filled": True,
+                "regions": (
+                    (60, GREEN), (80, YELLOW),
+                    (90, GAME_ORANGE), (101, RED),
+                ),
+                "grid_step_x": 0, "grid_step_y": 0, "grid_color": 0,
+            }, values)
+    @classmethod
     def _draw_fps_card(cls, canvas, snapshot):
         """绘制 FPS 当前值、最小值、平均值、最大值和短期趋势。"""
         fps = snapshot.get("fps") or {}
@@ -258,7 +273,10 @@ class GameStyle:
         )
         canvas.text(x + 7, 190, "100", GRAY, 1)
         canvas.text(x + 14, 218, "0", GRAY, 1)
-        cls._draw_history(canvas, x + 29, 188, 64, 38, data, color)
+        if label == "CPU":
+            cls._draw_cpu_history(canvas, x + 29, 188, 64, 37, data)
+        else:
+            cls._draw_history(canvas, x + 29, 188, 64, 38, data, color)
 
     @classmethod
     def _draw_header(cls, canvas, snapshot):
