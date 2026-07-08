@@ -2,6 +2,7 @@
 """将 Pico 系统监控程序打包为单文件 Windows EXE。"""
 
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_submodules
 
 
 MONITOR_ROOT = Path.cwd()
@@ -16,7 +17,7 @@ analysis = Analysis(
     pathex=[],
     binaries=optional_fps_binaries,
     datas=[("icon/icon.png", "icon"), ("assert/fishQr.png", "assert"), ("win/fps/PRESENTMON_LICENSE.txt", "win/fps")],
-    hiddenimports=["psutil", "serial", "serial.tools.list_ports", "custom_data", "tkinter", "tkinter.filedialog", "tkinter.messagebox", "tkinter.scrolledtext", "tkinter.ttk", "pystray._win32", "PIL.Image", "PIL.ImageTk", "pico_upgrade", "build_info", "windows_update"],
+    hiddenimports=["psutil", "serial", "serial.tools.list_ports", "custom_data", "collectTask", "collectTask.coordinator", "collectTask.executor", "collectTask.result_store", "collectTask.system_tasks", "tkinter", "tkinter.filedialog", "tkinter.messagebox", "tkinter.scrolledtext", "tkinter.ttk", "pystray._win32", "PIL.Image", "PIL.ImageTk", "pico_upgrade", "build_info", "windows_update"] + collect_submodules("collectTask.tasks"),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

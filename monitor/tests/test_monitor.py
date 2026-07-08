@@ -91,6 +91,17 @@ class BadJsonSerial(FakeSerial):
         return build_frame("ERR", b"BAD_JSON")
 
 
+class DetailedBadJsonSerial(FakeSerial):
+    """模拟 Pico 返回带内存诊断详情的 JSON 解析错误。"""
+
+    def readline(self):
+        """返回可恢复的 JSONZ 解压内存错误。"""
+        return build_frame(
+            "ERR",
+            b"BAD_JSON:MEMORY_ZLIB:MemoryError:memory allocation failed",
+        )
+
+
 
 class ProtocolTimingBeforeAckSerial(FakeSerial):
     """模拟 Pico 先返回 JSONZ 解析耗时事件再返回确认帧。"""
@@ -277,6 +288,17 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertTrue(client.is_connected)
         self.assertTrue(any("数据帧丢弃" in message for message in logs.output))
+
+    def test_detailed_bad_json_keeps_serial_connected(self):
+        """确认带内存诊断详情的 BAD_JSON 不会触发串口重连。"""
+        client = PicoJsonClient()
+        client.serial = DetailedBadJsonSerial()
+
+        with self.assertLogs("pico-monitor.serial", level="WARNING") as logs:
+            client.send({"version": 1})
+
+        self.assertTrue(client.is_connected)
+        self.assertTrue(any("MEMORY_ZLIB" in message for message in logs.output))
 
     def test_memory_error_event_triggers_immediate_reconnect(self):
         """Pico 内存不足时不再等待 ACK 超时。"""

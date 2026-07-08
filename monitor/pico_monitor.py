@@ -35,6 +35,7 @@ from pico_client import PicoJsonClient, PicoRestartingError
 from pico_upgrade import PicoFirmwareUpgrader, PicoUpgradeDownloader, PicoUpgradePackage
 from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
 from custom_data import get_manager as get_custom_data_manager
+from collectTask import CollectionCoordinator, LockFreeSnapshotStore, system_task_defaults
 from monitor_update import LinuxDebUpdater
 from qbittorrent_monitor import QbittorrentMonitor
 from system_monitor import SystemInformationCollector
@@ -131,6 +132,34 @@ def environment_flag(name, default=False):
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
+def parse_collection_task_intervals(value):
+    """解析任务采集频率 JSON 配置，并只保留已发现任务的正数频率。"""
+    defaults = system_task_defaults()
+    if not value:
+        return dict(defaults)
+    if isinstance(value, dict):
+        payload = value
+    else:
+        try:
+            payload = json.loads(value)
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise argparse.ArgumentTypeError("采集任务频率必须是 JSON 对象") from error
+    if not isinstance(payload, dict):
+        raise argparse.ArgumentTypeError("采集任务频率必须是 JSON 对象")
+    intervals = dict(defaults)
+    for name, interval in payload.items():
+        if name not in defaults:
+            continue
+        try:
+            interval = float(interval)
+        except (TypeError, ValueError) as error:
+            raise argparse.ArgumentTypeError("{} 的采集频率必须是数字".format(name)) from error
+        if interval <= 0:
+            raise argparse.ArgumentTypeError("{} 的采集频率必须大于 0".format(name))
+        intervals[name] = interval
+    return intervals
+
+
 def create_argument_parser():
     """创建监控程序统一命令行参数解析器。"""
     parser = argparse.ArgumentParser(description="Pico LCD 系统硬件监控程序")
@@ -143,6 +172,7 @@ def create_argument_parser():
     parser.add_argument("--port", default=os.getenv("PICO_MONITOR_PORT") or None, help="固定串口名称，留空时自动发现")
     parser.add_argument("--ping-target", default=os.getenv("PICO_MONITOR_PING_TARGET", "www.baidu.com"), help="网络延迟检测目标")
     parser.add_argument("--interval", type=float, default=float(os.getenv("PICO_MONITOR_INTERVAL", "0.5")), help="采集和发送间隔，单位为秒")
+    parser.add_argument("--collection-task-intervals", type=parse_collection_task_intervals, default=parse_collection_task_intervals(os.getenv("PICO_MONITOR_COLLECTION_TASK_INTERVALS")), help="各系统采集任务频率 JSON，键为任务中文名，值为秒数")
     parser.add_argument("--reconnect-interval", type=float, default=float(os.getenv("PICO_MONITOR_RECONNECT_INTERVAL", "3.0")), help="设备断线后的重连间隔，单位为秒")
     parser.add_argument("--serial-probe-interval", type=float, default=float(os.getenv("PICO_MONITOR_SERIAL_PROBE_INTERVAL", "3.0")), help="串口探测 PING 的发送间隔，单位为秒")
     parser.add_argument("--screen-rotation", type=int, choices=(0, 180), default=int(os.getenv("PICO_MONITOR_SCREEN_ROTATION", "0")), help="Pico 屏幕旋转角度，可选 0 或 180")
@@ -201,9 +231,20 @@ class MonitorService:
         self.custom_style_deletes = queue.Queue()
         self.screenshot_requested = threading.Event()
         self.available_styles = set(BUILTIN_LCD_STYLES)
-        self._latest_collected_snapshot = self._create_initial_snapshot(arguments)
+        self._snapshot_store = LockFreeSnapshotStore(self._create_initial_snapshot(arguments))
+        self._latest_collected_snapshot = self._snapshot_store.snapshot()
         self._latest_collection_error = None
         self._collection_thread = None
+        extra_collection_tasks = [("自定义扩展", self._collect_extension_fragment)]
+        if self.qbittorrent_monitor is not None:
+            extra_collection_tasks.append(("qBittorrent", self._collect_qbittorrent_fragment))
+        self._collection_coordinator = CollectionCoordinator(
+            self.collector,
+            self._snapshot_store,
+            self._complete_collection_fragment,
+            extra_collection_tasks,
+            arguments.collection_task_intervals,
+        )
 
     @staticmethod
     def _create_initial_snapshot(arguments):
@@ -452,6 +493,9 @@ class MonitorService:
 
     def close(self):
         """释放采集器持有的原生资源及其启动的外部子进程。"""
+        coordinator = getattr(self, "_collection_coordinator", None)
+        if coordinator is not None:
+            coordinator.close(wait=True)
         self.collector.close()
 
     def run(self):
@@ -542,23 +586,41 @@ class MonitorService:
         self._collection_thread.start()
 
     def _collection_loop(self):
-        """按配置周期采集快照，并以原子替换方式发布最近一次成功结果。"""
+        """按配置周期调度独立采集子任务，不等待上一批慢任务完成。"""
         while not self.stopping.is_set():
             started = time.monotonic()
-            try:
-                snapshot = self._collect_snapshot()
-                # CPython 的对象引用赋值具备原子性；完整构造后一次发布，发送线程无需加锁。
-                self._latest_collected_snapshot = snapshot
-                self._latest_collection_error = None
-            except (OSError, RuntimeError, TypeError, ValueError, psutil.Error) as error:
-                LOGGER.exception("后台系统指标采集失败，将继续发送最近一次成功快照：%s", error)
-                self._latest_collection_error = error
-            remaining = self.arguments.interval - (time.monotonic() - started)
+            self._collection_coordinator.schedule()
+            schedule_delay = self._collection_coordinator.next_schedule_delay()
+            remaining = min(self.arguments.interval, schedule_delay) - (time.monotonic() - started)
             self.stopping.wait(max(0.0, remaining))
 
     def _snapshot_for_sending(self):
         """无锁返回采集线程原子发布的最近一次完整快照。"""
-        return self._latest_collected_snapshot
+        snapshot_store = getattr(self, "_snapshot_store", None)
+        return snapshot_store.snapshot() if snapshot_store is not None else self._latest_collected_snapshot
+
+    def _collect_extension_fragment(self):
+        """采集到期的自定义扩展数据并返回独立快照片段。"""
+        return {"ext": get_custom_data_manager().collect_due_data()}
+
+    def _collect_qbittorrent_fragment(self):
+        """读取 qBittorrent 后台采样结果并返回独立快照片段。"""
+        return {"qbittorrent": self.qbittorrent_monitor.snapshot()}
+
+    def _complete_collection_fragment(self, fragment):
+        """为单项采样结果补充显示配置，并处理磁盘健康测试覆盖。"""
+        fragment = dict(fragment)
+        if "disks" in fragment:
+            self._apply_disk_health_test(fragment)
+        fragment["display"] = {
+            "rotation": self.arguments.screen_rotation,
+            "brightness": getattr(self.arguments, "lcd_brightness", 100),
+            "collection_interval_ms": max(1, round(self.arguments.interval * 1000)),
+            "network_unit": self.arguments.network_unit,
+            "style": self.arguments.lcd_style,
+        }
+        self._latest_collection_error = None
+        return fragment
 
     def _wait_for_usb_addition(self, previous_ports):
         """等待新串口插入，拔出时只更新基线而不发起 Pico 握手。"""
@@ -737,6 +799,8 @@ def validate_arguments(arguments):
             or arguments.serial_probe_interval <= 0
             or arguments.qbittorrent_interval <= 0):
         raise SystemExit("采集间隔和重连间隔必须大于 0")
+    if any(interval <= 0 for interval in arguments.collection_task_intervals.values()):
+        raise SystemExit("采集任务频率必须大于 0")
     if arguments.pico_info:
         return
     if not arguments.qbittorrent_enabled:

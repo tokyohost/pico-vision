@@ -6,7 +6,12 @@ import threading
 from qbittorrent_monitor import QbittorrentApiClient
 
 from ..constants import APPLICATION_NAME
-from ..settings import style_label, style_names
+from ..settings import (
+    DEFAULT_COLLECTION_TASK_INTERVALS,
+    normalize_collection_task_intervals,
+    style_label,
+    style_names,
+)
 
 
 class SettingsWindowMixin:
@@ -128,6 +133,17 @@ class SettingsWindowMixin:
             "qbittorrent_password": tk.StringVar(master=root, value=self.settings["qbittorrent_password"]),
             "qbittorrent_interval": tk.StringVar(master=root, value=self.settings["qbittorrent_interval"]),
         }
+        collection_task_variables = {
+            name: tk.StringVar(
+                master=root,
+                value="{:g}".format(
+                    normalize_collection_task_intervals(
+                        self.settings.get("collection_task_intervals")
+                    )[name]
+                ),
+            )
+            for name in DEFAULT_COLLECTION_TASK_INTERVALS
+        }
 
         def card(title):
             """创建带标题的配置分组卡片。"""
@@ -223,6 +239,16 @@ class SettingsWindowMixin:
         field(monitor, 3, "重连间隔（秒）", ttk.Entry(monitor, textvariable=variables["reconnect_interval"]))
         field(monitor, 4, "串口探测 PING 间隔（秒）", ttk.Entry(monitor, textvariable=variables["serial_probe_interval"]))
 
+        collection_tasks = card("系统采集任务")
+        for row, (task_name, variable) in enumerate(collection_task_variables.items()):
+            default_interval = DEFAULT_COLLECTION_TASK_INTERVALS[task_name]
+            field(
+                collection_tasks,
+                row,
+                "{}（默认 {:g} 秒）".format(task_name, default_interval),
+                ttk.Entry(collection_tasks, textvariable=variable),
+            )
+
         qb = card("qBittorrent")
         enable_qbittorrent = ttk.Checkbutton(
             qb,
@@ -306,12 +332,21 @@ class SettingsWindowMixin:
             """校验并保存完整配置，然后重启后台监控。"""
             try:
                 selected_style = next(name for name in style_names(self.settings) if style_label(name, self.settings) == variables["lcd_style"].get())
-                updated = {
+                collection_task_intervals = {}
+                for name, variable in collection_task_variables.items():
+                    interval = float(variable.get())
+                    if interval <= 0:
+                        raise ValueError
+                    collection_task_intervals[name] = interval
+                collection_task_intervals = normalize_collection_task_intervals(collection_task_intervals)
+                updated = dict(self.settings)
+                updated.update({
                     "port": variables["port"].get().strip(),
                     "ping_target": variables["ping_target"].get().strip(),
                     "interval": float(variables["interval"].get()),
                     "reconnect_interval": float(variables["reconnect_interval"].get()),
                     "serial_probe_interval": float(variables["serial_probe_interval"].get()),
+                    "collection_task_intervals": collection_task_intervals,
                     "screen_rotation": int(variables["screen_rotation"].get()),
                     "lcd_brightness": int(variables["lcd_brightness"].get()),
                     "network_unit": variables["network_unit"].get(),
@@ -321,9 +356,10 @@ class SettingsWindowMixin:
                     "qbittorrent_username": variables["qbittorrent_username"].get().strip(),
                     "qbittorrent_password": variables["qbittorrent_password"].get(),
                     "qbittorrent_interval": float(variables["qbittorrent_interval"].get()),
-                }
+                })
                 if (not updated["ping_target"]
                         or min(updated["interval"], updated["reconnect_interval"], updated["serial_probe_interval"], updated["qbittorrent_interval"]) <= 0
+                        or min(updated["collection_task_intervals"].values()) <= 0
                         or not 1 <= updated["lcd_brightness"] <= 100):
                     raise ValueError
                 if updated["qbittorrent_enabled"] and not all((updated["qbittorrent_address"], updated["qbittorrent_username"], updated["qbittorrent_password"])):

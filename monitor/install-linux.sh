@@ -55,6 +55,10 @@ install_application() {
     install -m 0644 "$script_directory/qbittorrent_monitor.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/system_monitor.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/history.py" "$INSTALL_ROOT/"
+    install -d -m 0755 "$INSTALL_ROOT/collectTask"
+    install -m 0644 "$script_directory"/collectTask/*.py "$INSTALL_ROOT/collectTask/"
+    install -d -m 0755 "$INSTALL_ROOT/collectTask/tasks"
+    install -m 0644 "$script_directory"/collectTask/tasks/*.py "$INSTALL_ROOT/collectTask/tasks/"
     install -m 0644 "$script_directory/requirements.txt" "$INSTALL_ROOT/"
     python3 -m venv "$INSTALL_ROOT/venv"
     "$INSTALL_ROOT/venv/bin/python" -m pip install --upgrade pip

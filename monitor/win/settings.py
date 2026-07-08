@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+from collectTask import system_task_defaults
+
 
 STYLE_NAMES = {
     "default": "经典概览",
@@ -23,12 +25,14 @@ DEFAULT_STYLE_CATALOG = [
     {"name": name, "chinese_name": chinese_name, "type": "builtin"}
     for name, chinese_name in STYLE_NAMES.items()
 ]
+DEFAULT_COLLECTION_TASK_INTERVALS = system_task_defaults()
 DEFAULT_SETTINGS = {
     "port": "",
     "ping_target": "www.baidu.com",
     "interval": 0.5,
     "reconnect_interval": 3.0,
     "serial_probe_interval": 3.0,
+    "collection_task_intervals": dict(DEFAULT_COLLECTION_TASK_INTERVALS),
     "screen_rotation": 0,
     "lcd_brightness": 100,
     "network_unit": "MB",
@@ -48,6 +52,7 @@ ARGUMENT_NAMES = {
     "--interval": "interval",
     "--reconnect-interval": "reconnect_interval",
     "--serial-probe-interval": "serial_probe_interval",
+    "--collection-task-intervals": "collection_task_intervals",
     "--screen-rotation": "screen_rotation",
     "--lcd-brightness": "lcd_brightness",
     "--network-unit": "network_unit",
@@ -92,6 +97,22 @@ def normalize_style_catalog(catalog):
     return normalized
 
 
+def normalize_collection_task_intervals(intervals):
+    """校验系统采集任务频率配置，并补齐新增任务的默认频率。"""
+    normalized = dict(DEFAULT_COLLECTION_TASK_INTERVALS)
+    if not isinstance(intervals, dict):
+        return normalized
+    for name, interval in intervals.items():
+        if name not in normalized:
+            continue
+        try:
+            interval = float(interval)
+        except (TypeError, ValueError):
+            continue
+        if interval > 0:
+            normalized[name] = interval
+    return normalized
+
 class TraySettingsStore:
     """在当前用户目录持久化托盘配置。"""
 
@@ -108,6 +129,7 @@ class TraySettingsStore:
         except (OSError, ValueError, TypeError):
             pass
         settings["styles"] = normalize_style_catalog(settings.get("styles")) or list(DEFAULT_STYLE_CATALOG)
+        settings["collection_task_intervals"] = normalize_collection_task_intervals(settings.get("collection_task_intervals"))
         if settings["lcd_style"] not in style_names(settings):
             settings["lcd_style"] = DEFAULT_SETTINGS["lcd_style"]
         try:
@@ -144,6 +166,8 @@ def apply_worker_arguments(arguments, settings):
         value = settings[name]
         if name in ("port", "qbittorrent_address", "qbittorrent_username", "qbittorrent_password") and not value:
             continue
+        if name == "collection_task_intervals":
+            value = json.dumps(normalize_collection_task_intervals(value), ensure_ascii=False)
         retained.extend((option, str(value)))
     retained.append("--qbittorrent-enabled" if settings["qbittorrent_enabled"] else "--no-qbittorrent")
     if settings["dev"]:
@@ -158,6 +182,7 @@ def settings_from_arguments(arguments, base=None):
         "interval": float, "reconnect_interval": float, "serial_probe_interval": float,
         "screen_rotation": int, "lcd_brightness": int,
         "qbittorrent_interval": float,
+        "collection_task_intervals": lambda value: normalize_collection_task_intervals(json.loads(value)),
     }
     index = 0
     while index < len(arguments):
@@ -179,4 +204,5 @@ def settings_from_arguments(arguments, base=None):
         elif argument == "--no-dev":
             settings["dev"] = False
         index += 1
+    settings["collection_task_intervals"] = normalize_collection_task_intervals(settings.get("collection_task_intervals"))
     return settings

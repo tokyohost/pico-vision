@@ -55,26 +55,23 @@ class PingMonitor:
     """在独立线程中低频探测网络延迟，避免阻塞主采集循环。"""
 
     def __init__(self, target, interval=5.0):
-        """保存探测目标和周期，并初始化线程安全的结果状态。"""
+        """保存探测目标和周期，并初始化可原子替换的结果元组。"""
         self.target, self.interval = target, interval
-        self.value, self.online = None, False
-        self.lock = threading.Lock()
+        self._result = (None, False)
 
     def start(self):
         """启动守护线程持续执行网络延迟探测。"""
         threading.Thread(target=self._run, name="网络延迟采集", daemon=True).start()
 
     def snapshot(self):
-        """返回最近一次网络延迟和在线状态。"""
-        with self.lock:
-            return self.value, self.online
+        """无锁返回最近一次网络延迟和在线状态。"""
+        return self._result
 
     def _run(self):
         """循环执行 Ping 探测并发布最新结果。"""
         while True:
             value = self._probe()
-            with self.lock:
-                self.value, self.online = value, value is not None
+            self._result = (value, value is not None)
             time.sleep(self.interval)
 
     def _probe(self):
@@ -433,22 +430,19 @@ class GpuMonitor:
     """使用常驻原生接口每秒采集 GPU，主循环仅从内存读取快照。"""
 
     def __init__(self, interval=1.0, unavailable_interval=300.0):
-        """初始化采样周期、无设备退避周期、结果版本和线程锁。"""
+        """初始化采样周期、无设备退避周期和可原子替换的结果。"""
         self.interval = interval
         self.unavailable_interval = unavailable_interval
-        self.value = None
-        self.version = 0
+        self._result = (None, 0)
         self.backend = None
-        self.lock = threading.Lock()
 
     def start(self):
         """启动 GPU 使用率后台采集线程。"""
         threading.Thread(target=self._run, name="GPU 使用率采集", daemon=True).start()
 
     def snapshot(self):
-        """返回最近 GPU 使用率及采样版本，主循环仅执行内存读取。"""
-        with self.lock:
-            return self.value, self.version
+        """无锁返回最近 GPU 使用率及采样版本。"""
+        return self._result
 
     @staticmethod
     def _create_backend():
@@ -485,9 +479,7 @@ class GpuMonitor:
                     value["percent"] = round(max(0, min(100, float(value["percent"]))), 1)
                 if value.get("temperature_c") is not None:
                     value["temperature_c"] = round(float(value["temperature_c"]), 1)
-                with self.lock:
-                    self.value = value
-                    self.version += 1
+                self._result = (value, self._result[1] + 1)
             time.sleep(max(0.05, self.interval - (time.monotonic() - started)))
 
 

@@ -556,10 +556,15 @@ class PicoJsonClient:
                 # 收到解析耗时事件说明 Pico 已完成 JSONZ 解码，后续 ACK 可能紧随其后。
                 deadline = max(deadline, time.monotonic() + JSON_PROGRESS_GRACE_SECONDS)
                 continue
-            if frame == ("ERR", b"BAD_JSON"):
+            if (
+                frame
+                and frame[0] == "ERR"
+                and frame[1].startswith(b"BAD_JSON")
+            ):
                 LOGGER.warning(
-                    "[数据帧丢弃][%s] Pico 无法解析本次 JSON，保持串口连接并等待下一帧",
+                    "[数据帧丢弃][%s] Pico 无法解析本次 JSON，保持串口连接并等待下一帧：%s",
                     self.port_name,
+                    frame[1].decode("utf-8", errors="replace"),
                 )
                 return
             if _is_restarting_fatal(frame):

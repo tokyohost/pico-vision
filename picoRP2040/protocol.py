@@ -16,6 +16,7 @@
 
 import sys
 import time
+import gc
 from array import array
 
 try:
@@ -88,6 +89,18 @@ def _build_crc16_byte_table():
 
 
 CRC16_BYTE_TABLE = _build_crc16_byte_table()
+JSONZ_GC_FREE_THRESHOLD = 72 * 1024
+
+
+def _collect_jsonz_garbage_if_needed():
+    """仅在 JSONZ 可用堆低于安全线时回收临时对象。"""
+    try:
+        if gc.mem_free() >= JSONZ_GC_FREE_THRESHOLD:
+            return False
+    except AttributeError:
+        pass
+    gc.collect()
+    return True
 
 
 def _json_error_payload(stage, error=None, detail=None):
@@ -310,6 +323,8 @@ class JsonProtocol:
     ):
         """分阶段解析 JSONZ，并返回更具体的 BAD_JSON 错误。"""
         decompress_started_ms = self._ticks_ms()
+        line_size = len(line)
+        gc_count = 0
 
         try:
             compressed_payload = binascii.a2b_base64(payload)
@@ -319,6 +334,12 @@ class JsonProtocol:
         except Exception as error:
             self._write_frame("ERR", _json_error_payload("BASE64", error))
             return None
+
+        # Base64 解码完成后不再需要原始 ASCII 帧。RP2040 长时间渲染后堆内存
+        # 容易碎片化；仅在低内存时回收，正常帧避免承担每次约二十毫秒的 GC。
+        payload = None
+        line = None
+        gc_count += int(_collect_jsonz_garbage_if_needed())
 
         try:
             json_payload = decompress_zlib(compressed_payload)
@@ -331,6 +352,10 @@ class JsonProtocol:
         except Exception as error:
             self._write_frame("ERR", _json_error_payload("ZLIB_UNKNOWN", error))
             return None
+
+        # 解压结果已经独立持有 JSON 字节，低内存时在 JSON 解析前释放压缩负载。
+        compressed_payload = None
+        gc_count += int(_collect_jsonz_garbage_if_needed())
 
         decompress_elapsed_ms = self._elapsed_ms(
             self._ticks_ms(),
@@ -386,15 +411,16 @@ class JsonProtocol:
 
         timing = (
             "PROTOCOL_TIMING:TYPE=JSONZ:BYTES={}:JSON_BYTES={}:READS={}:"
-            "RX={}MS:FRAME_PARSE={}MS:DECOMPRESS={}MS:JSON={}MS"
+            "RX={}MS:FRAME_PARSE={}MS:DECOMPRESS={}MS:JSON={}MS:GC={}"
         ).format(
-            len(line),
+            line_size,
             json_size,
             frame_read_calls,
             receive_elapsed_ms,
             parse_elapsed_ms,
             decompress_elapsed_ms,
             json_elapsed_ms,
+            gc_count,
         )
         self._write_frame("EVENT", timing.encode("ascii", "replace"))
 
