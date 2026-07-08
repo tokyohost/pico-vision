@@ -100,6 +100,23 @@ class WorkerControllerMixin:
         except (BrokenPipeError, OSError):
             return False
 
+    def _apply_dev_settings(self):
+        """向运行中的 Monitor 下发开发模式配置，避免重启后台进程。"""
+        process = self.worker_process
+        if process is None or process.poll() is not None or process.stdin is None:
+            return False
+        payload = {"enabled": bool(self.settings.get("dev"))}
+        try:
+            process.stdin.write(
+                "DEV_CONFIG:{}\n".format(
+                    json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+                )
+            )
+            process.stdin.flush()
+            return True
+        except (BrokenPipeError, OSError):
+            return False
+
     def _collect_output(self):
         """收集工作进程日志，并在 Pico 样式清单变化后刷新托盘菜单。"""
         process = self.worker_process

@@ -169,14 +169,20 @@ class WindowsTrayApplication(
         return bool(self.settings.get("dev"))
 
     def _toggle_dev_mode(self, icon, item):
-        """切换开发模式并重启后台监控进程，使新配置立即生效。"""
+        """切换开发模式并通知后台监控进程即时生效。"""
         del item
         self.settings["dev"] = not self._is_dev_mode()
         self.settings_store.save(self.settings)
-        self._restart_worker()
+        applied = self._apply_dev_settings()
         icon.update_menu()
         state = "开启" if self.settings["dev"] else "关闭"
-        icon.notify("开发模式已{}".format(state), APPLICATION_NAME)
+        if applied:
+            icon.notify("开发模式已{}".format(state), APPLICATION_NAME)
+        else:
+            icon.notify(
+                "开发模式已{}，后台监控下次启动时生效".format(state),
+                APPLICATION_NAME,
+            )
 
     def _check_for_updates(self, icon, item=None):
         """启动独立线程显示地址弹框并执行联合更新。"""
