@@ -29,17 +29,24 @@ class _PdhFormattedValue(ctypes.Structure):
     _fields_ = [("status", ctypes.c_ulong), ("value", _PdhFormattedValueUnion)]
 
 
-class _WindowsPdhCpuSampler:
-    """通过 Windows PDH 读取更接近任务管理器口径的 CPU 使用率。"""
+class _PdhFormattedItem(ctypes.Structure):
+    """描述 Windows PDH 通配符实例名称及其格式化值。"""
 
+    _fields_ = [("name", ctypes.c_wchar_p), ("value", _PdhFormattedValue)]
+
+
+class _WindowsPdhCpuSampler:
+    """通过 Windows PDH 读取每个逻辑核心占用率并计算平均值。"""
+
+    _PDH_MORE_DATA = 0x800007D2
     _PDH_DOUBLE = 0x00000200
     _COUNTER_PATHS = (
-        r"\Processor Information(_Total)\% Processor Utility",
-        r"\Processor(_Total)\% Processor Time",
+        r"\Processor Information(*)\% Processor Utility",
+        r"\Processor(*)\% Processor Time",
     )
 
     def __init__(self):
-        """初始化 PDH 查询，并优先使用 Processor Utility 计数器。"""
+        """初始化 PDH 查询，并优先使用每核心 Processor Utility 计数器。"""
         if platform.system() != "Windows":
             raise OSError("PDH CPU 采样仅支持 Windows")
         self.library = ctypes.WinDLL("pdh.dll")
@@ -57,8 +64,8 @@ class _WindowsPdhCpuSampler:
         self.library.PdhAddEnglishCounterW.restype = ctypes.c_ulong
         self.library.PdhCollectQueryData.argtypes = [ctypes.c_void_p]
         self.library.PdhCollectQueryData.restype = ctypes.c_ulong
-        self.library.PdhGetFormattedCounterValue.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong), ctypes.POINTER(_PdhFormattedValue)]
-        self.library.PdhGetFormattedCounterValue.restype = ctypes.c_ulong
+        self.library.PdhGetFormattedCounterArrayW.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong), ctypes.POINTER(ctypes.c_ulong), ctypes.c_void_p]
+        self.library.PdhGetFormattedCounterArrayW.restype = ctypes.c_ulong
         self.library.PdhCloseQuery.argtypes = [ctypes.c_void_p]
         self.library.PdhCloseQuery.restype = ctypes.c_ulong
 
@@ -79,23 +86,36 @@ class _WindowsPdhCpuSampler:
         raise OSError("Windows CPU PDH 计数器不可用")
 
     def sample(self, sample_window_seconds):
-        """通过指定阻塞窗口采样并返回 CPU 使用率百分比。"""
+        """通过指定阻塞窗口采样每核心占用率，并返回算术平均百分比。"""
         if self.library.PdhCollectQueryData(self.query) != 0:
             return None
         time.sleep(max(0.0, float(sample_window_seconds)))
         if self.library.PdhCollectQueryData(self.query) != 0:
             return None
-        value_type = ctypes.c_ulong()
-        value = _PdhFormattedValue()
-        status = self.library.PdhGetFormattedCounterValue(
-            self.counter,
-            self._PDH_DOUBLE,
-            ctypes.byref(value_type),
-            ctypes.byref(value),
+        buffer_size = ctypes.c_ulong()
+        item_count = ctypes.c_ulong()
+        status = self.library.PdhGetFormattedCounterArrayW(
+            self.counter, self._PDH_DOUBLE,
+            ctypes.byref(buffer_size), ctypes.byref(item_count), None,
         )
-        if status != 0 or value.status != 0:
+        if status != self._PDH_MORE_DATA or buffer_size.value == 0:
             return None
-        return max(0.0, min(100.0, float(value.double_value)))
+        buffer = ctypes.create_string_buffer(buffer_size.value)
+        status = self.library.PdhGetFormattedCounterArrayW(
+            self.counter, self._PDH_DOUBLE,
+            ctypes.byref(buffer_size), ctypes.byref(item_count), buffer,
+        )
+        if status != 0 or item_count.value == 0:
+            return None
+        items = ctypes.cast(buffer, ctypes.POINTER(_PdhFormattedItem))
+        values = []
+        for index in range(item_count.value):
+            item = items[index]
+            name = str(item.name or "")
+            if name.lower() == "_total" or item.value.status != 0:
+                continue
+            values.append(max(0.0, min(100.0, float(item.value.double_value))))
+        return sum(values) / len(values) if values else None
 
     def close(self):
         """关闭 PDH 查询句柄。"""
@@ -155,7 +175,7 @@ class CpuMemoryTask(CollectionTask):
                     self._windows_cpu_sampler = _WindowsPdhCpuSampler()
                     if not self._cpu_percent_source_logged:
                         LOGGER.info(
-                            "Windows CPU 利用率采样源：PDH 计数器 %s，采样窗口=%.1f秒",
+                            "Windows CPU 利用率采样源：PDH 每核心平均，计数器 %s，采样窗口=%.1f秒",
                             self._windows_cpu_sampler.counter_path,
                             CPU_SAMPLE_WINDOW_SECONDS,
                         )
@@ -164,12 +184,12 @@ class CpuMemoryTask(CollectionTask):
                 if value is not None:
                     return value
                 LOGGER.warning(
-                    "Windows CPU 利用率 PDH 计数器返回空值，回退到 psutil.cpu_percent(interval=%.1f)",
+                    "Windows CPU 利用率 PDH 每核心计数器返回空值，回退到 psutil 每核心平均(interval=%.1f)",
                     CPU_SAMPLE_WINDOW_SECONDS,
                 )
             except (AttributeError, OSError, TypeError, ValueError) as error:
                 LOGGER.warning(
-                    "Windows CPU 利用率 PDH 采样不可用，回退到 psutil.cpu_percent(interval=%.1f)：%s",
+                    "Windows CPU 利用率 PDH 每核心采样不可用，回退到 psutil 每核心平均(interval=%.1f)：%s",
                     CPU_SAMPLE_WINDOW_SECONDS,
                     error,
                 )
@@ -180,8 +200,14 @@ class CpuMemoryTask(CollectionTask):
             self._windows_cpu_sampler_unavailable = True
         if platform.system() == "Windows" and not self._cpu_percent_source_logged:
             LOGGER.info(
-                "Windows CPU 利用率采样源：psutil.cpu_percent(interval=%.1f)",
+                "Windows CPU 利用率采样源：psutil 每核心平均(interval=%.1f)",
                 CPU_SAMPLE_WINDOW_SECONDS,
             )
             self._cpu_percent_source_logged = True
-        return psutil.cpu_percent(interval=CPU_SAMPLE_WINDOW_SECONDS)
+        return self._psutil_per_core_average()
+
+    @staticmethod
+    def _psutil_per_core_average():
+        """使用 psutil 读取所有逻辑核心占用率并返回算术平均值。"""
+        values = psutil.cpu_percent(interval=CPU_SAMPLE_WINDOW_SECONDS, percpu=True)
+        return sum(values) / len(values) if values else 0.0
