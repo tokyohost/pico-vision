@@ -2,7 +2,7 @@
 
 import time
 
-from system_monitor import HISTORY_LENGTH
+from constants import HISTORY_LENGTH
 
 from ..system_tasks import CollectionTask
 

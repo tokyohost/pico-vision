@@ -27,6 +27,7 @@ import threading
 import time
 from collections import deque
 
+from constants import HISTORY_LENGTH
 from history import update_per_second
 from pathlib import Path
 
@@ -39,7 +40,6 @@ except (ImportError, OSError):
 
 
 LOGGER = logging.getLogger("pico-monitor")
-HISTORY_LENGTH = 24
 DISK_TEMPERATURE_CACHE_SECONDS = 30
 DISK_HEALTH_CACHE_SECONDS = 30 * 60
 
