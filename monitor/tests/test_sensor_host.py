@@ -2,6 +2,7 @@
 
 import unittest
 import importlib.util
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -78,14 +79,20 @@ class SensorHostTaskTest(unittest.TestCase):
 class SensorHostManagerPathTest(unittest.TestCase):
     """验证 SensorHost 可执行文件自动发现路径。"""
 
-    def test_resolve_executable_path_finds_monitor_sensorhost_directory(self):
-        """确认源码运行时会查找 monitor/sensorhost 目录。"""
+    def test_resolve_executable_path_prefers_latest_versioned_sensorhost(self):
+        """确认自动发现优先使用 monitor/sensorhost 中版本号最高的可执行文件。"""
         sensor_host_manager = load_sensor_host_manager()
-        monitor_directory = Path(__file__).resolve().parents[1]
-        expected_path = monitor_directory / "sensorhost" / "OmniWatch.SensorHost.exe"
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            monitor_directory = Path(temporary_directory)
+            sensorhost_directory = monitor_directory / "sensorhost"
+            sensorhost_directory.mkdir()
+            (sensorhost_directory / "OmniWatch.SensorHost.exe").touch()
+            (sensorhost_directory / "OmniWatch.SensorHost-v1.0.5.exe").touch()
+            expected_path = sensorhost_directory / "OmniWatch.SensorHost-v1.0.10.exe"
+            expected_path.touch()
 
-        with mock.patch.object(sensor_host_manager, "_candidate_base_directories", return_value=[monitor_directory]):
-            resolved_path = sensor_host_manager._resolve_executable_path(None)
+            with mock.patch.object(sensor_host_manager, "_candidate_base_directories", return_value=[monitor_directory]):
+                resolved_path = sensor_host_manager._resolve_executable_path(None)
 
         self.assertEqual(resolved_path, expected_path)
 

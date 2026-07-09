@@ -7,6 +7,7 @@
 # Commercial use is prohibited without prior written permission.
 
 import argparse
+import ctypes
 import logging
 import signal
 import sys
@@ -63,6 +64,25 @@ def log_monitor_version():
     LOGGER.info("Pico Monitor 启动：版本=%s", MONITOR_VERSION)
 
 
+def is_windows_administrator():
+    """判断当前 Windows 进程是否拥有管理员权限。"""
+    if sys.platform != "win32":
+        return True
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except OSError:
+        return False
+
+
+def show_admin_required_message():
+    """提示用户必须以管理员权限启动 Windows Monitor。"""
+    message = "OmniWatch Monitor 需要以管理员身份运行，请右键选择“以管理员身份运行”后再启动。"
+    try:
+        ctypes.windll.user32.MessageBoxW(None, message, "OmniWatch Monitor", 0x10)
+    except OSError:
+        print(message, file=sys.stderr)
+
+
 def show_pico_information(port=None):
     """连接指定或自动发现的 Pico，输出设备信息后安全断开。"""
     client = PicoJsonClient(port)
@@ -79,6 +99,9 @@ def main():
     _configure_standard_streams()
     arguments = parse_monitor_arguments()
     validate_arguments(arguments)
+    if sys.platform == "win32" and not is_windows_administrator():
+        show_admin_required_message()
+        return 1
     if (
         sys.platform == "win32"
         and getattr(sys, "frozen", False)

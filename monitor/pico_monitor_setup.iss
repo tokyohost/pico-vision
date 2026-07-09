@@ -52,4 +52,4 @@ Name: "{autodesktop}\OmniWatch Monitor"; Filename: "{app}\pico-monitor.exe"; Tas
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加快捷方式："; Flags: unchecked
 
 [Run]
-Filename: "{app}\pico-monitor.exe"; Description: "启动 OmniWatch Monitor"; Flags: nowait postinstall skipifsilent runascurrentuser
+Filename: "{app}\pico-monitor.exe"; Description: "启动 OmniWatch Monitor"; Flags: nowait postinstall skipifsilent

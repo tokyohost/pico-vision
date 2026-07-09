@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -26,6 +27,9 @@ LOGGER = logging.getLogger("pico-monitor.sensor-host")
 DEFAULT_PIPE_NAME = "omniwatch.sensorhost"
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 2.0
 DEFAULT_STARTUP_GRACE_SECONDS = 2.0
+SENSOR_HOST_LEGACY_EXECUTABLE_NAME = "OmniWatch.SensorHost.exe"
+SENSOR_HOST_VERSIONED_EXECUTABLE_PATTERN = "OmniWatch.SensorHost-v*.exe"
+SENSOR_HOST_VERSION_PATTERN = re.compile(r"^OmniWatch\.SensorHost-v(?P<version>\d+(?:\.\d+)*)\.exe$", re.IGNORECASE)
 
 
 class SensorHostError(RuntimeError):
@@ -220,7 +224,7 @@ class SensorHostManager:
         if self.dependency_unavailable_message is not None:
             LOGGER.info("SensorHost 未启用：%s", self.dependency_unavailable_message)
         else:
-            LOGGER.info("SensorHost 未启用：未找到可执行文件，请检查 sensorhost/OmniWatch.SensorHost.exe 是否随程序发布")
+            LOGGER.info("SensorHost 未启用：未找到可执行文件，请检查 sensorhost/OmniWatch.SensorHost-v*.exe 是否随程序发布")
         self._unavailable_logged = True
 
     @staticmethod
@@ -289,13 +293,41 @@ class SensorHostManager:
     @staticmethod
     def _executable_candidates_from_base(base_directory):
         """按一个基准目录生成 SensorHost 可执行文件候选路径。"""
-        return (
-            base_directory / "sensorhost" / "OmniWatch.SensorHost.exe",
-            base_directory / "monitor" / "sensorhost" / "OmniWatch.SensorHost.exe",
-            base_directory / "pico-project" / "monitor" / "sensorhost" / "OmniWatch.SensorHost.exe",
-            base_directory / "OmniWatch.SensorHost.exe",
-            base_directory / "omniwatch-sensor-host" / "OmniWatch.SensorHost.exe",
-            base_directory / "omniwatch-sensor-host" / "src" / "OmniWatch.SensorHost" / "bin" / "Release" / "net8.0-windows" / "win-x64" / "publish" / "OmniWatch.SensorHost.exe",
-            base_directory / "omniwatch-sensor-host" / "src" / "OmniWatch.SensorHost" / "bin" / "Release" / "net8.0-windows" / "OmniWatch.SensorHost.exe",
-            base_directory / "omniwatch-sensor-host" / "src" / "OmniWatch.SensorHost" / "bin" / "Debug" / "net8.0-windows" / "OmniWatch.SensorHost.exe",
+        executable_directories = (
+            base_directory / "sensorhost",
+            base_directory / "monitor" / "sensorhost",
+            base_directory / "pico-project" / "monitor" / "sensorhost",
+            base_directory,
+            base_directory / "omniwatch-sensor-host",
+            base_directory / "omniwatch-sensor-host" / "src" / "OmniWatch.SensorHost" / "bin" / "Release" / "net8.0-windows" / "win-x64" / "publish",
+            base_directory / "omniwatch-sensor-host" / "src" / "OmniWatch.SensorHost" / "bin" / "Release" / "net8.0-windows",
+            base_directory / "omniwatch-sensor-host" / "src" / "OmniWatch.SensorHost" / "bin" / "Debug" / "net8.0-windows",
         )
+        candidates = []
+        for executable_directory in executable_directories:
+            candidates.extend(SensorHostManager._sensor_host_executable_candidates(executable_directory))
+        return tuple(candidates)
+
+    @staticmethod
+    def _sensor_host_executable_candidates(executable_directory):
+        """按版本号优先生成指定目录下的 SensorHost 可执行文件候选路径。"""
+        versioned_candidates = []
+        try:
+            versioned_candidates = [
+                path
+                for path in executable_directory.glob(SENSOR_HOST_VERSIONED_EXECUTABLE_PATTERN)
+                if path.is_file()
+            ]
+        except OSError:
+            versioned_candidates = []
+        versioned_candidates.sort(key=SensorHostManager._sensor_host_executable_sort_key, reverse=True)
+        return versioned_candidates + [executable_directory / SENSOR_HOST_LEGACY_EXECUTABLE_NAME]
+
+    @staticmethod
+    def _sensor_host_executable_sort_key(executable_path):
+        """把带版本号的 SensorHost 文件名转换为可排序的版本键。"""
+        match = SENSOR_HOST_VERSION_PATTERN.match(executable_path.name)
+        if not match:
+            return ((), executable_path.name.lower())
+        version_numbers = tuple(int(part) for part in match.group("version").split("."))
+        return (version_numbers, executable_path.name.lower())

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -189,3 +190,45 @@ class SensorHostClient:
         """确认当前环境具备 pywin32 Named Pipe 支持。"""
         if sys.platform != "win32" or win32file is None:
             raise SensorHostError("SensorHost Named Pipe 客户端需要 Windows 与 pywin32。")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """从命令行直接请求已手动启动的 SensorHost Named Pipe。"""
+    parser = argparse.ArgumentParser(description="测试已启动 SensorHost 的 Named Pipe 响应。")
+    parser.add_argument("--pipe", default=DEFAULT_PIPE_NAME, help="Named Pipe 名称，默认 omniwatch.sensorhost")
+    parser.add_argument("--timeout", type=float, default=2.0, help="连接和读取超时时间，单位秒")
+    parser.add_argument(
+        "--command",
+        choices=("ping", "snapshot", "shutdown"),
+        default="snapshot",
+        help="要发送给 SensorHost 的命令，默认 snapshot",
+    )
+    parser.add_argument("--pretty", action="store_true", help="按缩进格式输出 JSON 结果")
+    args = parser.parse_args(argv)
+
+    client = SensorHostClient(args.pipe)
+    try:
+        if args.command == "ping":
+            data = client.request("ping", timeout=args.timeout)
+        elif args.command == "snapshot":
+            data = client.snapshot(timeout=args.timeout)
+        else:
+            data = client.request("shutdown", timeout=args.timeout)
+    except SensorHostError as error:
+        print("SensorHost 请求失败：{}".format(error), file=sys.stderr)
+        return 1
+
+    result = {
+        "ok": True,
+        "pipe": args.pipe,
+        "command": args.command,
+        "data": data,
+    }
+    indent = 2 if args.pretty else None
+    print(json.dumps(result, ensure_ascii=False, indent=indent))
+    return 0
+
+
+if __name__ == "__main__":
+     raise SystemExit(main())
+    # main()
