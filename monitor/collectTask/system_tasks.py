@@ -78,9 +78,9 @@ class CallbackCollectionTask(CollectionTask):
 
 
 def _import_task_modules():
-    """导入 tasks 包内的全部任务模块，使 CollectionTask 子类完成注册。"""
+    """递归导入 tasks 包内的全部任务模块，使 CollectionTask 子类完成注册。"""
     prefix = task_package.__name__ + "."
-    for module in pkgutil.iter_modules(task_package.__path__, prefix):
+    for module in pkgutil.walk_packages(task_package.__path__, prefix):
         importlib.import_module(module.name)
 
 

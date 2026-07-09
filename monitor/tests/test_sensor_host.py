@@ -7,8 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from collectTask.tasks.sensor_host import SensorHostTask
-from collectTask.tasks.windows_disk_space import WindowsDiskSpaceTask
+from collectTask.tasks.win.sensor_host import SensorHostTask
+from collectTask.tasks.win.windows_disk_space import WindowsDiskSpaceTask
 
 
 def load_sensor_host_manager():
@@ -53,8 +53,7 @@ class SensorHostTaskTest(unittest.TestCase):
             "disks": [{"name": "Disk0", "temperature_c": 40}],
         }
 
-        with mock.patch("collectTask.tasks.sensor_host.platform.system", return_value="Windows"):
-            fragment = SensorHostTask(collector).collect()
+        fragment = SensorHostTask(collector).collect()
 
         self.assertEqual(fragment["cpu"]["temperature_c"], 55.0)
         self.assertEqual(fragment["memory"]["total_bytes"], 1000)
@@ -84,21 +83,17 @@ class SensorHostTaskTest(unittest.TestCase):
             "disks": [{"name": "HP SSD FX700 1TB", "used_space_percent": 76.6}],
         }
 
-        with mock.patch("collectTask.tasks.sensor_host.platform.system", return_value="Windows"):
-            fragment = SensorHostTask(collector).collect()
+        fragment = SensorHostTask(collector).collect()
 
         self.assertEqual(fragment["disk"], {"percent": 76.6})
         self.assertNotIn("used_bytes", fragment["disks"][0])
         self.assertNotIn("total_bytes", fragment["disks"][0])
         collector.mark_sensor_host_metric_available.assert_any_call("disk_space_percent")
 
-    def test_collect_returns_empty_when_not_windows(self):
-        """确认非 Windows 环境不会请求 SensorHost。"""
-        collector = SimpleNamespace(sensor_host=mock.Mock())
-        with mock.patch("collectTask.tasks.sensor_host.platform.system", return_value="Linux"):
-            fragment = SensorHostTask(collector).collect()
-        self.assertEqual(fragment, {})
-        collector.sensor_host.snapshot.assert_not_called()
+    def test_task_declares_windows_only_platform(self):
+        """确认 SensorHost 任务只通过平台声明参与 Windows 调度。"""
+        self.assertTrue(SensorHostTask.supports_current_platform("Windows"))
+        self.assertFalse(SensorHostTask.supports_current_platform("Linux"))
 
 
 class WindowsDiskSpaceTaskTest(unittest.TestCase):
