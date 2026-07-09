@@ -3,6 +3,7 @@
 import threading
 import types
 import unittest
+from collections import deque
 from unittest import mock
 
 import psutil  # 提前加载真实依赖，避免测试替身污染后续测试模块。
@@ -17,6 +18,9 @@ from collectTask.tasks.disk_common import (
     DISK_TEMPERATURE_FIELDS,
     publish_disk_snapshot,
 )
+from collectTask.tasks.cpu_memory import CpuMemoryTask
+from collectTask.tasks.gpu import GpuTask
+from collectTask.tasks.power import PowerTask
 
 
 class BoundedElasticThreadPoolTest(unittest.TestCase):
@@ -82,6 +86,56 @@ class LockFreeSnapshotStoreTest(unittest.TestCase):
 
 class CollectionCoordinatorTest(unittest.TestCase):
     """验证单个采集子任务完成后立即发布对应结果。"""
+
+    def test_sensor_host_available_skips_cpu_memory_fallback_fields(self):
+        """确认 SensorHost 有效时 CPU 和内存降级任务不发布覆盖字段。"""
+        collector = types.SimpleNamespace(
+            histories={"cpu": deque(maxlen=24), "memory": deque(maxlen=24)},
+            history_states={},
+            is_sensor_host_metric_available=lambda name: name in {"cpu", "memory"},
+        )
+        task = CpuMemoryTask(collector)
+
+        with mock.patch.object(task, "_cpu_percent") as cpu_percent, \
+                mock.patch("collectTask.tasks.cpu_memory.psutil.virtual_memory", create=True) as virtual_memory:
+            fragment = task.collect()
+
+        self.assertEqual(fragment, {})
+        cpu_percent.assert_not_called()
+        virtual_memory.assert_not_called()
+
+    def test_cpu_memory_fallback_only_fills_missing_sensor_host_metric(self):
+        """确认 SensorHost 缺少内存时 CPU 避让而内存继续由 psutil 补齐。"""
+        collector = types.SimpleNamespace(
+            histories={"cpu": deque(maxlen=24), "memory": deque(maxlen=24)},
+            history_states={},
+            is_sensor_host_metric_available=lambda name: name == "cpu",
+            _cpu_frequency_ghz=mock.Mock(return_value=4.0),
+            _cpu_temperature=mock.Mock(return_value=50.0),
+        )
+        memory = types.SimpleNamespace(percent=25.5, used=255, total=1000)
+        task = CpuMemoryTask(collector)
+
+        with mock.patch.object(task, "_cpu_percent") as cpu_percent, \
+                mock.patch("collectTask.tasks.cpu_memory.psutil.virtual_memory", return_value=memory, create=True):
+            fragment = task.collect()
+
+        self.assertNotIn("cpu", fragment)
+        self.assertEqual(fragment["memory"]["percent"], 25.5)
+        cpu_percent.assert_not_called()
+
+    def test_sensor_host_available_skips_gpu_and_power_fallback(self):
+        """确认 SensorHost 有效时 GPU 和功耗降级任务不发布覆盖字段。"""
+        collector = types.SimpleNamespace(
+            is_sensor_host_metric_available=lambda name: name in {"gpu", "power"},
+            gpu_monitor=mock.Mock(),
+            power_monitor=mock.Mock(),
+        )
+
+        self.assertEqual(GpuTask(collector).collect(), {})
+        self.assertEqual(PowerTask(collector).collect(), {})
+        collector.gpu_monitor.snapshot.assert_not_called()
+        collector.power_monitor.snapshot.assert_not_called()
 
     def test_disk_tasks_are_split_with_expected_default_intervals(self):
         """确认磁盘容量健康、温度和读写速率任务拥有独立默认频率。"""
