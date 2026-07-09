@@ -60,6 +60,13 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
         self._latest_collected_snapshot = self._snapshot_store.snapshot()
         self._latest_collection_error = None
         self._collection_thread = None
+        self._transmit_thread = None
+        self._transmit_queue = queue.Queue(maxsize=1)
+        self._transmit_lock = threading.Lock()
+        self._transmit_sending = False
+        self._transmit_error = None
+        self._transmit_error_event = threading.Event()
+        self._transmit_dropped_snapshots = 0
         self.custom_data_manager = get_custom_data_manager()
         self.custom_data_manager.prepare_environments_async()
         extra_collection_tasks = []
@@ -152,6 +159,7 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
         custom_data_manager = getattr(self, "custom_data_manager", None)
         if custom_data_manager is not None:
             custom_data_manager.close()
+        self._stop_transmit_worker(wait=True)
         self.collector.close()
 
     def run(self):
@@ -176,8 +184,18 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
                         raise
                     LOGGER.info("Pico LCD 已连接：%s", self.client.port_name)
                     self._synchronize_style_catalog()
+                    self._start_transmit_worker()
                 if self.arguments.upgrade_pico:
                     return self._upgrade_pico()
+                self._raise_transmit_error_if_any()
+                has_control_operation = (
+                    self.custom_style_catalog_requested.is_set()
+                    or self.screenshot_requested.is_set()
+                    or not self.custom_style_uploads.empty()
+                    or not self.custom_style_deletes.empty()
+                )
+                if has_control_operation:
+                    self._wait_for_transmit_idle()
                 if self.custom_style_catalog_requested.is_set():
                     self._publish_custom_style_catalog()
                 if self.screenshot_requested.is_set():
@@ -191,13 +209,15 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
                 snapshot = self._snapshot_for_sending()
                 if self.arguments.dev:
                     self._print_development_snapshot(snapshot)
-                self.client.send(snapshot)
+                self._submit_snapshot_for_transmission(snapshot)
                 if self.arguments.once:
+                    self._wait_for_transmit_idle()
                     return 0
                 remaining = self.arguments.interval - (time.monotonic() - started)
-                self.stopping.wait(max(0.0, remaining))
+                self._wait_for_interval_or_transmit_error(max(0.0, remaining))
             except (OSError, RuntimeError, serial.SerialException) as error:
                 LOGGER.warning("监控通信异常：%s；准备重新连接", error)
+                self._stop_transmit_worker(wait=True)
                 self.client.close()
                 if isinstance(error, PicoRestartingError):
                     self.stopping.wait(self.arguments.reconnect_interval)
@@ -221,6 +241,7 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
                 reboot_result = {"status": "error", "message": str(error)}
         elif reboot_requested is not None and reboot_requested.is_set():
             reboot_result = {"status": "error", "message": "当前没有已连接设备"}
+        self._stop_transmit_worker(wait=True)
         self.client.close()
         if reboot_result is not None:
             print(

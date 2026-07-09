@@ -15,6 +15,7 @@
 
 
 import json
+import io
 import os
 import tempfile
 import threading
@@ -38,6 +39,7 @@ from pico_monitor import (
     validate_arguments,
 )
 from system_monitor import PowerMonitor, SystemInformationCollector
+from monitor_core.console import _stop_log_listener, configure_logging
 
 
 class FakeSerial:
@@ -256,6 +258,20 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertLessEqual(client.serial.write_calls, 6)
 
+    def test_slow_serial_write_emits_warning(self):
+        """确认串口发送耗时过高时输出慢发送告警，便于定位 USB 背压。"""
+        client = PicoJsonClient()
+        client.serial = FakeSerial()
+
+        with mock.patch(
+            "pico_client.time.monotonic",
+            side_effect=[0.0, 0.01, 0.16, 0.17, 0.25],
+        ):
+            with self.assertLogs("pico-monitor.serial", level="WARNING") as logs:
+                client._write_packet(b"123", "JSONZ#1", build_elapsed_ms=5.0)
+
+        self.assertIn("[协议慢发送][TEST][JSONZ#1]", "\n".join(logs.output))
+
     def test_style_upload_uses_small_flash_file_chunks(self):
         """确认大样式拆成小帧传输且不在单个 JSON 中携带完整源码。"""
         client = PicoJsonClient()
@@ -298,6 +314,27 @@ class PicoClientTest(unittest.TestCase):
         client.send({"version": 1})
 
         self.assertEqual(len(client.serial.responses), 2)
+
+    @mock.patch("pico_client.time.monotonic")
+    def test_json_ack_log_includes_send_elapsed(self, monotonic):
+        """确认异步 JSON ACK 日志包含发送到 ACK 的耗时统计。"""
+        monotonic.side_effect = iter([
+            0.000, 0.005,
+            0.010, 0.015, 0.020, 0.025, 0.030, 0.040,
+            0.080,
+        ])
+        client = PicoJsonClient()
+        client.serial = QueuedResponseSerial([])
+
+        with self.assertLogs("pico-monitor.serial", level="DEBUG") as logs:
+            client.send({"version": 1})
+            client.serial.responses.append(build_frame("ACK", b"JSON:1"))
+            client._drain_json_responses()
+
+        text = "\n".join(logs.output)
+        self.assertIn("[Pico -> Monitor][TEST][JSONZ 异步响应 响应]", text)
+        self.assertIn("request_id=1", text)
+        self.assertIn("发送到收到ACK耗时=70.0 ms", text)
 
     def test_bad_json_keeps_serial_connected(self):
         """确认缓存中的单帧 JSON 解析失败只记录警告并保持连接。"""
@@ -547,6 +584,22 @@ class PicoClientTest(unittest.TestCase):
         configure.assert_called_once_with("DEBUG")
         service.close.assert_called_once_with()
 
+    def test_debug_logging_prints_all_standard_levels(self):
+        """确认 DEBUG 日志配置会输出 DEBUG 及以上全部标准级别日志。"""
+        stream = io.StringIO()
+        with mock.patch("monitor_core.console._configure_standard_streams", return_value=stream):
+            configure_logging("DEBUG")
+            logger = logging.getLogger("pico-monitor.dev-log-test")
+            logger.debug("调试日志")
+            logger.info("普通日志")
+            logger.warning("告警日志")
+            _stop_log_listener()
+
+        content = stream.getvalue()
+        self.assertIn("[DEBUG] 调试日志", content)
+        self.assertIn("[INFO] 普通日志", content)
+        self.assertIn("[WARNING] 告警日志", content)
+
     def test_version_argument_prints_build_version(self):
         """确认命令行版本参数输出统一构建版本并成功退出。"""
         with mock.patch("pico_monitor.MONITOR_VERSION", "1.2.3"):
@@ -694,7 +747,8 @@ class PicoClientTest(unittest.TestCase):
             once=False,
         )
         service.stopping = mock.Mock()
-        service.stopping.is_set.side_effect = [False, True]
+        service.stopping.is_set.side_effect = [False, False, True]
+        service.stopping.wait.return_value = False
         service.client = mock.Mock()
         service.client.is_connected = True
         service.client.available_ports.return_value = frozenset({"COM11"})
@@ -719,6 +773,50 @@ class PicoClientTest(unittest.TestCase):
 
         service._wait_for_usb_addition.assert_not_called()
         service.stopping.wait.assert_any_call(3.0)
+
+    def test_transmit_worker_drops_snapshot_when_previous_send_is_busy(self):
+        """确认上一帧仍在串口发送时，新快照会被直接丢弃而不排队。"""
+        service = MonitorService.__new__(MonitorService)
+        service.stopping = threading.Event()
+        service.client = mock.Mock()
+        send_started = threading.Event()
+        release_send = threading.Event()
+
+        def slow_send(snapshot):
+            """模拟串口写入被驱动背压阻塞。"""
+            send_started.set()
+            release_send.wait(1.0)
+
+        service.client.send.side_effect = slow_send
+        service._start_transmit_worker()
+        self.assertTrue(service._submit_snapshot_for_transmission({"sequence": 1}))
+        self.assertTrue(send_started.wait(1.0))
+
+        with self.assertLogs("pico-monitor", level="DEBUG") as logs:
+            accepted = service._submit_snapshot_for_transmission({"sequence": 2})
+
+        release_send.set()
+        service._wait_for_transmit_idle()
+        service._stop_transmit_worker(wait=True)
+
+        self.assertFalse(accepted)
+        service.client.send.assert_called_once_with({"sequence": 1})
+        self.assertIn("JSON 快照发送仍在进行，丢弃本轮快照", "\n".join(logs.output))
+
+    def test_transmit_worker_error_is_raised_on_main_loop(self):
+        """确认发送线程中的通信异常会转交主循环继续走重连流程。"""
+        service = MonitorService.__new__(MonitorService)
+        service.stopping = threading.Event()
+        service.client = mock.Mock()
+        service.client.send.side_effect = RuntimeError("串口写入失败")
+
+        service._start_transmit_worker()
+        service._submit_snapshot_for_transmission({"version": 1})
+
+        with self.assertRaisesRegex(RuntimeError, "串口写入失败"):
+            service._wait_for_interval_or_transmit_error(1.0)
+
+        service._stop_transmit_worker(wait=True)
 
     def test_usb_removal_does_not_trigger_probe(self):
         """拔出串口只更新基线，直到后续插入新端口才返回。"""

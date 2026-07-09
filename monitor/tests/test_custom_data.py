@@ -96,6 +96,63 @@ class CustomDataTaskTest(unittest.TestCase):
         with mock.patch.object(system_tasks, "_import_task_modules"):
             self.assertNotIn(custom_data.CustomDataCollectionTask, system_tasks.system_task_classes())
 
+    def test_custom_data_task_normal_completion_uses_debug_log(self):
+        """确认普通自定义数据采集完成不再产生 INFO 级别运行日志。"""
+        coordinator = custom_data.CustomDataCollectionCoordinator.__new__(
+            custom_data.CustomDataCollectionCoordinator
+        )
+        coordinator.result_transform = None
+        coordinator.result_store = mock.Mock()
+        coordinator.executor = mock.Mock()
+        coordinator.executor.state.return_value = {
+            "core_workers": 1,
+            "max_workers": 5,
+            "workers": 1,
+            "active": 1,
+            "idle": 0,
+            "queued": 0,
+            "queue_capacity": 100,
+        }
+        task = mock.Mock()
+        task.name = "custom_data.demo"
+        task.zh_name = "演示数据"
+        task.collect.return_value = {"ext": {"demo": 1}}
+
+        with mock.patch("custom_data.time.monotonic", side_effect=[0.0, 0.2]):
+            with self.assertLogs("pico-monitor.custom-data", level="DEBUG") as logs:
+                coordinator._execute_and_publish(task)
+
+        self.assertIn("DEBUG:pico-monitor.custom-data:自定义数据任务完成", "\n".join(logs.output))
+        self.assertNotIn("INFO:pico-monitor.custom-data:自定义数据任务完成", "\n".join(logs.output))
+
+    def test_custom_data_task_slow_completion_keeps_warning_log(self):
+        """确认慢自定义数据采集仍会保留可见告警日志。"""
+        coordinator = custom_data.CustomDataCollectionCoordinator.__new__(
+            custom_data.CustomDataCollectionCoordinator
+        )
+        coordinator.result_transform = None
+        coordinator.result_store = mock.Mock()
+        coordinator.executor = mock.Mock()
+        coordinator.executor.state.return_value = {
+            "core_workers": 1,
+            "max_workers": 5,
+            "workers": 1,
+            "active": 1,
+            "idle": 0,
+            "queued": 0,
+            "queue_capacity": 100,
+        }
+        task = mock.Mock()
+        task.name = "custom_data.demo"
+        task.zh_name = "演示数据"
+        task.collect.return_value = {"ext": {"demo": 1}}
+
+        with mock.patch("custom_data.time.monotonic", side_effect=[0.0, 1.2]):
+            with self.assertLogs("pico-monitor.custom-data", level="WARNING") as logs:
+                coordinator._execute_and_publish(task)
+
+        self.assertIn("WARNING:pico-monitor.custom-data:自定义数据任务完成", "\n".join(logs.output))
+
     def test_high_frequency_collection_reuses_plugin_process(self):
         """确认连续采集复用同一个插件进程，避免反复启动解释器。"""
         with tempfile.TemporaryDirectory() as directory:

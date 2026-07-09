@@ -34,6 +34,8 @@ ZLIB_WINDOW_BITS = 9
 STYLE_UPLOAD_CHUNK_SIZE = 512
 JSON_ACK_TIMEOUT = 8.0
 JSON_PROGRESS_GRACE_SECONDS = 2.0
+SERIAL_SLOW_SEND_WARNING_MS = 200.0
+JSON_ACK_PENDING_LIMIT = 128
 
 
 def _build_crc16_byte_table():
@@ -130,6 +132,7 @@ class PicoJsonClient:
         self.screen_height = None
         self.styles = []
         self._json_request_sequence = 0
+        self._json_ack_pending = {}
 
     @property
     def is_connected(self):
@@ -366,6 +369,56 @@ class PicoJsonClient:
         self._json_request_sequence = (self._json_request_sequence + 1) & 0x7FFFFFFF
         return self._json_request_sequence
 
+    def _remember_json_ack_timing(self, request_id, build_started, write_timing):
+        """记录 JSON 快照发送时间，用于异步 ACK 到达时计算端到端耗时。"""
+        key = str(request_id)
+        self._json_ack_pending[key] = {
+            "build_started": build_started,
+            "send_started": write_timing["send_started"],
+            "send_finished": write_timing["send_finished"],
+            "build_elapsed_ms": write_timing["build_elapsed_ms"],
+            "send_elapsed_ms": write_timing["send_elapsed_ms"],
+        }
+        while len(self._json_ack_pending) > JSON_ACK_PENDING_LIMIT:
+            self._json_ack_pending.pop(next(iter(self._json_ack_pending)))
+
+    def _format_json_ack_timing_suffix(self, frame, received_at):
+        """为 JSON ACK 响应日志生成发送到确认的耗时说明。"""
+        if not frame or frame[0] != "ACK":
+            return ""
+        payload = frame[1].decode("ascii", errors="replace")
+        if payload != "JSON" and not payload.startswith("JSON:"):
+            return ""
+        request_id = payload.split(":", 1)[1] if ":" in payload else None
+        inferred = False
+        if request_id is not None:
+            timing = self._json_ack_pending.pop(request_id, None)
+        elif self._json_ack_pending:
+            request_id = next(iter(self._json_ack_pending))
+            timing = self._json_ack_pending.pop(request_id)
+            inferred = True
+        else:
+            timing = None
+        if timing is None:
+            if request_id is None:
+                return "，发送到收到ACK耗时=未知"
+            return "，request_id={}，发送到收到ACK耗时=未知".format(request_id)
+        send_to_ack_ms = (received_at - timing["send_started"]) * 1000
+        write_done_to_ack_ms = (received_at - timing["send_finished"]) * 1000
+        build_to_ack_ms = (received_at - timing["build_started"]) * 1000
+        request_text = "{}{}".format(request_id, "（推断）" if inferred else "")
+        return (
+            "，request_id={}，发送到收到ACK耗时={:.1f} ms，写完到ACK={:.1f} ms，"
+            "构帧到ACK={:.1f} ms，构帧={:.1f} ms，发送阶段={:.1f} ms"
+        ).format(
+            request_text,
+            send_to_ack_ms,
+            write_done_to_ack_ms,
+            build_to_ack_ms,
+            timing["build_elapsed_ms"],
+            timing["send_elapsed_ms"],
+        )
+
     def _drain_json_responses(self):
         """非阻塞消费已经到达的 JSON 响应，避免 ACK 反向缓存持续积压。"""
         device = self.serial
@@ -461,6 +514,7 @@ class PicoJsonClient:
         self.serial.flush()
         flush_elapsed_ms = (time.monotonic() - flush_started) * 1000
         send_elapsed_ms = (time.monotonic() - send_started) * 1000
+        total_elapsed_ms = build_elapsed_ms + send_elapsed_ms
         LOGGER.debug(
             "[协议耗时][%s][%s 写入汇总] 构帧=%.1f ms，write合计=%.1f ms，最慢write=%.1f ms，flush=%.1f ms，发送阶段=%.1f ms，总写入=%d/%d 字节，共%d块",
             self.port_name,
@@ -474,6 +528,26 @@ class PicoJsonClient:
             len(packet),
             chunk_count,
         )
+        if total_elapsed_ms >= SERIAL_SLOW_SEND_WARNING_MS:
+            LOGGER.warning(
+                "[协议慢发送][%s][%s] 总耗时=%.1f ms，构帧=%.1f ms，write合计=%.1f ms，最慢write=%.1f ms，flush=%.1f ms，总写入=%d/%d 字节，共%d块",
+                self.port_name,
+                label,
+                total_elapsed_ms,
+                build_elapsed_ms,
+                write_elapsed_ms,
+                slowest_write_ms,
+                flush_elapsed_ms,
+                total_written,
+                len(packet),
+                chunk_count,
+            )
+        return {
+            "build_elapsed_ms": build_elapsed_ms,
+            "send_started": send_started,
+            "send_finished": send_started + send_elapsed_ms / 1000,
+            "send_elapsed_ms": send_elapsed_ms,
+        }
 
     def _read_protocol_frame(self, label):
         """读取并解析一条 Pico 返回帧，同时输出原始响应日志。"""
@@ -488,15 +562,8 @@ class PicoJsonClient:
             if self.serial is not device or not getattr(device, "is_open", False):
                 raise serial.SerialException("读取 Pico 响应时串口已关闭") from error
             raise
-        if response:
-            LOGGER.debug(
-                "[Pico -> Monitor][%s][%s 响应] %s",
-                self.port_name,
-                label,
-                response.decode("utf-8", errors="replace"),
-            )
         try:
-            return parse_frame(response)
+            frame = parse_frame(response)
         except ValueError as error:
             LOGGER.warning(
                 "[Pico -> Monitor][%s][%s 坏帧] %s raw=%r",
@@ -506,6 +573,16 @@ class PicoJsonClient:
                 response,
             )
             raise RuntimeError(f"Pico 返回损坏协议帧：{error}") from error
+        if response:
+            received_at = time.monotonic()
+            LOGGER.debug(
+                "[Pico -> Monitor][%s][%s 响应] %s%s",
+                self.port_name,
+                label,
+                response.decode("utf-8", errors="replace"),
+                self._format_json_ack_timing_suffix(frame, received_at),
+            )
+        return frame
 
     def _wait_command_result(self, request_id, timeout, label, default_error):
         """等待指定 request_id 的 COMMAND 响应，供样式列表和上传命令复用。"""
@@ -566,7 +643,8 @@ class PicoJsonClient:
         build_started = time.monotonic()
         packet = self.build_packet(snapshot, request_id=request_id)
         build_elapsed_ms = (time.monotonic() - build_started) * 1000
-        self._write_packet(packet, "JSONZ#{}".format(request_id), build_elapsed_ms)
+        write_timing = self._write_packet(packet, "JSONZ#{}".format(request_id), build_elapsed_ms)
+        self._remember_json_ack_timing(request_id, build_started, write_timing)
 
     def reboot(self, timeout=30.0):
         """请求 Pico 执行软重启，并在指定秒数内等待设备确认。"""

@@ -2,6 +2,7 @@
 
 import logging
 import os
+import queue
 import threading
 import time
 
@@ -12,6 +13,7 @@ from pico_client import PicoJsonClient
 from pico_upgrade import PicoFirmwareUpgrader, PicoUpgradeDownloader, PicoUpgradePackage
 
 LOGGER = logging.getLogger("pico-monitor")
+TRANSMIT_STOP = object()
 
 
 class RuntimeOperationsMixin:
@@ -41,6 +43,160 @@ class RuntimeOperationsMixin:
                 schedule_delay = min(schedule_delay, custom_data_coordinator.next_schedule_delay())
             remaining = min(self.arguments.interval, schedule_delay) - (time.monotonic() - started)
             self.stopping.wait(max(0.0, remaining))
+
+    def _ensure_transmit_state(self):
+        """按需初始化异步发送状态，兼容测试中的轻量服务实例。"""
+        if not hasattr(self, "_transmit_queue"):
+            self._transmit_queue = queue.Queue(maxsize=1)
+        if not hasattr(self, "_transmit_lock"):
+            self._transmit_lock = threading.Lock()
+        if not hasattr(self, "_transmit_error_event"):
+            self._transmit_error_event = threading.Event()
+        if not hasattr(self, "_transmit_thread"):
+            self._transmit_thread = None
+        if not hasattr(self, "_transmit_sending"):
+            self._transmit_sending = False
+        if not hasattr(self, "_transmit_error"):
+            self._transmit_error = None
+        if not hasattr(self, "_transmit_dropped_snapshots"):
+            self._transmit_dropped_snapshots = 0
+
+    def _start_transmit_worker(self):
+        """启动唯一的 JSON 快照发送线程，避免串口写入阻塞主监控循环。"""
+        self._ensure_transmit_state()
+        transmit_thread = getattr(self, "_transmit_thread", None)
+        if transmit_thread is not None and transmit_thread.is_alive():
+            return
+        self._clear_transmit_queue()
+        with self._transmit_lock:
+            self._transmit_error = None
+            self._transmit_error_event.clear()
+            self._transmit_sending = False
+        self._transmit_thread = threading.Thread(
+            target=self._transmit_loop,
+            name="pico-json-transmitter",
+            daemon=True,
+        )
+        self._transmit_thread.start()
+
+    def _stop_transmit_worker(self, wait=True):
+        """停止 JSON 快照发送线程，并清理尚未发送的待发快照。"""
+        self._ensure_transmit_state()
+        transmit_thread = getattr(self, "_transmit_thread", None)
+        transmit_queue = getattr(self, "_transmit_queue", None)
+        if transmit_queue is None:
+            return
+        self._clear_transmit_queue()
+        if transmit_thread is not None and transmit_thread.is_alive():
+            try:
+                transmit_queue.put_nowait(TRANSMIT_STOP)
+            except queue.Full:
+                self._clear_transmit_queue()
+                transmit_queue.put_nowait(TRANSMIT_STOP)
+            if wait:
+                transmit_thread.join()
+        self._transmit_thread = None
+        with self._transmit_lock:
+            self._transmit_sending = False
+
+    def _clear_transmit_queue(self):
+        """清空待发送队列，丢弃断线或停止前尚未发送的旧快照。"""
+        self._ensure_transmit_state()
+        transmit_queue = getattr(self, "_transmit_queue", None)
+        if transmit_queue is None:
+            return
+        while True:
+            try:
+                transmit_queue.get_nowait()
+            except queue.Empty:
+                return
+            transmit_queue.task_done()
+
+    def _transmit_loop(self):
+        """从容量为一的队列取出快照并串行写入 Pico 串口。"""
+        self._ensure_transmit_state()
+        while not self.stopping.is_set():
+            try:
+                snapshot = self._transmit_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            try:
+                if snapshot is TRANSMIT_STOP:
+                    return
+                with self._transmit_lock:
+                    self._transmit_sending = True
+                self.client.send(snapshot)
+            except (OSError, RuntimeError) as error:
+                with self._transmit_lock:
+                    self._transmit_error = error
+                    self._transmit_error_event.set()
+                return
+            finally:
+                with self._transmit_lock:
+                    self._transmit_sending = False
+                self._transmit_queue.task_done()
+
+    def _submit_snapshot_for_transmission(self, snapshot):
+        """提交最新快照；若上一帧仍在发送或队列已有待发快照，则丢弃本轮快照。"""
+        self._ensure_transmit_state()
+        self._raise_transmit_error_if_any()
+        transmit_thread = getattr(self, "_transmit_thread", None)
+        if transmit_thread is None or not transmit_thread.is_alive():
+            self._start_transmit_worker()
+        with self._transmit_lock:
+            if self._transmit_sending:
+                self._transmit_dropped_snapshots += 1
+                LOGGER.debug(
+                    "JSON 快照发送仍在进行，丢弃本轮快照：累计丢弃=%d",
+                    self._transmit_dropped_snapshots,
+                )
+                return False
+        try:
+            self._transmit_queue.put_nowait(snapshot)
+            return True
+        except queue.Full:
+            self._transmit_dropped_snapshots += 1
+            LOGGER.debug(
+                "JSON 快照发送队列已有待发数据，丢弃本轮快照：累计丢弃=%d",
+                self._transmit_dropped_snapshots,
+            )
+            return False
+
+    def _raise_transmit_error_if_any(self):
+        """把发送线程捕获到的通信异常转交主循环，由原有重连逻辑处理。"""
+        self._ensure_transmit_state()
+        with self._transmit_lock:
+            error = self._transmit_error
+            self._transmit_error = None
+            self._transmit_error_event.clear()
+        if error is not None:
+            raise error
+
+    def _wait_for_interval_or_transmit_error(self, timeout):
+        """等待发送间隔，同时在发送线程失败时尽快唤醒主循环。"""
+        self._ensure_transmit_state()
+        deadline = time.monotonic() + max(0.0, timeout)
+        while not self.stopping.is_set():
+            self._raise_transmit_error_if_any()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            wait_time = min(remaining, 0.1)
+            if self._transmit_error_event.wait(wait_time):
+                self._raise_transmit_error_if_any()
+            if self.stopping.is_set():
+                return
+
+    def _wait_for_transmit_idle(self):
+        """等待当前快照完成发送，供 once 模式保持原有发送后退出语义。"""
+        self._ensure_transmit_state()
+        while not self.stopping.is_set():
+            self._raise_transmit_error_if_any()
+            with self._transmit_lock:
+                sending = self._transmit_sending
+            if not sending and self._transmit_queue.empty():
+                return
+            self.stopping.wait(0.05)
 
     def _snapshot_for_sending(self):
         """无锁返回采集线程原子发布的最近一次完整快照。"""
@@ -209,4 +365,3 @@ class RuntimeOperationsMixin:
             )
         except (OSError, TypeError, ValueError, psutil.Error) as error:
             LOGGER.warning("[DEV][JSON] 系统指标采集或 JSON 序列化失败：%s", error)
-
