@@ -13,6 +13,7 @@ from datetime import datetime
 import serial
 
 from collectTask import CollectionCoordinator, LockFreeSnapshotStore
+from custom_data import CustomDataCollectionCoordinator
 from custom_data import get_manager as get_custom_data_manager
 from pico_client import PicoJsonClient, PicoRestartingError
 from qbittorrent_monitor import QbittorrentMonitor
@@ -60,7 +61,8 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
         self._latest_collection_error = None
         self._collection_thread = None
         self.custom_data_manager = get_custom_data_manager()
-        extra_collection_tasks = self._custom_data_collection_tasks()
+        self.custom_data_manager.prepare_environments_async()
+        extra_collection_tasks = []
         if self.qbittorrent_monitor is not None:
             extra_collection_tasks.append(("qbittorrent", self._collect_qbittorrent_fragment, 1.0, "qBittorrent"))
         self._collection_coordinator = CollectionCoordinator(
@@ -68,6 +70,12 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
             self._snapshot_store,
             self._complete_collection_fragment,
             extra_collection_tasks,
+            arguments.collection_task_intervals,
+        )
+        self._custom_data_coordinator = CustomDataCollectionCoordinator(
+            self.custom_data_manager,
+            self._snapshot_store,
+            self._complete_collection_fragment,
             arguments.collection_task_intervals,
         )
 
@@ -138,6 +146,12 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
         coordinator = getattr(self, "_collection_coordinator", None)
         if coordinator is not None:
             coordinator.close(wait=True)
+        custom_data_coordinator = getattr(self, "_custom_data_coordinator", None)
+        if custom_data_coordinator is not None:
+            custom_data_coordinator.close(wait=True)
+        custom_data_manager = getattr(self, "custom_data_manager", None)
+        if custom_data_manager is not None:
+            custom_data_manager.close()
         self.collector.close()
 
     def run(self):

@@ -32,6 +32,7 @@ from pico_monitor import (
     format_pico_information,
     load_monitor_config,
     log_monitor_version,
+    main,
     parse_monitor_arguments,
     show_pico_information,
     validate_arguments,
@@ -520,6 +521,32 @@ class PicoClientTest(unittest.TestCase):
         arguments = create_argument_parser().parse_args(["--dev"])
         self.assertTrue(arguments.dev)
 
+    @mock.patch("pico_monitor.MonitorService")
+    @mock.patch("pico_monitor.configure_logging")
+    @mock.patch("pico_monitor.validate_arguments")
+    @mock.patch("pico_monitor.parse_monitor_arguments")
+    def test_development_mode_forces_debug_logging(
+        self, parse_arguments, validate, configure, service_class
+    ):
+        """确认开发模式启动时会输出 DEBUG 及以上级别日志。"""
+        arguments = SimpleNamespace(
+            dev=True,
+            log_level="WARNING",
+            worker=False,
+            pico_info=False,
+            upgrade_pico=False,
+            update=False,
+        )
+        parse_arguments.return_value = arguments
+        service = service_class.return_value
+        service.run.return_value = 0
+
+        self.assertEqual(main(), 0)
+
+        validate.assert_called_once_with(arguments)
+        configure.assert_called_once_with("DEBUG")
+        service.close.assert_called_once_with()
+
     def test_version_argument_prints_build_version(self):
         """确认命令行版本参数输出统一构建版本并成功退出。"""
         with mock.patch("pico_monitor.MONITOR_VERSION", "1.2.3"):
@@ -585,11 +612,13 @@ class PicoClientTest(unittest.TestCase):
     def test_dev_mode_can_be_hot_updated_without_restarting_service(self):
         """确认工作进程可以直接应用托盘下发的开发模式开关。"""
         service = MonitorService.__new__(MonitorService)
-        service.arguments = SimpleNamespace(dev=False)
+        service.arguments = SimpleNamespace(dev=False, log_level="WARNING")
 
-        service.apply_dev_config({"enabled": True})
+        with mock.patch("monitor_core.style_commands.configure_logging") as configure:
+            service.apply_dev_config({"enabled": True})
 
         self.assertTrue(service.arguments.dev)
+        configure.assert_called_once_with("DEBUG")
 
     def test_development_mode_stops_reconnecting_without_pico(self):
         """确认开发模式首次连接失败后直接进入 JSON 输出循环。"""

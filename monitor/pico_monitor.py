@@ -90,7 +90,7 @@ def main():
         from windows_tray import WindowsTrayApplication
 
         return WindowsTrayApplication.start([*sys.argv[1:], "--worker"])
-    configure_logging(arguments.log_level)
+    configure_logging("DEBUG" if arguments.dev else arguments.log_level)
     log_monitor_version()
     if arguments.pico_info:
         return show_pico_information(arguments.port)

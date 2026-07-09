@@ -33,7 +33,12 @@ class RuntimeOperationsMixin:
         while not self.stopping.is_set():
             started = time.monotonic()
             self._collection_coordinator.schedule()
+            custom_data_coordinator = getattr(self, "_custom_data_coordinator", None)
+            if custom_data_coordinator is not None:
+                custom_data_coordinator.schedule()
             schedule_delay = self._collection_coordinator.next_schedule_delay()
+            if custom_data_coordinator is not None:
+                schedule_delay = min(schedule_delay, custom_data_coordinator.next_schedule_delay())
             remaining = min(self.arguments.interval, schedule_delay) - (time.monotonic() - started)
             self.stopping.wait(max(0.0, remaining))
 
@@ -204,5 +209,4 @@ class RuntimeOperationsMixin:
             )
         except (OSError, TypeError, ValueError, psutil.Error) as error:
             LOGGER.warning("[DEV][JSON] 系统指标采集或 JSON 序列化失败：%s", error)
-
 

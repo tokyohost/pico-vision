@@ -88,10 +88,12 @@ def _all_task_classes(base_class):
 def system_task_classes():
     """扫描 tasks 目录并返回全部系统采集任务类。"""
     _import_task_modules()
+    task_module_prefix = task_package.__name__ + "."
     classes = [
         task_class
         for task_class in _all_task_classes(CollectionTask)
         if task_class is not CollectionTask and task_class is not CallbackCollectionTask
+        and task_class.__module__.startswith(task_module_prefix)
     ]
     return tuple(sorted(classes, key=lambda item: (getattr(item, "order", 100), item.__name__)))
 

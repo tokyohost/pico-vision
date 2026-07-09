@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -14,6 +15,9 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from collectTask.executor import BoundedElasticThreadPool, TaskRejectedError
+from collectTask.system_tasks import CollectionTask
+
 
 CUSTOM_DATA_DIRECTORY_NAME = "customData"
 CUSTOM_DATA_ENVIRONMENT_DIRECTORY_NAME = "pluginEnvs"
@@ -24,6 +28,10 @@ CUSTOM_DATA_KEY_PATTERN = r"^[A-Za-z_][A-Za-z0-9_]{0,63}$"
 CUSTOM_DATA_TASK_PREFIX = "custom_data."
 DEFAULT_SCRIPT_TIMEOUT_SECONDS = 10.0
 PLUGIN_PROTOCOL_VERSION = 1
+CUSTOM_DATA_PLACEHOLDER = {"status": "pending", "message": "自定义数据环境准备中"}
+CUSTOM_DATA_COLLECTION_POOL_CORE_WORKERS = 1
+CUSTOM_DATA_COLLECTION_POOL_MAX_WORKERS = 5
+CUSTOM_DATA_COLLECTION_QUEUE_CAPACITY = 100
 
 TEMPLATE_MANIFEST_CONTENT = '''{
   "protocol": 1,
@@ -85,6 +93,9 @@ class CustomDataState:
     last_run_time: float = 0.0
     data: object = None
     error: str = ""
+    environment_ready: bool = False
+    environment_preparing: bool = False
+    environment_error: str = ""
 
 
 class CustomDataError(Exception):
@@ -311,11 +322,169 @@ class CustomDataWorker:
                     stream.close()
 
 
+class CustomDataCollectionTask(CollectionTask):
+    """把单个自定义数据插件封装为标准采集任务。"""
+
+    order = 2000
+
+    def __init__(self, manager, definition):
+        """保存插件管理器和插件定义，并设置任务标识、中文名和频率。"""
+        super().__init__(manager)
+        self.manager = manager
+        self.definition = definition
+        self.plugin_name = definition.name
+        self.name = definition.task_name
+        self.zh_name = definition.zh_name
+        self.default_interval = float(definition.interval)
+        self.interval = float(definition.interval)
+
+    def update_definition(self, definition):
+        """更新插件定义，并同步默认采集频率和中文名称。"""
+        self.definition = definition
+        self.plugin_name = definition.name
+        self.name = definition.task_name
+        self.zh_name = definition.zh_name
+        self.default_interval = float(definition.interval)
+        self.interval = float(definition.interval)
+
+    def collect(self):
+        """执行插件采集并返回可合并到完整快照的 ext 片段。"""
+        return {"ext": self.manager.collect_task_data(self.plugin_name)}
+
+
+class CustomDataCollectionCoordinator:
+    """使用独立线程池调度全部自定义数据采集任务。"""
+
+    def __init__(self, manager, result_store, result_transform=None, task_intervals=None):
+        """创建核心 1、最大 5、队列 100 的自定义数据采集协调器。"""
+        self.manager = manager
+        self.result_store = result_store
+        self.result_transform = result_transform
+        self.task_intervals = dict(task_intervals or {})
+        self.tasks = ()
+        self.executor = BoundedElasticThreadPool(
+            core_workers=CUSTOM_DATA_COLLECTION_POOL_CORE_WORKERS,
+            max_workers=CUSTOM_DATA_COLLECTION_POOL_MAX_WORKERS,
+            queue_capacity=CUSTOM_DATA_COLLECTION_QUEUE_CAPACITY,
+        )
+        self._sync_tasks()
+        self.manager.prepare_environments_async()
+        LOGGER = logging.getLogger("pico-monitor.custom-data")
+        LOGGER.info("自定义数据采集线程池已初始化：%s", self._pool_state_text())
+        LOGGER.info("自定义数据采集任务频率：%s", self._task_interval_text() or "无")
+
+    def schedule(self):
+        """提交当前到期且未在执行的自定义数据任务，队列饱和时丢弃。"""
+        self._sync_tasks()
+        self.manager.prepare_environments_async()
+        now = time.monotonic()
+        logger = logging.getLogger("pico-monitor.custom-data")
+        for task in self.tasks:
+            if not task.is_due(now):
+                continue
+            task.mark_scheduled(now)
+            try:
+                self.executor.submit(self._execute_and_publish, task)
+                logger.debug(
+                    "自定义数据任务已提交：任务=%s，频率=%.3f秒，%s",
+                    self._task_label(task),
+                    task.interval,
+                    self._pool_state_text(),
+                )
+            except TaskRejectedError:
+                task.mark_finished()
+                logger.warning("自定义数据任务被丢弃：任务=%s，%s", self._task_label(task), self._pool_state_text())
+
+    def next_schedule_delay(self):
+        """返回下一次自定义数据任务到期前需要等待的秒数。"""
+        now = time.monotonic()
+        due_times = [task.next_run_time for task in self.tasks if not task.scheduled]
+        if not due_times:
+            return min((task.interval for task in self.tasks), default=1.0)
+        return max(0.0, min(due_times) - now)
+
+    def close(self, wait=True):
+        """关闭自定义数据采集线程池。"""
+        logging.getLogger("pico-monitor.custom-data").info("自定义数据采集线程池准备关闭：%s", self._pool_state_text())
+        self.executor.shutdown(wait=wait)
+        logging.getLogger("pico-monitor.custom-data").info("自定义数据采集线程池已关闭：%s", self._pool_state_text())
+
+    def _sync_tasks(self):
+        """根据插件目录最新定义同步采集任务列表。"""
+        existing = {task.plugin_name: task for task in self.tasks}
+        tasks = []
+        for definition in self.manager.task_definitions():
+            task = existing.get(definition.name)
+            if task is None:
+                task = CustomDataCollectionTask(self.manager, definition)
+            else:
+                task.update_definition(definition)
+            configured_interval = self.task_intervals.get(task.name)
+            if configured_interval is not None:
+                try:
+                    task.configure_interval(configured_interval)
+                except (TypeError, ValueError):
+                    logging.getLogger("pico-monitor.custom-data").warning(
+                        "忽略无效自定义数据采集频率配置：任务=%s，频率=%s",
+                        task.name,
+                        configured_interval,
+                    )
+            tasks.append(task)
+        self.tasks = tuple(tasks)
+
+    def _execute_and_publish(self, task):
+        """执行单个自定义数据任务并发布快照片段。"""
+        started = time.monotonic()
+        task_label = self._task_label(task)
+        logger = logging.getLogger("pico-monitor.custom-data")
+        logger.info("自定义数据任务开始：任务=%s，%s", task_label, self._pool_state_text())
+        try:
+            fragment = task.collect()
+            if self.result_transform is not None:
+                fragment = self.result_transform(fragment)
+            self.result_store.publish(fragment)
+            logger.info(
+                "自定义数据任务完成：任务=%s，耗时=%.3f秒，更新字段=%s，%s",
+                task_label,
+                time.monotonic() - started,
+                "、".join(fragment.keys()) or "无",
+                self._pool_state_text(),
+            )
+        except Exception as error:
+            logger.exception(
+                "自定义数据任务失败：任务=%s，耗时=%.3f秒，错误=%s，%s",
+                task_label,
+                time.monotonic() - started,
+                error,
+                self._pool_state_text(),
+            )
+        finally:
+            task.mark_finished()
+            task.scheduled = False
+
+    def _task_interval_text(self):
+        """把所有自定义数据任务当前采集频率格式化为日志文本。"""
+        return "、".join("{}={}秒".format(self._task_label(task), task.interval) for task in self.tasks)
+
+    def _pool_state_text(self):
+        """把自定义数据采集线程池状态格式化为中文日志文本。"""
+        state = self.executor.state()
+        return (
+            "线程池[核心={core_workers}，最大={max_workers}，已创建={workers}，"
+            "活跃={active}，空闲={idle}，排队={queued}/{queue_capacity}]"
+        ).format(**state)
+
+    @staticmethod
+    def _task_label(task):
+        """返回日志中使用的自定义数据任务中文名称和英文标识。"""
+        return "{}({})".format(task.zh_name, task.name) if task.zh_name != task.name else task.name
+
+
 class CustomDataManager:
     """协调插件扫描、导入、独立环境、子进程执行和结果读取。"""
 
     def __init__(self, custom_directory=None, environment_root=None):
-        """初始化插件目录、虚拟环境根目录、状态表和线程锁。"""
+        """初始化插件目录、虚拟环境根目录、状态表、环境准备线程和线程锁。"""
         self.custom_directory = Path(custom_directory) if custom_directory else get_custom_data_directory()
         self.custom_directory.mkdir(parents=True, exist_ok=True)
         self.environment_root = Path(environment_root) if environment_root else get_environment_root()
@@ -325,6 +494,7 @@ class CustomDataManager:
         self.workers = {}
         self.load_errors = {}
         self.last_scan_time = 0.0
+        self._environment_threads = {}
         self.reload_scripts()
 
     def close(self):
@@ -371,10 +541,18 @@ class CustomDataManager:
             for name, definition in definitions.items():
                 old_state = old_states.get(name)
                 if old_state and old_state.definition.path == definition.path:
+                    definition_changed = old_state.definition.modified_time != definition.modified_time
                     old_state.definition = definition
+                    old_state.environment_ready = self._is_environment_ready(definition)
+                    if definition_changed:
+                        old_state.environment_preparing = False
+                        old_state.environment_error = ""
                     self.states[name] = old_state
                 else:
-                    self.states[name] = CustomDataState(definition=definition)
+                    self.states[name] = CustomDataState(
+                        definition=definition,
+                        environment_ready=self._is_environment_ready(definition),
+                    )
                 old_worker = old_workers.pop(name, None)
                 if old_worker and old_worker.definition.modified_time == definition.modified_time:
                     old_worker.definition = definition
@@ -405,6 +583,10 @@ class CustomDataManager:
 
     def environment_status(self, definition):
         """返回插件独立环境和依赖的中文状态。"""
+        return "环境就绪" if self._is_environment_ready(definition) else self._environment_not_ready_status(definition)
+
+    def _environment_not_ready_status(self, definition):
+        """返回插件环境尚未达到可执行状态时的中文原因。"""
         python_path = _environment_python(definition.environment_directory)
         if not python_path.is_file():
             return "环境未安装"
@@ -413,7 +595,22 @@ class CustomDataManager:
             not marker.is_file() or marker.read_text(encoding="utf-8", errors="replace").strip() != self._requirements_digest(definition)
         ):
             return "依赖未安装"
-        return "环境就绪"
+        if not marker.is_file() or marker.read_text(encoding="utf-8", errors="replace").strip() != self._requirements_digest(definition):
+            return "依赖状态未记录"
+        return "环境未就绪"
+
+    def _is_environment_ready(self, definition):
+        """判断插件独立环境是否已经创建并安装当前 requirements.txt。"""
+        python_path = _environment_python(definition.environment_directory)
+        if not python_path.is_file():
+            return False
+        marker = definition.environment_directory / ".dependencies-ready"
+        if not marker.is_file():
+            return False
+        try:
+            return marker.read_text(encoding="utf-8", errors="replace").strip() == self._requirements_digest(definition)
+        except OSError:
+            return False
 
     def _requirements_digest(self, definition):
         """返回当前依赖声明的 SHA-256 摘要。"""
@@ -462,7 +659,62 @@ class CustomDataManager:
         )
         if progress_callback:
             progress_callback("依赖状态已经记录，插件环境可以使用。")
+        with self.lock:
+            state = self.states.get(name)
+            if state is not None:
+                state.environment_ready = True
+                state.environment_preparing = False
+                state.environment_error = ""
         return self.environment_status(definition)
+
+    def prepare_environments_async(self):
+        """在后台为所有自定义数据插件创建独立执行环境。"""
+        with self.lock:
+            names = [
+                name for name, state in self.states.items()
+                if not state.environment_ready and not state.environment_preparing and not state.environment_error
+            ]
+            for name in names:
+                state = self.states[name]
+                state.environment_preparing = True
+                state.environment_error = ""
+                thread = threading.Thread(
+                    target=self._prepare_environment_guarded,
+                    args=(name,),
+                    name="自定义数据环境准备-{}".format(name),
+                    daemon=True,
+                )
+                self._environment_threads[name] = thread
+                thread.start()
+
+    def _prepare_environment_guarded(self, name):
+        """隔离单个插件环境创建异常，并把失败原因写入插件状态。"""
+        def log_progress(message):
+            """把环境准备进度写入标准监控日志。"""
+            logging.getLogger("pico-monitor.custom-data").info(
+                "自定义数据环境准备：插件=%s，%s",
+                name,
+                message,
+            )
+
+        try:
+            self.install_dependencies(name, log_progress)
+        except Exception:
+            error_text = traceback.format_exc()
+            with self.lock:
+                state = self.states.get(name)
+                if state is not None:
+                    state.environment_ready = False
+                    state.environment_preparing = False
+                    state.environment_error = error_text
+            logging.getLogger("pico-monitor.custom-data").warning(
+                "自定义数据环境准备失败：插件=%s，错误=%s",
+                name,
+                error_text,
+            )
+        finally:
+            with self.lock:
+                self._environment_threads.pop(name, None)
 
     def _run_install_command(self, command, progress_callback=None):
         """执行环境创建或 pip 安装命令，并逐行回传安装日志。"""
@@ -507,20 +759,55 @@ class CustomDataManager:
     def collect_task_data(self, name):
         """通过独立常驻进程执行指定插件，且不阻塞其他插件采集。"""
         self.reload_if_changed()
+        logger = logging.getLogger("pico-monitor.custom-data")
         with self.lock:
             state = self.states.get(name)
             if state is None:
+                logger.warning("自定义数据插件不存在，跳过执行：插件=%s", name)
                 return {}
+            if not state.environment_ready and self._is_environment_ready(state.definition):
+                state.environment_ready = True
+                state.environment_preparing = False
+                state.environment_error = ""
+            if not state.environment_ready:
+                state.last_run_time = time.monotonic()
+                state.error = state.environment_error or self._environment_not_ready_status(state.definition)
+                logger.info(
+                    "自定义数据插件环境未就绪，返回占位数据：插件=%s，数据键=%s，原因=%s",
+                    state.definition.name,
+                    state.definition.key,
+                    state.error.splitlines()[-1] if state.error else "环境准备中",
+                )
+                return {state.definition.key: dict(CUSTOM_DATA_PLACEHOLDER)}
+            definition = state.definition
             worker = self.workers[name]
         try:
+            started = time.monotonic()
+            logger.info(
+                "自定义数据插件开始执行：插件=%s，中文名=%s，数据键=%s",
+                definition.name,
+                definition.zh_name,
+                definition.key,
+            )
             data = worker.collect()
             with self.lock:
                 state.data = data
                 state.error = ""
+            logger.info(
+                "自定义数据插件执行完成：插件=%s，耗时=%.3f秒",
+                definition.name,
+                time.monotonic() - started,
+            )
             return {state.definition.key: data}
         except Exception:
+            error_text = traceback.format_exc()
             with self.lock:
-                state.error = traceback.format_exc()
+                state.error = error_text
+            logger.warning(
+                "自定义数据插件执行失败：插件=%s，错误=%s",
+                definition.name,
+                error_text,
+            )
             return {}
         finally:
             with self.lock:

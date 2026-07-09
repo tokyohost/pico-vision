@@ -6,8 +6,10 @@ import zipfile
 import os
 import sys
 from pathlib import Path
+from unittest import mock
 
 import custom_data
+import collectTask.system_tasks as system_tasks
 
 
 class CustomDataTaskTest(unittest.TestCase):
@@ -60,6 +62,39 @@ class CustomDataTaskTest(unittest.TestCase):
             manager.close()
 
         self.assertEqual(result, {"demo_json": {"value": 2}})
+
+    def test_collect_task_data_returns_placeholder_before_environment_ready(self):
+        """确认独立环境尚未创建成功前返回固定占位数据。"""
+        with tempfile.TemporaryDirectory() as directory:
+            self._create_plugin(directory)
+            manager = custom_data.CustomDataManager(directory, Path(directory) / "envs")
+            result = manager.collect_task_data("demo_task")
+            manager.close()
+
+        self.assertEqual(result, {"demo_json": custom_data.CUSTOM_DATA_PLACEHOLDER})
+
+    def test_custom_data_collection_coordinator_uses_independent_pool(self):
+        """确认每个自定义数据插件会封装为独立任务并使用专用线程池。"""
+        with tempfile.TemporaryDirectory() as directory:
+            self._create_plugin(directory)
+            manager = custom_data.CustomDataManager(directory, Path(directory) / "envs")
+            store = type("Store", (), {"publish": lambda self, fragment: None})()
+            with mock.patch.object(manager, "prepare_environments_async"):
+                coordinator = custom_data.CustomDataCollectionCoordinator(manager, store)
+            try:
+                self.assertEqual(coordinator.executor.core_workers, 1)
+                self.assertEqual(coordinator.executor.max_workers, 5)
+                self.assertEqual(coordinator.executor.queue_capacity, 100)
+                self.assertEqual(len(coordinator.tasks), 1)
+                self.assertIsInstance(coordinator.tasks[0], custom_data.CustomDataCollectionTask)
+            finally:
+                coordinator.close()
+                manager.close()
+
+    def test_custom_data_task_is_not_registered_as_system_task(self):
+        """确认自定义数据任务子类不会被系统任务自动发现误注册。"""
+        with mock.patch.object(system_tasks, "_import_task_modules"):
+            self.assertNotIn(custom_data.CustomDataCollectionTask, system_tasks.system_task_classes())
 
     def test_high_frequency_collection_reuses_plugin_process(self):
         """确认连续采集复用同一个插件进程，避免反复启动解释器。"""

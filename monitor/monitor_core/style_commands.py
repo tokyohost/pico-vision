@@ -8,6 +8,8 @@ from pathlib import Path
 
 import serial
 
+from .console import configure_logging
+
 LOGGER = logging.getLogger("pico-monitor")
 BUILTIN_LCD_STYLES = (
     "default", "disk", "diskv2", "diskv3", "diskv4", "horizontal_disk",
@@ -193,6 +195,7 @@ class StyleCommandMixin:
         if not isinstance(enabled, bool):
             raise ValueError("开发模式开关必须为布尔值")
         self.arguments.dev = enabled
+        configure_logging("DEBUG" if enabled else self.arguments.log_level)
         LOGGER.info("开发模式已热更新：%s", "开启" if enabled else "关闭")
 
     def stop(self, signum=None, frame=None):
