@@ -1,7 +1,7 @@
 """磁盘实时读写速率采集任务。"""
 
 from ..system_tasks import CollectionTask
-from .disk_common import DISK_RATE_FIELDS, disk_snapshot_disks, publish_disk_snapshot
+from .disk_common import DISK_RATE_FIELDS, collect_shared_disk_details, disk_snapshot_disks, publish_disk_snapshot
 
 
 class DiskRateTask(CollectionTask):
@@ -14,11 +14,14 @@ class DiskRateTask(CollectionTask):
 
     def collect(self):
         """返回合并后的磁盘实时读写速率指标。"""
+        if self._sensor_host_available():
+            return {}
         disks = disk_snapshot_disks(self.collector)
         if not disks:
-            self.collector._refresh_disk_hardware_state()
-            disks = self.collector._disk_details()
+            disks = collect_shared_disk_details(self.collector, refresh_hardware=True)
         disks = self.collector._disk_rates(disks)
+        if self._sensor_host_available():
+            return {}
         return publish_disk_snapshot(
             self.collector,
             disks=disks,
@@ -26,3 +29,8 @@ class DiskRateTask(CollectionTask):
             disk_fields=DISK_RATE_FIELDS,
             physical_fields=DISK_RATE_FIELDS,
         )
+
+    def _sensor_host_available(self):
+        """判断 SensorHost 是否正在优先提供磁盘读写速率指标。"""
+        checker = getattr(self.collector, "is_sensor_host_metric_available", None)
+        return bool(checker is not None and checker("disk_rate"))

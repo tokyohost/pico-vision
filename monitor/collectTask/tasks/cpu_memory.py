@@ -160,7 +160,7 @@ class CpuMemoryTask(CollectionTask):
             fragment["cpu"] = {
                 "percent": cpu,
                 "frequency_ghz": self.collector._cpu_frequency_ghz(),
-                "temperature_c": self.collector._cpu_temperature(),
+                "temperature_c": self._cpu_temperature(),
                 "history": list(self.collector.histories["cpu"]),
             }
         if memory is not None:
@@ -186,6 +186,14 @@ class CpuMemoryTask(CollectionTask):
         """判断 SensorHost 是否正在优先提供指定指标。"""
         checker = getattr(self.collector, "is_sensor_host_metric_available", None)
         return bool(checker is not None and checker(metric_name))
+
+    def _cpu_temperature(self):
+        """优先复用 SensorHost CPU 温度，缺失时再执行本地温度采集。"""
+        if self._sensor_host_available("cpu_temperature"):
+            cpu = getattr(self.collector, "_sensor_host_cpu_fragment", {}) or {}
+            if cpu.get("temperature_c") is not None:
+                return cpu.get("temperature_c")
+        return self.collector._cpu_temperature()
 
     def _cpu_percent(self):
         """Windows 优先读取 PDH CPU 计数器，失败时回退到 psutil 阻塞采样。"""

@@ -29,12 +29,14 @@ from http.cookiejar import CookieJar
 
 LOGGER = logging.getLogger("pico-monitor")
 QBITTORRENT_HISTORY_LENGTH = 24
+QBITTORRENT_FAILURE_BACKOFF_INITIAL_SECONDS = 5.0
+QBITTORRENT_FAILURE_BACKOFF_MAX_SECONDS = 60.0
 
 
 class QbittorrentApiClient:
     """封装 qBittorrent Web API 的认证和 JSON 请求。"""
 
-    def __init__(self, address, username="", password="", timeout=5.0):
+    def __init__(self, address, username="", password="", timeout=3.0):
         """保存连接参数，并创建能够维持登录 Cookie 的请求器。"""
         self.address = str(address or "").strip().rstrip("/")
         self.username = str(username or "")
@@ -53,7 +55,6 @@ class QbittorrentApiClient:
         request = urllib.request.Request(
             self.address + path,
             data=encoded_data,
-            timeout=3,
             headers={"Referer": self.address + "/"},
         )
         with self.opener.open(request, timeout=self.timeout) as response:
@@ -132,7 +133,7 @@ class QbittorrentApiClient:
 class QbittorrentMonitor:
     """在后台定时采集 qBittorrent 指标，并提供线程安全快照。"""
 
-    def __init__(self, address, username="", password="", interval=2.0, timeout=5.0):
+    def __init__(self, address, username="", password="", interval=2.0, timeout=3.0):
         """初始化 API 客户端、速率历史和离线默认快照。"""
         self.client = QbittorrentApiClient(address, username, password, timeout)
         self.interval = max(0.5, float(interval))
@@ -142,6 +143,8 @@ class QbittorrentMonitor:
         self.lock = threading.Lock()
         self.value = self._empty_snapshot()
         self.started = False
+        self.failure_count = 0
+        self.next_retry_at = 0.0
 
     @staticmethod
     def _empty_snapshot():
@@ -237,21 +240,44 @@ class QbittorrentMonitor:
             "torrents": self._torrent_counts(torrents),
         }
 
+    def _failure_retry_delay(self):
+        """按连续失败次数计算退避重试间隔，避免接口异常时持续压测后台服务。"""
+        exponent = max(0, min(self.failure_count - 1, 8))
+        delay = QBITTORRENT_FAILURE_BACKOFF_INITIAL_SECONDS * (2 ** exponent)
+        return max(self.interval, min(QBITTORRENT_FAILURE_BACKOFF_MAX_SECONDS, delay))
+
+    def _build_failure_snapshot(self, error):
+        """复用上次成功快照，仅标记离线状态和错误原因。"""
+        with self.lock:
+            value = json.loads(json.dumps(self.value))
+        value["online"] = False
+        value["error"] = str(error)[:160]
+        return value
+
     def _run(self):
-        """循环采集 API，异常时发布离线状态并按周期重试。"""
+        """循环采集 API，异常时发布离线状态并按退避周期重试。"""
         while True:
+            now = time.monotonic()
+            if now < self.next_retry_at:
+                time.sleep(max(0.1, self.next_retry_at - now))
+                continue
             started = time.monotonic()
+            failed = False
             try:
                 transfer, server_state, torrents = self.client.collect()
                 value = self._build_snapshot(
                     transfer or {}, server_state or {}, torrents or []
                 )
+                self.failure_count = 0
+                self.next_retry_at = 0.0
             except (OSError, ValueError, RuntimeError, urllib.error.URLError) as error:
-                LOGGER.warning("qBittorrent 指标采集失败：%s", error)
-                with self.lock:
-                    value = dict(self.value)
-                value["online"] = False
-                value["error"] = str(error)[:160]
+                failed = True
+                self.failure_count += 1
+                retry_delay = self._failure_retry_delay()
+                self.next_retry_at = time.monotonic() + retry_delay
+                value = self._build_failure_snapshot(error)
+                LOGGER.warning("qBittorrent 指标采集失败，%.1f秒后重试：%s", retry_delay, error)
             with self.lock:
                 self.value = value
-            time.sleep(max(0.1, self.interval - (time.monotonic() - started)))
+            if not failed:
+                time.sleep(max(0.1, self.interval - (time.monotonic() - started)))

@@ -14,6 +14,7 @@ class FpsTask(CollectionTask):
     zh_name = "FPS采集"
     default_interval = 1.0
     order = 70
+    supported_platforms = ("Windows",)
 
     def collect(self):
         """返回 FPS 指标或结构完整的不可用结果。"""

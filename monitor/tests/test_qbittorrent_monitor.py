@@ -121,6 +121,33 @@ class QbittorrentMonitorTests(unittest.TestCase):
 
         self.assertTrue(client.authenticated)
 
+    def test_api_client_uses_three_second_default_timeout(self):
+        """确认 qBittorrent HTTP 请求默认使用三秒超时。"""
+        client = QbittorrentApiClient("http://127.0.0.1:8080")
+        monitor = QbittorrentMonitor("http://127.0.0.1:8080")
+
+        self.assertEqual(client.timeout, 3.0)
+        self.assertEqual(monitor.client.timeout, 3.0)
+
+    def test_failure_snapshot_keeps_previous_metrics_and_backs_off(self):
+        """确认采集失败时保留上次指标，只标记离线并进入退避重试。"""
+        monitor = QbittorrentMonitor("http://127.0.0.1:8080", interval=2.0)
+        monitor.value = monitor._build_snapshot(
+            {"up_info_speed": 100, "dl_info_speed": 200},
+            {"connection_status": "connected"},
+            [{"state": "uploading", "progress": 1}],
+        )
+        monitor.failure_count = 2
+
+        snapshot = monitor._build_failure_snapshot(RuntimeError("连接失败"))
+
+        self.assertFalse(snapshot["online"])
+        self.assertEqual(snapshot["error"], "连接失败")
+        self.assertEqual(snapshot["upload_bps"], 100)
+        self.assertEqual(snapshot["download_bps"], 200)
+        self.assertEqual(snapshot["torrents"]["seeding"], 1)
+        self.assertEqual(monitor._failure_retry_delay(), 10.0)
+
 
 if __name__ == "__main__":
     unittest.main()

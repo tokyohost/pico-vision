@@ -1,6 +1,7 @@
 """磁盘采集任务共享的快照合并工具。"""
 
 import threading
+import time
 
 
 DISK_CAPACITY_HEALTH_FIELDS = (
@@ -9,11 +10,13 @@ DISK_CAPACITY_HEALTH_FIELDS = (
     "filesystems",
     "used_bytes",
     "total_bytes",
+    "free_bytes",
     "percent",
     "health",
 )
 DISK_TEMPERATURE_FIELDS = ("temperature_c",)
 DISK_RATE_FIELDS = ("read_bps", "write_bps", "read_history", "write_history")
+DISK_DETAILS_SHARED_CACHE_SECONDS = 2.0
 
 
 def disk_task_lock(collector):
@@ -38,6 +41,22 @@ def disk_snapshot_disks(collector):
     """复制当前磁盘明细，供读写速率任务计算实时速度。"""
     with disk_task_lock(collector):
         return [dict(item) for item in disk_snapshot(collector).get("disks", ())]
+
+
+def collect_shared_disk_details(collector, refresh_hardware=False):
+    """串行刷新磁盘明细，并让同一调度窗口内的磁盘任务复用结果。"""
+    with disk_task_lock(collector):
+        now = time.monotonic()
+        if refresh_hardware:
+            collector._refresh_disk_hardware_state()
+        cached_at = float(getattr(collector, "_disk_details_task_cache_time", 0.0) or 0.0)
+        cached = getattr(collector, "_disk_details_task_cache", None)
+        if cached is not None and now - cached_at < DISK_DETAILS_SHARED_CACHE_SECONDS:
+            return [dict(item) for item in cached]
+        disks = collector._disk_details()
+        collector._disk_details_task_cache = [dict(item) for item in disks]
+        collector._disk_details_task_cache_time = time.monotonic()
+        return [dict(item) for item in disks]
 
 
 def publish_disk_snapshot(

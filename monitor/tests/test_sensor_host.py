@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from collectTask.tasks.sensor_host import SensorHostTask
+from collectTask.tasks.windows_disk_space import WindowsDiskSpaceTask
 
 
 def load_sensor_host_manager():
@@ -67,6 +68,30 @@ class SensorHostTaskTest(unittest.TestCase):
             mock.call("power"),
         ])
 
+    def test_sensor_host_disk_percent_does_not_publish_fake_capacity(self):
+        """确认 SensorHost 只有占用百分比时不会伪造容量字节。"""
+        collector = SimpleNamespace(
+            sensor_host=mock.Mock(),
+            histories={"cpu": [], "memory": []},
+            history_states={},
+            gpu_history=[],
+            power_history=[],
+            disk_io_histories={},
+            mark_sensor_host_metric_available=mock.Mock(),
+            _disk_task_snapshot={"disk": {}, "disks": [], "physical_disks": []},
+        )
+        collector.sensor_host.snapshot.return_value = {
+            "disks": [{"name": "HP SSD FX700 1TB", "used_space_percent": 76.6}],
+        }
+
+        with mock.patch("collectTask.tasks.sensor_host.platform.system", return_value="Windows"):
+            fragment = SensorHostTask(collector).collect()
+
+        self.assertEqual(fragment["disk"], {"percent": 76.6})
+        self.assertNotIn("used_bytes", fragment["disks"][0])
+        self.assertNotIn("total_bytes", fragment["disks"][0])
+        collector.mark_sensor_host_metric_available.assert_any_call("disk_space_percent")
+
     def test_collect_returns_empty_when_not_windows(self):
         """确认非 Windows 环境不会请求 SensorHost。"""
         collector = SimpleNamespace(sensor_host=mock.Mock())
@@ -74,6 +99,40 @@ class SensorHostTaskTest(unittest.TestCase):
             fragment = SensorHostTask(collector).collect()
         self.assertEqual(fragment, {})
         collector.sensor_host.snapshot.assert_not_called()
+
+
+class WindowsDiskSpaceTaskTest(unittest.TestCase):
+    """验证 Windows 磁盘空间补齐任务。"""
+
+    def test_collect_uses_wmi_total_size_and_sensor_host_percent(self):
+        """确认任务会用 WMI 总容量和 SensorHost 占用率计算空间字段。"""
+        collector = SimpleNamespace(
+            _disk_task_snapshot={
+                "disk": {"percent": 76.6},
+                "disks": [{"name": "HP SSD FX700 1TB", "percent": 76.6, "health": 1}],
+                "physical_disks": [{"name": "HP SSD FX700 1TB", "percent": 76.6, "health": 1}],
+            },
+            is_sensor_host_metric_available=lambda name: name == "disk_space_percent",
+            mark_sensor_host_metric_available=mock.Mock(),
+        )
+
+        with mock.patch.object(
+            WindowsDiskSpaceTask,
+            "_disk_drive_sizes",
+            return_value=[{"model": "HP SSD FX700 1TB", "total_bytes": 1000}],
+        ):
+            fragment = WindowsDiskSpaceTask(collector).collect()
+
+        self.assertEqual(fragment["disk"], {
+            "percent": 76.6,
+            "used_bytes": 766,
+            "total_bytes": 1000,
+            "free_bytes": 234,
+        })
+        self.assertEqual(fragment["disks"][0]["used_bytes"], 766)
+        self.assertEqual(fragment["disks"][0]["total_bytes"], 1000)
+        self.assertEqual(fragment["disks"][0]["free_bytes"], 234)
+        collector.mark_sensor_host_metric_available.assert_called_once_with("disk_capacity_health")
 
 
 class SensorHostManagerPathTest(unittest.TestCase):

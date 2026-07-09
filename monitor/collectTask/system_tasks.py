@@ -2,6 +2,7 @@
 
 import importlib
 import logging
+import platform
 import pkgutil
 
 from . import tasks as task_package
@@ -17,6 +18,7 @@ class CollectionTask:
     zh_name = "未命名采集任务"
     default_interval = 1.0
     order = 100
+    supported_platforms = ("Linux", "Windows")
 
     def __init__(self, collector):
         """保存系统采集器，并初始化调度状态。"""
@@ -48,6 +50,12 @@ class CollectionTask:
     def collect(self):
         """采集并返回需要合并到完整快照的顶层字段。"""
         raise NotImplementedError
+
+    @classmethod
+    def supports_current_platform(cls, current_platform=None):
+        """判断任务是否适用于当前操作系统平台。"""
+        current_platform = platform.system() if current_platform is None else current_platform
+        return current_platform in tuple(getattr(cls, "supported_platforms", ()) or ())
 
 
 class CallbackCollectionTask(CollectionTask):
@@ -89,11 +97,13 @@ def system_task_classes():
     """扫描 tasks 目录并返回全部系统采集任务类。"""
     _import_task_modules()
     task_module_prefix = task_package.__name__ + "."
+    current_platform = platform.system()
     classes = [
         task_class
         for task_class in _all_task_classes(CollectionTask)
         if task_class is not CollectionTask and task_class is not CallbackCollectionTask
         and task_class.__module__.startswith(task_module_prefix)
+        and task_class.supports_current_platform(current_platform)
     ]
     return tuple(sorted(classes, key=lambda item: (getattr(item, "order", 100), item.__name__)))
 

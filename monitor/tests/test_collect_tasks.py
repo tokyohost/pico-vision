@@ -16,6 +16,7 @@ from collectTask.tasks.disk_common import (
     DISK_CAPACITY_HEALTH_FIELDS,
     DISK_RATE_FIELDS,
     DISK_TEMPERATURE_FIELDS,
+    collect_shared_disk_details,
     publish_disk_snapshot,
 )
 from collectTask.tasks.cpu_memory import CpuMemoryTask
@@ -229,6 +230,20 @@ class CollectionCoordinatorTest(unittest.TestCase):
         self.assertEqual(len(replaced["disks"]), 1)
         self.assertEqual(replaced["disks"][0]["temperature_c"], 42.0)
         self.assertEqual(replaced["disks"][0]["used_bytes"], 60)
+
+    def test_shared_disk_details_reuses_single_slow_refresh(self):
+        """确认同一调度窗口内多个磁盘任务只触发一次慢速磁盘明细采集。"""
+        collector = types.SimpleNamespace(
+            _refresh_disk_hardware_state=mock.Mock(),
+            _disk_details=mock.Mock(return_value=[{"name": "DISK0", "temperature_c": 42.0}]),
+        )
+
+        first = collect_shared_disk_details(collector, refresh_hardware=True)
+        second = collect_shared_disk_details(collector, refresh_hardware=True)
+
+        self.assertEqual(first, second)
+        self.assertEqual(collector._disk_details.call_count, 1)
+        self.assertEqual(collector._refresh_disk_hardware_state.call_count, 2)
 
     def test_task_completion_publishes_fragment_immediately(self):
         """确认协调器无需等待同批其他任务即可更新快照。"""

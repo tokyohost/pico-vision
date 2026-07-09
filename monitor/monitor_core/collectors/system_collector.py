@@ -68,9 +68,12 @@ class SystemInformationCollector(DiskMetricsMixin, NetworkMetricsMixin, CpuMetri
         self.last_gpu_version = -1
         self.disk_temperature_cache = {}
         self.disk_temperature_time = 0.0
+        self.windows_disk_temperature_failure_until = 0.0
         self.disk_health_cache = {}
         self.disk_health_time = 0.0
         self.disk_hardware_signature = None
+        self._disk_details_task_cache = None
+        self._disk_details_task_cache_time = 0.0
         self.ping_monitor.start()
         if self.sensor_host is not None:
             self.sensor_host.start()
@@ -192,4 +195,3 @@ class SystemInformationCollector(DiskMetricsMixin, NetworkMetricsMixin, CpuMetri
             ordered_times[0][1],
         )
         return {"version": 1, "timestamp": dt.datetime.now().astimezone().isoformat(timespec="seconds"), "host": socket.gethostname(), "platform": platform.system(), "uptime_seconds": max(0, int(time.time() - psutil.boot_time())), "cpu": {"percent": cpu, "frequency_ghz": cpu_frequency, "temperature_c": cpu_temperature, "history": list(self.histories["cpu"])}, "memory": {"percent": round(memory.percent, 1), "used_bytes": memory.used, "total_bytes": memory.total, "history": list(self.histories["memory"])}, "disk": {"percent": disk_percent, "used_bytes": disk_used, "total_bytes": disk_total}, "disks": disks, "physical_disks": physical_disks, "gpu": gpu, "fps": fps, "power": power, "network": {"upload_bps": network[0], "download_bps": network[1], "transmit_bytes": network[2], "receive_bytes": network[3], "link_speed_mbps": link_speed, "upload_history": list(self.histories["upload"]), "download_history": list(self.histories["download"]), "ping_ms": ping, "online": online, "ip": local_ip}}
-

@@ -37,6 +37,9 @@ from monitor_core.collectors.models import (
 )
 
 
+WINDOWS_DISK_TEMPERATURE_FAILURE_BACKOFF_SECONDS = 60.0
+
+
 class DiskMetricsMixin:
     """为系统采集器提供磁盘容量、读写速率、温度和健康状态采集能力。"""
 
@@ -67,6 +70,9 @@ class DiskMetricsMixin:
             return False
         self.disk_temperature_cache = {}
         self.disk_temperature_time = 0.0
+        self.windows_disk_temperature_failure_until = 0.0
+        self._disk_details_task_cache = None
+        self._disk_details_task_cache_time = 0.0
         self.disk_health_cache = {}
         self.disk_health_time = 0.0
         LOGGER.info("检测到磁盘硬件或挂载关系变化，立即重新采集 SMART 与 health 状态")
@@ -82,6 +88,7 @@ class DiskMetricsMixin:
                 "mountpoints": list(disk.get("mountpoints", ())),
                 "used_bytes": int(disk.get("used_bytes", 0)),
                 "total_bytes": int(disk.get("total_bytes", 0)),
+                "free_bytes": int(disk.get("free_bytes", 0)),
                 "percent": float(disk.get("percent", 0)),
                 "temperature_c": disk.get("temperature_c"),
                 "health": int(disk.get("health", DISK_HEALTH_UNKNOWN)),
@@ -507,9 +514,12 @@ class DiskMetricsMixin:
         priority = max(item[0] for item in values)
         return [temperature for item_priority, temperature in values if item_priority == priority]
 
-    @classmethod
-    def _windows_disk_temperatures(cls):
+    def _windows_disk_temperatures(self):
         """通过 PowerShell 建立 Windows 盘符到物理磁盘温度的映射。"""
+        now = time.monotonic()
+        failure_until = float(getattr(self, "windows_disk_temperature_failure_until", 0.0) or 0.0)
+        if now < failure_until:
+            return dict(getattr(self, "disk_temperature_cache", {}) or {})
         script = (
             "$items=@(); Get-Partition | Where-Object DriveLetter | ForEach-Object {"
             "$p=$_; $d=$p | Get-Disk; $physical=Get-PhysicalDisk | Where-Object DeviceId -eq ([string]$d.Number) | Select-Object -First 1;"
@@ -524,9 +534,18 @@ class DiskMetricsMixin:
                 capture_output=True, text=True, errors="replace", timeout=15,
                 check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
+            if result.returncode != 0:
+                raise RuntimeError((result.stderr or result.stdout or "PowerShell 无输出").strip())
             payload = json.loads(result.stdout) if result.stdout.strip() else []
-        except (OSError, subprocess.TimeoutExpired, ValueError):
-            return {}
+        except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError) as error:
+            self.windows_disk_temperature_failure_until = now + WINDOWS_DISK_TEMPERATURE_FAILURE_BACKOFF_SECONDS
+            LOGGER.warning(
+                "Windows 磁盘温度 PowerShell 采集失败，%.0f秒内复用上次结果：%s",
+                WINDOWS_DISK_TEMPERATURE_FAILURE_BACKOFF_SECONDS,
+                error,
+            )
+            return dict(getattr(self, "disk_temperature_cache", {}) or {})
+        self.windows_disk_temperature_failure_until = 0.0
         if isinstance(payload, dict):
             payload = [payload]
         temperatures = {}
@@ -534,7 +553,7 @@ class DiskMetricsMixin:
             device = os.path.normcase(str(item.get("Device", "")))
             temperatures[device] = {
                 "name": str(item.get("DiskName") or item.get("Device") or "DISK"),
-                "temperature_c": cls._normalize_temperature(item.get("Temperature")),
+                "temperature_c": self._normalize_temperature(item.get("Temperature")),
                 "health": int(item.get("Health", DISK_HEALTH_UNKNOWN) or DISK_HEALTH_UNKNOWN),
             }
         return temperatures
@@ -702,4 +721,3 @@ class DiskMetricsMixin:
             total_bytes, used_bytes = int(usage.total), int(usage.used)
         percent = used_bytes * 100 / total_bytes if total_bytes else 0
         return used_bytes, total_bytes, round(percent, 1)
-

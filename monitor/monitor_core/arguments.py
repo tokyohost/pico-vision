@@ -23,7 +23,7 @@ def create_argument_parser(config=None):
     adaptive_group = parser.add_mutually_exclusive_group()
     adaptive_group.add_argument("--adaptive-transmit", dest="adaptive_transmit", action="store_true", help="等待 Pico JSON ACK 后再发送下一帧，并在拥塞时合并为最新快照")
     adaptive_group.add_argument("--no-adaptive-transmit", dest="adaptive_transmit", action="store_false", help="关闭 JSON ACK 背压，沿用写完即返回的发送策略")
-    parser.set_defaults(adaptive_transmit=config_flag(config, "PICO_MONITOR_ADAPTIVE_TRANSMIT", True))
+    parser.set_defaults(adaptive_transmit=config_flag(config, "PICO_MONITOR_ADAPTIVE_TRANSMIT", False))
     parser.add_argument("--collection-task-intervals", type=parse_collection_task_intervals, default=parse_collection_task_intervals(config_value(config, "PICO_MONITOR_COLLECTION_TASK_INTERVALS")), help="各系统采集任务频率 JSON 或 YAML 对象，键为英文任务标识，值为秒数")
     parser.add_argument("--reconnect-interval", type=float, default=float(config_value(config, "PICO_MONITOR_RECONNECT_INTERVAL", "3.0")), help="设备断线后的重连间隔，单位为秒")
     parser.add_argument("--serial-probe-interval", type=float, default=float(config_value(config, "PICO_MONITOR_SERIAL_PROBE_INTERVAL", "3.0")), help="串口探测 PING 的发送间隔，单位为秒")
