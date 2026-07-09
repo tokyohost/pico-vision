@@ -9,7 +9,7 @@ class DiskTemperatureTask(CollectionTask):
 
     name = "disk_temperature"
     zh_name = "磁盘温度采集"
-    default_interval = 5.0
+    default_interval = 60.0
     order = 31
 
     def collect(self):

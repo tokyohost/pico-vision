@@ -35,6 +35,7 @@ DEFAULT_SETTINGS = {
     "port": "",
     "ping_target": "www.baidu.com",
     "interval": 0.5,
+    "adaptive_transmit": True,
     "reconnect_interval": 3.0,
     "serial_probe_interval": 3.0,
     "collection_task_intervals": dict(DEFAULT_COLLECTION_TASK_INTERVALS),
@@ -145,6 +146,7 @@ class TraySettingsStore:
             settings["lcd_brightness"] = DEFAULT_SETTINGS["lcd_brightness"]
         if not 1 <= settings["lcd_brightness"] <= 100:
             settings["lcd_brightness"] = DEFAULT_SETTINGS["lcd_brightness"]
+        settings["adaptive_transmit"] = bool(settings.get("adaptive_transmit", True))
         return settings
 
     def save(self, settings):
@@ -164,7 +166,10 @@ def apply_worker_arguments(arguments, settings):
         if argument in ARGUMENT_NAMES:
             index += 2
             continue
-        if argument in ("--dev", "--no-dev", "--qbittorrent-enabled", "--no-qbittorrent"):
+        if argument in (
+                "--dev", "--no-dev", "--qbittorrent-enabled", "--no-qbittorrent",
+                "--adaptive-transmit", "--no-adaptive-transmit",
+        ):
             index += 1
             continue
         retained.append(argument)
@@ -177,6 +182,7 @@ def apply_worker_arguments(arguments, settings):
             value = json.dumps(normalize_collection_task_intervals(value), ensure_ascii=False)
         retained.extend((option, str(value)))
     retained.append("--qbittorrent-enabled" if settings["qbittorrent_enabled"] else "--no-qbittorrent")
+    retained.append("--adaptive-transmit" if settings["adaptive_transmit"] else "--no-adaptive-transmit")
     if settings["dev"]:
         retained.append("--dev")
     return retained
@@ -206,6 +212,10 @@ def settings_from_arguments(arguments, base=None):
             settings["qbittorrent_enabled"] = True
         elif argument == "--no-qbittorrent":
             settings["qbittorrent_enabled"] = False
+        elif argument == "--adaptive-transmit":
+            settings["adaptive_transmit"] = True
+        elif argument == "--no-adaptive-transmit":
+            settings["adaptive_transmit"] = False
         elif argument == "--dev":
             settings["dev"] = True
         elif argument == "--no-dev":

@@ -147,6 +147,7 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
                 "rotation": arguments.screen_rotation,
                 "brightness": getattr(arguments, "lcd_brightness", 100),
                 "collection_interval_ms": max(1, round(arguments.interval * 1000)),
+                "adaptive_transmit": bool(getattr(arguments, "adaptive_transmit", True)),
                 "network_unit": arguments.network_unit,
                 "style": arguments.lcd_style,
                 "dev": bool(getattr(arguments, "dev", False)),
@@ -156,6 +157,7 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
 
     def close(self):
         """释放采集器持有的原生资源及其启动的外部子进程。"""
+        self._stop_thread_diagnostics()
         coordinator = getattr(self, "_collection_coordinator", None)
         if coordinator is not None:
             coordinator.close(wait=True)
@@ -170,7 +172,19 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
 
     def run(self):
         """持续连接设备、采集指标并发送最新系统快照。"""
-        LOGGER.info("监控服务启动：端口=%s，Ping=%s，发送间隔=%.1f 秒，重连间隔=%.1f 秒，屏幕旋转=%d°，网络单位=%s，LCD 样式=%s，开发模式=%s", self.arguments.port or "自动发现", self.arguments.ping_target, self.arguments.interval, self.arguments.reconnect_interval, self.arguments.screen_rotation, self.arguments.network_unit, self.arguments.lcd_style, "开启" if self.arguments.dev else "关闭")
+        LOGGER.info(
+            "监控服务启动：端口=%s，Ping=%s，发送间隔=%.1f 秒，发送自适应=%s，重连间隔=%.1f 秒，屏幕旋转=%d°，网络单位=%s，LCD 样式=%s，开发模式=%s",
+            self.arguments.port or "自动发现",
+            self.arguments.ping_target,
+            self.arguments.interval,
+            "开启" if getattr(self.arguments, "adaptive_transmit", True) else "关闭",
+            self.arguments.reconnect_interval,
+            self.arguments.screen_rotation,
+            self.arguments.network_unit,
+            self.arguments.lcd_style,
+            "开启" if self.arguments.dev else "关闭",
+        )
+        self._start_thread_diagnostics()
         self._start_collection_worker()
         while not self.stopping.is_set():
             probing = not self.client.is_connected
@@ -219,7 +233,7 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
                 if self.arguments.once:
                     self._wait_for_transmit_idle()
                     return 0
-                remaining = self.arguments.interval - (time.monotonic() - started)
+                remaining = self._effective_transmit_interval() - (time.monotonic() - started)
                 self._wait_for_interval_or_transmit_error(max(0.0, remaining))
             except (OSError, RuntimeError, serial.SerialException) as error:
                 LOGGER.warning("监控通信异常：%s；准备重新连接", error)
@@ -248,6 +262,7 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
         elif reboot_requested is not None and reboot_requested.is_set():
             reboot_result = {"status": "error", "message": "当前没有已连接设备"}
         self._stop_transmit_worker(wait=True)
+        self._stop_thread_diagnostics()
         self.client.close()
         if reboot_result is not None:
             print(

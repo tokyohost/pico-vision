@@ -20,6 +20,10 @@ def create_argument_parser(config=None):
     parser.add_argument("--port", default=config_value(config, "PICO_MONITOR_PORT") or None, help="固定串口名称，留空时自动发现")
     parser.add_argument("--ping-target", default=config_value(config, "PICO_MONITOR_PING_TARGET", "www.baidu.com"), help="网络延迟检测目标")
     parser.add_argument("--interval", type=float, default=float(config_value(config, "PICO_MONITOR_INTERVAL", "0.5")), help="采集和发送间隔，单位为秒")
+    adaptive_group = parser.add_mutually_exclusive_group()
+    adaptive_group.add_argument("--adaptive-transmit", dest="adaptive_transmit", action="store_true", help="等待 Pico JSON ACK 后再发送下一帧，并在拥塞时合并为最新快照")
+    adaptive_group.add_argument("--no-adaptive-transmit", dest="adaptive_transmit", action="store_false", help="关闭 JSON ACK 背压，沿用写完即返回的发送策略")
+    parser.set_defaults(adaptive_transmit=config_flag(config, "PICO_MONITOR_ADAPTIVE_TRANSMIT", True))
     parser.add_argument("--collection-task-intervals", type=parse_collection_task_intervals, default=parse_collection_task_intervals(config_value(config, "PICO_MONITOR_COLLECTION_TASK_INTERVALS")), help="各系统采集任务频率 JSON 或 YAML 对象，键为英文任务标识，值为秒数")
     parser.add_argument("--reconnect-interval", type=float, default=float(config_value(config, "PICO_MONITOR_RECONNECT_INTERVAL", "3.0")), help="设备断线后的重连间隔，单位为秒")
     parser.add_argument("--serial-probe-interval", type=float, default=float(config_value(config, "PICO_MONITOR_SERIAL_PROBE_INTERVAL", "3.0")), help="串口探测 PING 的发送间隔，单位为秒")
@@ -28,6 +32,8 @@ def create_argument_parser(config=None):
     parser.add_argument("--network-unit", choices=("MB", "Mbps"), default=config_value(config, "PICO_MONITOR_NETWORK_UNIT", "MB"), help="网络速率模式：MB 自动使用 B/KB/MB/GB，Mbps 自动使用 bps/Kbps/Mbps/Gbps")
     parser.add_argument("--lcd-style", default=config_value(config, "PICO_MONITOR_LCD_STYLE", "game"), help="Pico LCD 界面样式名称")
     parser.add_argument("--log-level", type=lambda value: str(value).upper(), choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"), default=str(config_value(config, "PICO_MONITOR_LOG_LEVEL", "INFO")).upper(), help="日志输出级别，默认 INFO；排障时可设为 DEBUG")
+    parser.add_argument("--thread-diagnostics", action="store_true", default=config_flag(config, "PICO_MONITOR_THREAD_DIAGNOSTICS", False), help="开启线程诊断，周期输出 threading.enumerate() 摘要和 faulthandler 全线程栈")
+    parser.add_argument("--thread-diagnostics-interval", type=float, default=float(config_value(config, "PICO_MONITOR_THREAD_DIAGNOSTICS_INTERVAL", "10.0")), help="线程诊断输出间隔，单位为秒")
     sensor_host_group = parser.add_mutually_exclusive_group()
     sensor_host_group.add_argument("--sensor-host-enabled", dest="sensor_host_enabled", action="store_true", help="开启 Windows SensorHost 外置硬件传感器采集")
     sensor_host_group.add_argument("--no-sensor-host", dest="sensor_host_enabled", action="store_false", help="关闭 Windows SensorHost 外置硬件传感器采集")
@@ -42,7 +48,7 @@ def create_argument_parser(config=None):
     parser.add_argument("--qbittorrent-username", default=config_value(config, "PICO_MONITOR_QBITTORRENT_USERNAME") or None, help="qBittorrent Web UI 账号")
     parser.add_argument("--qbittorrent-password", default=config_value(config, "PICO_MONITOR_QBITTORRENT_PASSWORD") or None, help="qBittorrent Web UI 密码")
     parser.add_argument("--qbittorrent-interval", type=float, default=float(config_value(config, "PICO_MONITOR_QBITTORRENT_INTERVAL", "2.0")), help="qBittorrent 指标采集间隔，单位为秒")
-    parser.add_argument("--dev", action="store_true", default=config_flag(config, "PICO_MONITOR_DEV", True), help="开发模式：未发现 Pico 时仍打印待发送的 JSON 协议行")
+    parser.add_argument("--dev", action="store_true", default=config_flag(config, "PICO_MONITOR_DEV", False), help="开发模式：未发现 Pico 时仍打印待发送的 JSON 协议行")
     parser.add_argument("--disk-health-test-index", type=int, default=int(config_value(config, "PICO_MONITOR_DISK_HEALTH_TEST_INDEX", "0")), help="磁盘健康显示测试：指定从 1 开始的磁盘序号，0 表示关闭")
     parser.add_argument("--disk-health-test-level", type=int, choices=range(6), default=int(config_value(config, "PICO_MONITOR_DISK_HEALTH_TEST_LEVEL", "3")), help="磁盘健康显示测试等级，范围为 0 至 5，默认 3")
     parser.add_argument("--once", action="store_true", help="仅成功发送一次数据")
@@ -66,7 +72,8 @@ def validate_arguments(arguments):
         raise SystemExit("--pico-info、--upgrade-pico 和 --update 不能同时使用")
     if (arguments.interval <= 0 or arguments.reconnect_interval <= 0
             or arguments.serial_probe_interval <= 0
-            or arguments.qbittorrent_interval <= 0):
+            or arguments.qbittorrent_interval <= 0
+            or arguments.thread_diagnostics_interval <= 0):
         raise SystemExit("采集间隔和重连间隔必须大于 0")
     if any(interval <= 0 for interval in arguments.collection_task_intervals.values()):
         raise SystemExit("采集任务频率必须大于 0")

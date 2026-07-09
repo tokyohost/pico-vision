@@ -1,10 +1,13 @@
 """监控数据采集、升级和开发模式运行操作。"""
 
+import faulthandler
 import logging
 import os
 import queue
+import sys
 import threading
 import time
+from collections import deque
 
 import psutil
 
@@ -14,6 +17,9 @@ from pico_upgrade import PicoFirmwareUpgrader, PicoUpgradeDownloader, PicoUpgrad
 
 LOGGER = logging.getLogger("pico-monitor")
 TRANSMIT_STOP = object()
+ADAPTIVE_ACK_HISTORY_SIZE = 8
+ADAPTIVE_ACK_SAFETY_FACTOR = 1.25
+ADAPTIVE_ACK_INTERVAL_CHANGE_LOG_RATIO = 0.1
 
 
 class RuntimeOperationsMixin:
@@ -60,6 +66,18 @@ class RuntimeOperationsMixin:
             self._transmit_error = None
         if not hasattr(self, "_transmit_dropped_snapshots"):
             self._transmit_dropped_snapshots = 0
+        if not hasattr(self, "_transmit_replaced_snapshots"):
+            self._transmit_replaced_snapshots = 0
+        if not hasattr(self, "_adaptive_interval_lock"):
+            self._adaptive_interval_lock = threading.Lock()
+        if not hasattr(self, "_adaptive_ack_seconds"):
+            self._adaptive_ack_seconds = deque(maxlen=ADAPTIVE_ACK_HISTORY_SIZE)
+        if not hasattr(self, "_adaptive_interval_seconds"):
+            self._adaptive_interval_seconds = None
+        if not hasattr(self, "_thread_diagnostics_thread"):
+            self._thread_diagnostics_thread = None
+        if not hasattr(self, "_thread_diagnostics_active"):
+            self._thread_diagnostics_active = False
 
     def _start_transmit_worker(self):
         """启动唯一的 JSON 快照发送线程，避免串口写入阻塞主监控循环。"""
@@ -78,6 +96,74 @@ class RuntimeOperationsMixin:
             daemon=True,
         )
         self._transmit_thread.start()
+
+    def _start_thread_diagnostics(self):
+        """按需启动线程诊断，周期记录线程清单并让 faulthandler 输出全线程栈。"""
+        if not bool(getattr(self.arguments, "thread_diagnostics", False)):
+            return
+        self._ensure_transmit_state()
+        diagnostics_thread = getattr(self, "_thread_diagnostics_thread", None)
+        if diagnostics_thread is not None and diagnostics_thread.is_alive():
+            return
+        interval = max(1.0, float(getattr(self.arguments, "thread_diagnostics_interval", 10.0)))
+        if faulthandler.is_enabled():
+            faulthandler.cancel_dump_traceback_later()
+        else:
+            faulthandler.enable(file=sys.stderr, all_threads=True)
+        faulthandler.dump_traceback_later(
+            interval,
+            repeat=True,
+            file=sys.stderr,
+            exit=False,
+        )
+        self._thread_diagnostics_thread = threading.Thread(
+            target=self._thread_diagnostics_loop,
+            args=(interval,),
+            name="thread-diagnostics",
+            daemon=True,
+        )
+        self._thread_diagnostics_thread.start()
+        self._thread_diagnostics_active = True
+        LOGGER.info(
+            "线程诊断已开启：间隔=%.1f 秒，将输出 threading.enumerate() 摘要和 faulthandler 全线程栈",
+            interval,
+        )
+
+    def _stop_thread_diagnostics(self):
+        """关闭线程诊断定时器，避免服务退出后继续输出栈信息。"""
+        diagnostics_thread = getattr(self, "_thread_diagnostics_thread", None)
+        if getattr(self, "_thread_diagnostics_active", False):
+            faulthandler.cancel_dump_traceback_later()
+        if diagnostics_thread is not None and diagnostics_thread.is_alive():
+            diagnostics_thread.join(timeout=1.0)
+        self._thread_diagnostics_thread = None
+        self._thread_diagnostics_active = False
+
+    def _thread_diagnostics_loop(self, interval):
+        """周期输出当前 Python 线程清单，用于核对发送线程是否存活。"""
+        while not self.stopping.is_set():
+            self._log_thread_enumeration()
+            self.stopping.wait(interval)
+
+    def _log_thread_enumeration(self):
+        """记录 threading.enumerate() 的名称、标识和存活状态摘要。"""
+        threads = threading.enumerate()
+        summary = []
+        for thread in threads:
+            summary.append(
+                "{}(ident={},native_id={},alive={},daemon={})".format(
+                    thread.name,
+                    thread.ident,
+                    getattr(thread, "native_id", None),
+                    thread.is_alive(),
+                    thread.daemon,
+                )
+            )
+        LOGGER.warning(
+            "线程诊断 threading.enumerate()：数量=%d；%s",
+            len(threads),
+            "；".join(summary),
+        )
 
     def _stop_transmit_worker(self, wait=True):
         """停止 JSON 快照发送线程，并清理尚未发送的待发快照。"""
@@ -125,7 +211,16 @@ class RuntimeOperationsMixin:
                     return
                 with self._transmit_lock:
                     self._transmit_sending = True
-                self.client.send(snapshot)
+                adaptive_transmit = bool(getattr(self.arguments, "adaptive_transmit", True))
+                ack_timeout = max(15.0, self._effective_transmit_interval() * 3.0)
+                send_started = time.monotonic()
+                self.client.send(
+                    snapshot,
+                    wait_ack=adaptive_transmit,
+                    ack_timeout=ack_timeout,
+                )
+                if adaptive_transmit:
+                    self._record_json_ack_duration(time.monotonic() - send_started)
             except (OSError, RuntimeError) as error:
                 with self._transmit_lock:
                     self._transmit_error = error
@@ -136,15 +231,45 @@ class RuntimeOperationsMixin:
                     self._transmit_sending = False
                 self._transmit_queue.task_done()
 
+    def _replace_pending_snapshot(self, snapshot):
+        """用最新快照覆盖尚未发送的旧快照，保持 Pico 只追赶最新状态。"""
+        replaced = False
+        while True:
+            try:
+                pending = self._transmit_queue.get_nowait()
+            except queue.Empty:
+                break
+            if pending is TRANSMIT_STOP:
+                self._transmit_queue.put_nowait(TRANSMIT_STOP)
+                self._transmit_queue.task_done()
+                return False
+            replaced = True
+            self._transmit_queue.task_done()
+        try:
+            self._transmit_queue.put_nowait(snapshot)
+        except queue.Full:
+            return False
+        if replaced:
+            self._transmit_replaced_snapshots += 1
+            if self._transmit_replaced_snapshots == 1 or self._transmit_replaced_snapshots % 10 == 0:
+                LOGGER.info(
+                    "JSON ACK 背压生效，已用最新快照合并待发数据：累计合并=%d",
+                    self._transmit_replaced_snapshots,
+                )
+        return True
+
     def _submit_snapshot_for_transmission(self, snapshot):
-        """提交最新快照；若上一帧仍在发送或队列已有待发快照，则丢弃本轮快照。"""
+        """提交最新快照；自适应开启时保留最新待发快照，关闭时沿用丢帧策略。"""
         self._ensure_transmit_state()
         self._raise_transmit_error_if_any()
         transmit_thread = getattr(self, "_transmit_thread", None)
         if transmit_thread is None or not transmit_thread.is_alive():
             self._start_transmit_worker()
+        adaptive_transmit = bool(getattr(self.arguments, "adaptive_transmit", True))
         with self._transmit_lock:
             if self._transmit_sending:
+                if adaptive_transmit:
+                    return self._replace_pending_snapshot(snapshot)
                 self._transmit_dropped_snapshots += 1
                 LOGGER.debug(
                     "JSON 快照发送仍在进行，丢弃本轮快照：累计丢弃=%d",
@@ -155,6 +280,8 @@ class RuntimeOperationsMixin:
             self._transmit_queue.put_nowait(snapshot)
             return True
         except queue.Full:
+            if adaptive_transmit:
+                return self._replace_pending_snapshot(snapshot)
             self._transmit_dropped_snapshots += 1
             LOGGER.debug(
                 "JSON 快照发送队列已有待发数据，丢弃本轮快照：累计丢弃=%d",
@@ -171,6 +298,55 @@ class RuntimeOperationsMixin:
             self._transmit_error_event.clear()
         if error is not None:
             raise error
+
+    def _base_transmit_interval(self):
+        """返回用户配置的基础发送间隔，异常配置按半秒兜底。"""
+        try:
+            return max(0.1, float(getattr(self.arguments, "interval", 0.5)))
+        except (TypeError, ValueError):
+            return 0.5
+
+    def _effective_transmit_interval(self):
+        """返回当前实际发送间隔；自适应关闭时等于基础间隔。"""
+        base_interval = self._base_transmit_interval()
+        if not bool(getattr(self.arguments, "adaptive_transmit", True)):
+            return base_interval
+        self._ensure_transmit_state()
+        with self._adaptive_interval_lock:
+            return max(base_interval, self._adaptive_interval_seconds or base_interval)
+
+    def _record_json_ack_duration(self, elapsed_seconds):
+        """根据最近 JSON ACK 耗时刷新自适应发送间隔。"""
+        self._ensure_transmit_state()
+        try:
+            elapsed_seconds = max(0.0, float(elapsed_seconds))
+        except (TypeError, ValueError):
+            return
+        base_interval = self._base_transmit_interval()
+        max_interval = max(15.0, base_interval * 30.0)
+        with self._adaptive_interval_lock:
+            self._adaptive_ack_seconds.append(elapsed_seconds)
+            samples = sorted(self._adaptive_ack_seconds)
+            p90_index = min(len(samples) - 1, int((len(samples) - 1) * 0.9))
+            target_interval = max(
+                base_interval,
+                min(max_interval, samples[p90_index] * ADAPTIVE_ACK_SAFETY_FACTOR),
+            )
+            previous_interval = self._adaptive_interval_seconds or base_interval
+            if target_interval > previous_interval:
+                next_interval = target_interval
+            else:
+                next_interval = max(base_interval, previous_interval * 0.7 + target_interval * 0.3)
+            self._adaptive_interval_seconds = next_interval
+        if (
+                abs(next_interval - previous_interval)
+                >= max(0.05, previous_interval * ADAPTIVE_ACK_INTERVAL_CHANGE_LOG_RATIO)
+        ):
+            LOGGER.info(
+                "JSON ACK 自适应发送间隔更新：ACK样本=%.1f ms，发送间隔=%.3f 秒",
+                elapsed_seconds * 1000,
+                next_interval,
+            )
 
     def _wait_for_interval_or_transmit_error(self, timeout):
         """等待发送间隔，同时在发送线程失败时尽快唤醒主循环。"""
@@ -207,10 +383,12 @@ class RuntimeOperationsMixin:
 
     def _display_configuration_snapshot(self):
         """生成发送给 Pico 的显示配置快照。"""
+        effective_interval = self._effective_transmit_interval()
         return {
             "rotation": self.arguments.screen_rotation,
             "brightness": getattr(self.arguments, "lcd_brightness", 100),
-            "collection_interval_ms": max(1, round(self.arguments.interval * 1000)),
+            "collection_interval_ms": max(1, round(effective_interval * 1000)),
+            "adaptive_transmit": bool(getattr(self.arguments, "adaptive_transmit", True)),
             "network_unit": self.arguments.network_unit,
             "style": self.arguments.lcd_style,
             "dev": bool(getattr(self.arguments, "dev", False)),

@@ -61,11 +61,14 @@ class BoundedElasticThreadPool:
         }
 
     def submit(self, function, *arguments, **keywords):
-        """提交任务；队列满时创建突发线程，达到上限后丢弃任务。"""
+        """提交任务；工作线程全忙时优先扩容，达到上限后再进入等待队列。"""
         if self._shutdown:
             raise RuntimeError("采集线程池已经关闭")
         work_item = (function, arguments, keywords)
         if self.worker_count < self.core_workers:
+            self._start_worker(work_item)
+            return True
+        if self.active_task_count >= self.worker_count and self.worker_count < self.max_workers:
             self._start_worker(work_item)
             return True
         try:

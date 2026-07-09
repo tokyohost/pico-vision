@@ -53,6 +53,7 @@ class QbittorrentApiClient:
         request = urllib.request.Request(
             self.address + path,
             data=encoded_data,
+            timeout=3,
             headers={"Referer": self.address + "/"},
         )
         with self.opener.open(request, timeout=self.timeout) as response:

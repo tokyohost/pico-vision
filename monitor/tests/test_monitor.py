@@ -40,6 +40,7 @@ from pico_monitor import (
 )
 from system_monitor import PowerMonitor, SystemInformationCollector
 from monitor_core.console import _stop_log_listener, configure_logging
+from monitor_core.runtime_operations import RuntimeOperationsMixin
 
 
 class FakeSerial:
@@ -141,6 +142,41 @@ class QueuedResponseSerial(FakeSerial):
     def readline(self):
         """按顺序返回缓存响应。"""
         return self.responses.pop(0) if self.responses else b""
+
+
+class BlockingTransmitClient:
+    """模拟首个快照发送阻塞到测试显式放行的 Pico 客户端。"""
+
+    def __init__(self):
+        """初始化发送记录和线程同步事件。"""
+        self.sent_versions = []
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def send(self, snapshot, wait_ack=False, ack_timeout=8.0):
+        """记录快照版本，并让第一帧保持在飞状态。"""
+        self.sent_versions.append((snapshot["version"], wait_ack, ack_timeout))
+        self.started.set()
+        if len(self.sent_versions) == 1:
+            self.release.wait(1.0)
+
+
+class RuntimeOperationsHarness(RuntimeOperationsMixin):
+    """提供运行时发送队列测试所需的最小服务对象。"""
+
+    def __init__(self, adaptive_transmit=True):
+        """初始化发送线程依赖的参数和同步对象。"""
+        self.arguments = SimpleNamespace(
+            adaptive_transmit=adaptive_transmit,
+            interval=0.5,
+            screen_rotation=0,
+            lcd_brightness=80,
+            network_unit="MB",
+            lcd_style="default",
+            dev=False,
+        )
+        self.stopping = threading.Event()
+        self.client = BlockingTransmitClient()
 
 class FatalMemorySerial(FakeSerial):
     """模拟 Pico 堆内存不足并即将自动重启。"""
@@ -314,6 +350,54 @@ class PicoClientTest(unittest.TestCase):
         client.send({"version": 1})
 
         self.assertEqual(len(client.serial.responses), 2)
+
+    def test_send_can_wait_for_json_ack(self):
+        """确认开启 ACK 背压时 JSONZ 快照会等待 Pico 确认。"""
+        client = PicoJsonClient()
+        client.serial = ProtocolTimingBeforeAckSerial()
+
+        client.send({"version": 1}, wait_ack=True)
+
+        self.assertEqual([], client.serial.responses)
+
+    def test_adaptive_transmit_keeps_latest_snapshot(self):
+        """确认 ACK 背压期间待发队列只保留最新快照。"""
+        service = RuntimeOperationsHarness(adaptive_transmit=True)
+        try:
+            self.assertTrue(service._submit_snapshot_for_transmission({"version": 1}))
+            self.assertTrue(service.client.started.wait(1.0))
+            self.assertTrue(service._submit_snapshot_for_transmission({"version": 2}))
+            self.assertTrue(service._submit_snapshot_for_transmission({"version": 3}))
+            service.client.release.set()
+            service._wait_for_transmit_idle()
+        finally:
+            service.stopping.set()
+            service._stop_transmit_worker(wait=True)
+
+        self.assertEqual(
+            [(1, True, 15.0), (3, True, 15.0)],
+            service.client.sent_versions,
+        )
+
+    def test_adaptive_interval_uses_json_ack_history_in_display_snapshot(self):
+        """确认自适应发送间隔根据历史 ACK 耗时计算并同步到 Pico 配置。"""
+        service = RuntimeOperationsHarness(adaptive_transmit=True)
+
+        service._record_json_ack_duration(1.2)
+        snapshot = service._display_configuration_snapshot()
+
+        self.assertEqual(1500, snapshot["collection_interval_ms"])
+        self.assertTrue(snapshot["adaptive_transmit"])
+
+    def test_adaptive_interval_disabled_uses_configured_interval(self):
+        """确认关闭自适应时 Pico 仍收到用户配置的基础发送间隔。"""
+        service = RuntimeOperationsHarness(adaptive_transmit=False)
+
+        service._record_json_ack_duration(1.2)
+        snapshot = service._display_configuration_snapshot()
+
+        self.assertEqual(500, snapshot["collection_interval_ms"])
+        self.assertFalse(snapshot["adaptive_transmit"])
 
     @mock.patch("pico_client.time.monotonic")
     def test_json_ack_log_includes_send_elapsed(self, monotonic):

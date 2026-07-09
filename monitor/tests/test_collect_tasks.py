@@ -43,30 +43,70 @@ class BoundedElasticThreadPoolTest(unittest.TestCase):
         })
         pool.shutdown()
 
-    def test_full_pool_rejects_task_after_eight_workers_and_one_hundred_queued(self):
-        """确认线程和队列均饱和后直接丢弃新任务。"""
-        pool = BoundedElasticThreadPool()
+    def test_full_pool_rejects_task_after_max_workers_and_queue_are_full(self):
+        """确认线程扩容到上限且队列饱和后直接丢弃新任务。"""
+        pool = BoundedElasticThreadPool(core_workers=1, max_workers=2, queue_capacity=1)
         release = threading.Event()
-        started = threading.Event()
+        started = threading.Condition()
+        started_count = {"value": 0}
 
         def blocking_task():
             """占用工作线程，直到测试允许任务退出。"""
-            started.set()
+            with started:
+                started_count["value"] += 1
+                started.notify_all()
             release.wait(2)
 
-        for _ in range(3):
+        def wait_started(expected):
+            """等待指定数量的阻塞任务进入执行状态。"""
+            with started:
+                return started.wait_for(lambda: started_count["value"] >= expected, timeout=1)
+
+        try:
             pool.submit(blocking_task)
-        self.assertTrue(started.wait(1))
-        for _ in range(100):
-            pool.submit(lambda: None)
-        for _ in range(5):
+            self.assertTrue(wait_started(1))
             pool.submit(blocking_task)
-        with self.assertRaises(TaskRejectedError):
+            self.assertTrue(wait_started(2))
             pool.submit(lambda: None)
-        self.assertEqual(pool.worker_count, 8)
-        self.assertEqual(pool.queued_task_count, 100)
-        release.set()
-        pool.shutdown()
+            with self.assertRaises(TaskRejectedError):
+                pool.submit(lambda: None)
+            self.assertEqual(pool.worker_count, 2)
+            self.assertEqual(pool.queued_task_count, 1)
+        finally:
+            release.set()
+            pool.shutdown()
+
+    def test_busy_core_workers_expand_before_queueing(self):
+        """确认核心线程全忙时优先创建突发线程，不先进入长队列等待。"""
+        pool = BoundedElasticThreadPool(core_workers=2, max_workers=4, queue_capacity=10)
+        release = threading.Event()
+        started = threading.Condition()
+        started_count = {"value": 0}
+
+        def blocking_task():
+            """占用工作线程，并通知测试线程当前任务已经开始。"""
+            with started:
+                started_count["value"] += 1
+                started.notify_all()
+            release.wait(2)
+
+        def wait_started(expected):
+            """等待指定数量的阻塞任务进入执行状态。"""
+            with started:
+                return started.wait_for(lambda: started_count["value"] >= expected, timeout=1)
+
+        try:
+            pool.submit(blocking_task)
+            pool.submit(blocking_task)
+            self.assertTrue(wait_started(2))
+
+            pool.submit(blocking_task)
+            self.assertTrue(wait_started(3))
+            self.assertEqual(pool.worker_count, 3)
+            self.assertEqual(pool.queued_task_count, 0)
+        finally:
+            release.set()
+            pool.shutdown()
 
 
 class LockFreeSnapshotStoreTest(unittest.TestCase):

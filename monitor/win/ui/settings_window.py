@@ -120,6 +120,7 @@ class SettingsWindowMixin:
             "port": tk.StringVar(master=root, value=self.settings["port"]),
             "ping_target": tk.StringVar(master=root, value=self.settings["ping_target"]),
             "interval": tk.StringVar(master=root, value=self.settings["interval"]),
+            "adaptive_transmit": tk.BooleanVar(master=root, value=bool(self.settings.get("adaptive_transmit", True))),
             "reconnect_interval": tk.StringVar(master=root, value=self.settings["reconnect_interval"]),
             "serial_probe_interval": tk.StringVar(master=root, value=self.settings["serial_probe_interval"]),
             "screen_rotation": tk.StringVar(master=root, value=str(self.settings["screen_rotation"])),
@@ -238,8 +239,14 @@ class SettingsWindowMixin:
         field(monitor, 0, "串口（留空自动发现）", port_control)
         field(monitor, 1, "Ping 目标", ttk.Entry(monitor, textvariable=variables["ping_target"]))
         field(monitor, 2, "采集间隔（秒）", ttk.Entry(monitor, textvariable=variables["interval"]))
-        field(monitor, 3, "重连间隔（秒）", ttk.Entry(monitor, textvariable=variables["reconnect_interval"]))
-        field(monitor, 4, "串口探测 PING 间隔（秒）", ttk.Entry(monitor, textvariable=variables["serial_probe_interval"]))
+        adaptive_control = ttk.Checkbutton(
+            monitor,
+            text="启用发送自适应（等待 Pico ACK，拥塞时合并最新快照）",
+            variable=variables["adaptive_transmit"],
+        )
+        field(monitor, 3, "发送背压", adaptive_control)
+        field(monitor, 4, "重连间隔（秒）", ttk.Entry(monitor, textvariable=variables["reconnect_interval"]))
+        field(monitor, 5, "串口探测 PING 间隔（秒）", ttk.Entry(monitor, textvariable=variables["serial_probe_interval"]))
 
         collection_tasks = card("系统采集任务")
         for row, (task_name, variable) in enumerate(collection_task_variables.items()):
@@ -347,6 +354,7 @@ class SettingsWindowMixin:
                     "port": variables["port"].get().strip(),
                     "ping_target": variables["ping_target"].get().strip(),
                     "interval": float(variables["interval"].get()),
+                    "adaptive_transmit": bool(variables["adaptive_transmit"].get()),
                     "reconnect_interval": float(variables["reconnect_interval"].get()),
                     "serial_probe_interval": float(variables["serial_probe_interval"].get()),
                     "collection_task_intervals": collection_task_intervals,
