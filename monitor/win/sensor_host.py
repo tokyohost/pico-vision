@@ -25,6 +25,7 @@ import platform
 LOGGER = logging.getLogger("pico-monitor.sensor-host")
 DEFAULT_PIPE_NAME = "omniwatch.sensorhost"
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 2.0
+DEFAULT_STARTUP_GRACE_SECONDS = 2.0
 
 
 class SensorHostError(RuntimeError):
@@ -40,6 +41,7 @@ class SensorHostManager:
         self.pipe_name = pipe_name or DEFAULT_PIPE_NAME
         self.process = None
         self.job = None
+        self.process_started_at = None
         self.dependency_unavailable_message = self._dependency_unavailable_reason()
         self.available = self.dependency_unavailable_message is None and self.executable_path is not None
         self._unavailable_logged = False
@@ -49,8 +51,10 @@ class SensorHostManager:
         if not self.available:
             self._log_unavailable_once()
             return False
-        if self.process is not None and self.process.poll() is None:
+        if self._is_process_running():
             return True
+        self.process = None
+        self.process_started_at = None
         command = [str(self.executable_path), "--pipe", self.pipe_name]
         try:
             self.process = subprocess.Popen(
@@ -60,6 +64,7 @@ class SensorHostManager:
                 stderr=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
+            self.process_started_at = time.monotonic()
             self._attach_job_object()
             LOGGER.info("SensorHost 已启动：pid=%s，pipe=%s", self.process.pid, self.pipe_name)
             return True
@@ -72,6 +77,8 @@ class SensorHostManager:
     def snapshot(self, timeout=DEFAULT_REQUEST_TIMEOUT_SECONDS):
         """请求一次 SensorHost 硬件传感器快照。"""
         if not self.start():
+            return None
+        if not self._is_ready_for_request():
             return None
         try:
             return self._request("snapshot", timeout)
@@ -92,7 +99,30 @@ class SensorHostManager:
             except (SensorHostError, subprocess.TimeoutExpired, OSError):
                 self._terminate_process_tree(process)
         self.process = None
+        self.process_started_at = None
         self._close_job_handle()
+
+    def _is_process_running(self):
+        """判断 SensorHost 进程是否仍然存活。"""
+        return self.process is not None and self.process.poll() is None
+
+    def _is_ready_for_request(self):
+        """确认 SensorHost 进程正常且已度过启动预热期。"""
+        if not self._is_process_running():
+            LOGGER.warning("SensorHost 进程未运行，跳过快照请求。")
+            self.process = None
+            self.process_started_at = None
+            return False
+        if self.process_started_at is None:
+            return True
+        elapsed_seconds = time.monotonic() - self.process_started_at
+        if elapsed_seconds < DEFAULT_STARTUP_GRACE_SECONDS:
+            LOGGER.info(
+                "SensorHost 正在启动，%.1f秒后再请求快照。",
+                DEFAULT_STARTUP_GRACE_SECONDS - elapsed_seconds,
+            )
+            return False
+        return True
 
     def _request(self, command, timeout):
         """通过 Named Pipe 发送命令并返回响应 data 字段。"""

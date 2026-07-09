@@ -49,6 +49,7 @@ except (ImportError, OSError):
 LOGGER = logging.getLogger("pico-monitor")
 DISK_TEMPERATURE_CACHE_SECONDS = 30
 DISK_HEALTH_CACHE_SECONDS = 30 * 60
+SENSOR_HOST_PRIORITY_TTL_SECONDS = 3.0
 
 DISK_HEALTH_UNKNOWN = 0
 DISK_HEALTH_HEALTHY = 1
@@ -593,6 +594,7 @@ class SystemInformationCollector:
         self.gpu_monitor = GpuMonitor()
         self.fps_monitor = FpsMonitor(HISTORY_LENGTH) if FpsMonitor is not None else None
         self.sensor_host = self._create_sensor_host(sensor_host_enabled, sensor_host_path, sensor_host_pipe)
+        self.sensor_host_metric_expirations = {}
         self.last_gpu_version = -1
         self.disk_temperature_cache = {}
         self.disk_temperature_time = 0.0
@@ -626,6 +628,16 @@ class SystemInformationCollector:
         if not enabled or platform.system() != "Windows" or SensorHostManager is None:
             return None
         return SensorHostManager(executable_path, pipe_name)
+
+    def mark_sensor_host_metric_available(self, metric_name, now=None):
+        """标记指定指标最近由 SensorHost 成功提供，供降级采集任务避让。"""
+        now = time.monotonic() if now is None else now
+        self.sensor_host_metric_expirations[str(metric_name)] = now + SENSOR_HOST_PRIORITY_TTL_SECONDS
+
+    def is_sensor_host_metric_available(self, metric_name, now=None):
+        """判断指定指标是否仍处于 SensorHost 优先窗口内。"""
+        now = time.monotonic() if now is None else now
+        return self.sensor_host_metric_expirations.get(str(metric_name), 0.0) > now
 
     @classmethod
     def _close_windows_cpu_frequency_sampler(cls):

@@ -17,7 +17,11 @@ class PowerTask(CollectionTask):
 
     def collect(self):
         """返回电源指标和最近功耗历史。"""
+        if self._sensor_host_available():
+            return {}
         power = self.collector.power_monitor.snapshot()
+        if self._sensor_host_available():
+            return {}
         if power["watts"] is not None:
             update_per_second(
                 self.collector.power_history,
@@ -27,3 +31,8 @@ class PowerTask(CollectionTask):
             )
         power["history"] = list(self.collector.power_history)
         return {"power": power}
+
+    def _sensor_host_available(self):
+        """判断 SensorHost 是否正在优先提供功耗指标。"""
+        checker = getattr(self.collector, "is_sensor_host_metric_available", None)
+        return bool(checker is not None and checker("power"))

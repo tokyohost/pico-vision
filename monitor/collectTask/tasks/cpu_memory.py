@@ -142,30 +142,50 @@ class CpuMemoryTask(CollectionTask):
 
     def collect(self):
         """通过短阻塞窗口采样 CPU，并返回 CPU 和内存两个顶层指标。"""
-        cpu = round(self._cpu_percent(), 1)
-        memory = psutil.virtual_memory()
+        use_sensor_host_cpu = self._sensor_host_available("cpu")
+        use_sensor_host_memory = self._sensor_host_available("memory")
+        if use_sensor_host_cpu and use_sensor_host_memory:
+            return {}
+        cpu = None if use_sensor_host_cpu else round(self._cpu_percent(), 1)
+        memory = None if use_sensor_host_memory else psutil.virtual_memory()
         now = time.monotonic()
-        for name, value in (("cpu", cpu), ("memory", memory.percent)):
+        fragment = {}
+        if cpu is not None:
             update_per_second(
-                self.collector.histories[name],
-                round(value, 1),
-                self.collector.history_states.setdefault(name, {}),
+                self.collector.histories["cpu"],
+                round(cpu, 1),
+                self.collector.history_states.setdefault("cpu", {}),
                 now,
             )
-        return {
-            "cpu": {
+            fragment["cpu"] = {
                 "percent": cpu,
                 "frequency_ghz": self.collector._cpu_frequency_ghz(),
                 "temperature_c": self.collector._cpu_temperature(),
                 "history": list(self.collector.histories["cpu"]),
-            },
-            "memory": {
+            }
+        if memory is not None:
+            update_per_second(
+                self.collector.histories["memory"],
+                round(memory.percent, 1),
+                self.collector.history_states.setdefault("memory", {}),
+                now,
+            )
+            fragment["memory"] = {
                 "percent": round(memory.percent, 1),
                 "used_bytes": memory.used,
                 "total_bytes": memory.total,
                 "history": list(self.collector.histories["memory"]),
-            },
-        }
+            }
+        if self._sensor_host_available("cpu"):
+            fragment.pop("cpu", None)
+        if self._sensor_host_available("memory"):
+            fragment.pop("memory", None)
+        return fragment
+
+    def _sensor_host_available(self, metric_name):
+        """判断 SensorHost 是否正在优先提供指定指标。"""
+        checker = getattr(self.collector, "is_sensor_host_metric_available", None)
+        return bool(checker is not None and checker(metric_name))
 
     def _cpu_percent(self):
         """Windows 优先读取 PDH CPU 计数器，失败时回退到 psutil 阻塞采样。"""

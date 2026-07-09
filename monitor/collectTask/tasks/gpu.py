@@ -17,7 +17,11 @@ class GpuTask(CollectionTask):
 
     def collect(self):
         """返回最近 GPU 指标；不可用时发布空值。"""
+        if self._sensor_host_available():
+            return {}
         gpu, version = self.collector.gpu_monitor.snapshot()
+        if self._sensor_host_available():
+            return {}
         if gpu is None:
             return {"gpu": None}
         gpu = dict(gpu)
@@ -32,3 +36,8 @@ class GpuTask(CollectionTask):
         self.collector.last_gpu_version = version
         gpu["history"] = list(self.collector.gpu_history)
         return {"gpu": gpu}
+
+    def _sensor_host_available(self):
+        """判断 SensorHost 是否正在优先提供 GPU 指标。"""
+        checker = getattr(self.collector, "is_sensor_host_metric_available", None)
+        return bool(checker is not None and checker("gpu"))
