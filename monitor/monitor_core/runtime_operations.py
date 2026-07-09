@@ -199,9 +199,22 @@ class RuntimeOperationsMixin:
             self.stopping.wait(0.05)
 
     def _snapshot_for_sending(self):
-        """无锁返回采集线程原子发布的最近一次完整快照。"""
+        """返回发送视图，并在发送前叠加不属于采集任务的配置字段。"""
         snapshot_store = getattr(self, "_snapshot_store", None)
-        return snapshot_store.snapshot() if snapshot_store is not None else self._latest_collected_snapshot
+        snapshot = snapshot_store.snapshot() if snapshot_store is not None else dict(self._latest_collected_snapshot)
+        snapshot["display"] = self._display_configuration_snapshot()
+        return snapshot
+
+    def _display_configuration_snapshot(self):
+        """生成发送给 Pico 的显示配置快照。"""
+        return {
+            "rotation": self.arguments.screen_rotation,
+            "brightness": getattr(self.arguments, "lcd_brightness", 100),
+            "collection_interval_ms": max(1, round(self.arguments.interval * 1000)),
+            "network_unit": self.arguments.network_unit,
+            "style": self.arguments.lcd_style,
+            "dev": bool(getattr(self.arguments, "dev", False)),
+        }
 
     def _custom_data_collection_tasks(self):
         """把启动时发现的每个自定义数据插件封装为独立采集任务。"""
@@ -228,7 +241,7 @@ class RuntimeOperationsMixin:
         return {"qbittorrent": self.qbittorrent_monitor.snapshot()}
 
     def _complete_collection_fragment(self, fragment):
-        """为单项采样结果补充显示配置，并处理磁盘健康测试覆盖。"""
+        """处理单项采样结果，不混入发送层配置字段。"""
         fragment = dict(fragment)
         if "disks" in fragment:
             self._apply_disk_health_test(fragment)
@@ -236,13 +249,6 @@ class RuntimeOperationsMixin:
             ext = dict(self._snapshot_store.snapshot().get("ext") or {})
             ext.update(fragment["ext"])
             fragment["ext"] = ext
-        fragment["display"] = {
-            "rotation": self.arguments.screen_rotation,
-            "brightness": getattr(self.arguments, "lcd_brightness", 100),
-            "collection_interval_ms": max(1, round(self.arguments.interval * 1000)),
-            "network_unit": self.arguments.network_unit,
-            "style": self.arguments.lcd_style,
-        }
         self._latest_collection_error = None
         return fragment
 
@@ -310,13 +316,6 @@ class RuntimeOperationsMixin:
             custom_ext.update(self.custom_data_manager.collect_task_data(definition.name))
         snapshot["ext"] = custom_ext
         custom_elapsed = time.monotonic() - stage_started
-        snapshot["display"] = {
-            "rotation": self.arguments.screen_rotation,
-            "brightness": getattr(self.arguments, "lcd_brightness", 100),
-            "collection_interval_ms": max(1, round(self.arguments.interval * 1000)),
-            "network_unit": self.arguments.network_unit,
-            "style": self.arguments.lcd_style,
-        }
         total_elapsed = time.monotonic() - started
         log_method = LOGGER.warning if total_elapsed > 0.5 else LOGGER.debug
         log_method(

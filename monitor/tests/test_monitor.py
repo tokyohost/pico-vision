@@ -319,9 +319,8 @@ class PicoClientTest(unittest.TestCase):
     def test_json_ack_log_includes_send_elapsed(self, monotonic):
         """确认异步 JSON ACK 日志包含发送到 ACK 的耗时统计。"""
         monotonic.side_effect = iter([
-            0.000, 0.005,
-            0.010, 0.015, 0.020, 0.025, 0.030, 0.040,
-            0.080,
+            0.000, 0.005, 0.010, 0.015, 0.020, 0.025, 0.030,
+            0.040, 0.050, 0.060, 0.070, 0.090, 0.091,
         ])
         client = PicoJsonClient()
         client.serial = QueuedResponseSerial([])
@@ -335,6 +334,31 @@ class PicoClientTest(unittest.TestCase):
         self.assertIn("[Pico -> Monitor][TEST][JSONZ 异步响应 响应]", text)
         self.assertIn("request_id=1", text)
         self.assertIn("发送到收到ACK耗时=70.0 ms", text)
+
+    @mock.patch("pico_client.time.monotonic")
+    def test_json_ack_timing_is_recorded_before_write_finishes(self, monotonic):
+        """确认 ACK 先于发送耗时补全时仍可按 request_id 计算耗时。"""
+        monotonic.side_effect = iter([10.3, 10.3, 10.5])
+        client = PicoJsonClient()
+        client._begin_json_ack_timing(42, 10.0, 200.0)
+
+        suffix = client._format_json_ack_timing_suffix(("ACK", b"JSON:42"), 10.5)
+
+        self.assertIn("request_id=42", suffix)
+        self.assertIn("发送到收到ACK耗时=200.0 ms", suffix)
+        self.assertIn("写完到ACK=未知", suffix)
+
+    @mock.patch("pico_client.time.monotonic")
+    def test_json_ack_timing_cache_expires_old_requests(self, monotonic):
+        """确认超过一分钟的 ACK 计时记录会自动淘汰，避免缓存无限增长。"""
+        monotonic.side_effect = iter([0.0, 0.0, 61.0])
+        client = PicoJsonClient()
+        client._begin_json_ack_timing(7, 0.0, 0.0)
+
+        suffix = client._format_json_ack_timing_suffix(("ACK", b"JSON:7"), 61.0)
+
+        self.assertIn("request_id=7", suffix)
+        self.assertIn("发送到收到ACK耗时=未知", suffix)
 
     def test_bad_json_keeps_serial_connected(self):
         """确认缓存中的单帧 JSON 解析失败只记录警告并保持连接。"""
@@ -634,6 +658,14 @@ class PicoClientTest(unittest.TestCase):
         """确认后台采集尚未发布新结果时，发送链路立即复用最近成功快照。"""
         service = MonitorService.__new__(MonitorService)
         service._latest_collected_snapshot = {"version": 1, "sequence": 7}
+        service.arguments = SimpleNamespace(
+            interval=0.5,
+            screen_rotation=0,
+            lcd_brightness=50,
+            network_unit="MB",
+            lcd_style="game",
+            dev=True,
+        )
         service._latest_collection_error = None
         service.stopping = mock.Mock()
         service.stopping.is_set.return_value = False
@@ -642,6 +674,7 @@ class PicoClientTest(unittest.TestCase):
         snapshot = service._snapshot_for_sending()
 
         self.assertEqual(snapshot["sequence"], 7)
+        self.assertTrue(snapshot["display"]["dev"])
         service._collect_snapshot.assert_not_called()
 
     def test_initial_snapshot_is_complete_and_marks_metrics_unavailable(self):
@@ -652,6 +685,7 @@ class PicoClientTest(unittest.TestCase):
             lcd_brightness=57,
             network_unit="MB",
             lcd_style="horizontal_disk4x",
+            dev=True,
         )
 
         snapshot = MonitorService._create_initial_snapshot(arguments)
@@ -661,6 +695,40 @@ class PicoClientTest(unittest.TestCase):
         self.assertFalse(snapshot["network"]["online"])
         self.assertEqual(len(snapshot["cpu"]["history"]), 24)
         self.assertEqual(snapshot["display"]["collection_interval_ms"], 500)
+        self.assertTrue(snapshot["display"]["dev"])
+
+    def test_sending_overrides_stale_display_config(self):
+        """确认发送视图使用当前配置覆盖快照仓库中的旧显示配置。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(
+            interval=0.25,
+            screen_rotation=180,
+            lcd_brightness=66,
+            network_unit="Mbps",
+            lcd_style="horizontal_disk",
+            dev=True,
+        )
+        service._snapshot_store = mock.Mock()
+        service._snapshot_store.snapshot.return_value = {
+            "cpu": {"percent": 1},
+            "display": {
+                "rotation": 0,
+                "brightness": 10,
+                "collection_interval_ms": 9999,
+                "network_unit": "MB",
+                "style": "old",
+                "dev": False,
+            },
+        }
+
+        snapshot = service._snapshot_for_sending()
+
+        self.assertEqual(snapshot["display"]["rotation"], 180)
+        self.assertEqual(snapshot["display"]["brightness"], 66)
+        self.assertEqual(snapshot["display"]["collection_interval_ms"], 250)
+        self.assertEqual(snapshot["display"]["network_unit"], "Mbps")
+        self.assertEqual(snapshot["display"]["style"], "horizontal_disk")
+        self.assertTrue(snapshot["display"]["dev"])
 
     def test_dev_mode_can_be_hot_updated_without_restarting_service(self):
         """确认工作进程可以直接应用托盘下发的开发模式开关。"""
@@ -672,6 +740,28 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertTrue(service.arguments.dev)
         configure.assert_called_once_with("DEBUG")
+
+    def test_collection_fragment_does_not_include_display_config(self):
+        """确认采集线程只发布采样结果，不混入发送层显示配置。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(
+            interval=0.5,
+            screen_rotation=180,
+            lcd_brightness=42,
+            network_unit="Mbps",
+            lcd_style="game",
+            dev=True,
+            disk_health_test_index=0,
+        )
+        service._snapshot_store = mock.Mock()
+        service._snapshot_store.snapshot.return_value = {"ext": {}}
+        service._latest_collection_error = RuntimeError("旧错误")
+
+        fragment = service._complete_collection_fragment({"cpu": {"percent": 12}})
+
+        self.assertNotIn("display", fragment)
+        self.assertEqual(fragment["cpu"]["percent"], 12)
+        self.assertIsNone(service._latest_collection_error)
 
     def test_development_mode_stops_reconnecting_without_pico(self):
         """确认开发模式首次连接失败后直接进入 JSON 输出循环。"""

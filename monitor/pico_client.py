@@ -26,6 +26,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import serial
 from serial.tools import list_ports
 
+from json_ack_timing_cache import ExpiringJsonAckTimingCache
 from usbCdcFramework import UsbCdcFramework
 
 
@@ -37,7 +38,6 @@ STYLE_UPLOAD_CHUNK_SIZE = 512
 JSON_ACK_TIMEOUT = 8.0
 JSON_PROGRESS_GRACE_SECONDS = 2.0
 SERIAL_SLOW_SEND_WARNING_MS = 200.0
-JSON_ACK_PENDING_LIMIT = 128
 
 
 def _build_crc16_byte_table():
@@ -134,7 +134,7 @@ class PicoJsonClient:
         self.screen_height = None
         self.styles = []
         self._json_request_sequence = 0
-        self._json_ack_pending = {}
+        self._json_ack_pending = ExpiringJsonAckTimingCache()
         self.transport = None
 
     @property
@@ -248,6 +248,11 @@ class PicoJsonClient:
         winner.serial = None
         self.transport = winner.transport
         winner.transport = None
+        if self.transport is not None:
+            self.transport.rebind_callbacks(
+                response_callback=self._handle_cdc_response,
+                error_callback=self._handle_cdc_error,
+            )
         self.board_model = winner.board_model
         self.screen_color_profile = winner.screen_color_profile
         self.firmware_version = winner.firmware_version
@@ -409,18 +414,26 @@ class PicoJsonClient:
         self._json_request_sequence = (self._json_request_sequence + 1) & 0x7FFFFFFF
         return self._json_request_sequence
 
-    def _remember_json_ack_timing(self, request_id, build_started, write_timing):
-        """记录 JSON 快照发送时间，用于异步 ACK 到达时计算端到端耗时。"""
-        key = str(request_id)
-        self._json_ack_pending[key] = {
+    def _begin_json_ack_timing(self, request_id, build_started, build_elapsed_ms):
+        """在写入前登记请求序号，避免 ACK 读线程先到导致耗时未知。"""
+        self._json_ack_pending.put(request_id, {
+            "created_at": build_started,
+            "build_started": build_started,
+            "send_started": time.monotonic(),
+            "send_finished": None,
+            "build_elapsed_ms": build_elapsed_ms,
+            "send_elapsed_ms": 0.0,
+        })
+
+    def _complete_json_ack_timing(self, request_id, build_started, write_timing):
+        """补全 JSON 快照发送时间，用于异步 ACK 到达时计算端到端耗时。"""
+        self._json_ack_pending.update(request_id, {
             "build_started": build_started,
             "send_started": write_timing["send_started"],
             "send_finished": write_timing["send_finished"],
             "build_elapsed_ms": write_timing["build_elapsed_ms"],
             "send_elapsed_ms": write_timing["send_elapsed_ms"],
-        }
-        while len(self._json_ack_pending) > JSON_ACK_PENDING_LIMIT:
-            self._json_ack_pending.pop(next(iter(self._json_ack_pending)))
+        })
 
     def _format_json_ack_timing_suffix(self, frame, received_at):
         """为 JSON ACK 响应日志生成发送到确认的耗时说明。"""
@@ -432,21 +445,32 @@ class PicoJsonClient:
         request_id = payload.split(":", 1)[1] if ":" in payload else None
         inferred = False
         if request_id is not None:
-            timing = self._json_ack_pending.pop(request_id, None)
-        elif self._json_ack_pending:
-            request_id = next(iter(self._json_ack_pending))
             timing = self._json_ack_pending.pop(request_id)
-            inferred = True
         else:
-            timing = None
+            request_id, timing = self._json_ack_pending.pop_oldest()
+            inferred = timing is not None
         if timing is None:
+            pending_snapshot = self._json_ack_pending.snapshot()
             if request_id is None:
-                return "，发送到收到ACK耗时=未知"
-            return "，request_id={}，发送到收到ACK耗时=未知".format(request_id)
+                return "，发送到收到ACK耗时=未知，ACK缓存={}".format(pending_snapshot)
+            return "，request_id={}，发送到收到ACK耗时=未知，ACK缓存={}".format(
+                request_id,
+                pending_snapshot,
+            )
         send_to_ack_ms = (received_at - timing["send_started"]) * 1000
-        write_done_to_ack_ms = (received_at - timing["send_finished"]) * 1000
         build_to_ack_ms = (received_at - timing["build_started"]) * 1000
         request_text = "{}{}".format(request_id, "（推断）" if inferred else "")
+        if timing.get("send_finished") is None:
+            return (
+                "，request_id={}，发送到收到ACK耗时={:.1f} ms，写完到ACK=未知，"
+                "构帧到ACK={:.1f} ms，构帧={:.1f} ms，发送阶段=进行中"
+            ).format(
+                request_text,
+                send_to_ack_ms,
+                build_to_ack_ms,
+                timing["build_elapsed_ms"],
+            )
+        write_done_to_ack_ms = (received_at - timing["send_finished"]) * 1000
         return (
             "，request_id={}，发送到收到ACK耗时={:.1f} ms，写完到ACK={:.1f} ms，"
             "构帧到ACK={:.1f} ms，构帧={:.1f} ms，发送阶段={:.1f} ms"
@@ -748,8 +772,9 @@ class PicoJsonClient:
         build_started = time.monotonic()
         packet = self.build_packet(snapshot, request_id=request_id)
         build_elapsed_ms = (time.monotonic() - build_started) * 1000
+        self._begin_json_ack_timing(request_id, build_started, build_elapsed_ms)
         write_timing = self._write_packet(packet, "JSONZ#{}".format(request_id), build_elapsed_ms)
-        self._remember_json_ack_timing(request_id, build_started, write_timing)
+        self._complete_json_ack_timing(request_id, build_started, write_timing)
 
     def reboot(self, timeout=30.0):
         """请求 Pico 执行软重启，并在指定秒数内等待设备确认。"""

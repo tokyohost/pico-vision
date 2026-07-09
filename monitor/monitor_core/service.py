@@ -144,6 +144,7 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
                 "collection_interval_ms": max(1, round(arguments.interval * 1000)),
                 "network_unit": arguments.network_unit,
                 "style": arguments.lcd_style,
+                "dev": bool(getattr(arguments, "dev", False)),
             },
         }
 

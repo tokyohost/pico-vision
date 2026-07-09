@@ -174,6 +174,11 @@ class UsbCdcFramework:
         """等待写线程完成当前任务，供控制命令切换前同步状态。"""
         return self._write_idle.wait(timeout)
 
+    def rebind_callbacks(self, response_callback=None, error_callback=None):
+        """重新绑定业务层回调，用于连接所有权转移后的读线程归属修正。"""
+        self.response_callback = response_callback
+        self.error_callback = error_callback
+
     def _read_loop(self):
         """持续读取 Pico 响应，避免 ACK/ERR/EVENT 堆积在系统 CDC 缓冲中。"""
         while not self._stopping.is_set():
