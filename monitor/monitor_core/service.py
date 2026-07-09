@@ -31,7 +31,12 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
     def __init__(self, arguments):
         """根据命令行配置创建采集器、串口客户端和停止事件。"""
         self.arguments = arguments
-        self.collector = SystemInformationCollector(arguments.ping_target)
+        self.collector = SystemInformationCollector(
+            arguments.ping_target,
+            getattr(arguments, "sensor_host_enabled", True),
+            getattr(arguments, "sensor_host_path", None),
+            getattr(arguments, "sensor_host_pipe", "omniwatch.sensorhost"),
+        )
         self.qbittorrent_monitor = None
         if arguments.qbittorrent_enabled:
             LOGGER.info(

@@ -38,6 +38,13 @@ try:
 except (ImportError, OSError):
     FpsMonitor = None
 
+try:
+    from win.sensor_host import DEFAULT_PIPE_NAME as SENSOR_HOST_DEFAULT_PIPE_NAME
+    from win.sensor_host import SensorHostManager
+except (ImportError, OSError):
+    SENSOR_HOST_DEFAULT_PIPE_NAME = "omniwatch.sensorhost"
+    SensorHostManager = None
+
 
 LOGGER = logging.getLogger("pico-monitor")
 DISK_TEMPERATURE_CACHE_SECONDS = 30
@@ -570,8 +577,8 @@ class SystemInformationCollector:
     _windows_cpu_frequency_sampler_unavailable = False
     _windows_cpu_frequency_source_logged = False
 
-    def __init__(self, ping_target):
-        """初始化历史序列、网络计数基线和异步延迟监控器。"""
+    def __init__(self, ping_target, sensor_host_enabled=True, sensor_host_path=None, sensor_host_pipe=SENSOR_HOST_DEFAULT_PIPE_NAME):
+        """初始化历史序列、网络计数基线、异步延迟监控器和外置传感器宿主。"""
         self.histories = {name: deque([0] * HISTORY_LENGTH, maxlen=HISTORY_LENGTH) for name in ("cpu", "memory", "upload", "download")}
         self.gpu_history = deque(maxlen=HISTORY_LENGTH)
         self.power_history = deque(maxlen=HISTORY_LENGTH)
@@ -585,6 +592,7 @@ class SystemInformationCollector:
         self.power_monitor = PowerMonitor()
         self.gpu_monitor = GpuMonitor()
         self.fps_monitor = FpsMonitor(HISTORY_LENGTH) if FpsMonitor is not None else None
+        self.sensor_host = self._create_sensor_host(sensor_host_enabled, sensor_host_path, sensor_host_pipe)
         self.last_gpu_version = -1
         self.disk_temperature_cache = {}
         self.disk_temperature_time = 0.0
@@ -592,13 +600,18 @@ class SystemInformationCollector:
         self.disk_health_time = 0.0
         self.disk_hardware_signature = None
         self.ping_monitor.start()
+        if self.sensor_host is not None:
+            self.sensor_host.start()
         self.gpu_monitor.start()
         if self.fps_monitor is not None:
             self.fps_monitor.start()
         psutil.cpu_percent(interval=None)
 
     def close(self):
-        """关闭指标采集器持有的 FPS 外部进程、GPU 后端和 Windows PDH 查询。"""
+        """关闭指标采集器持有的 SensorHost、FPS 外部进程、GPU 后端和 Windows PDH 查询。"""
+        if self.sensor_host is not None:
+            self.sensor_host.close()
+            self.sensor_host = None
         if self.fps_monitor is not None:
             self.fps_monitor.close()
         backend = self.gpu_monitor.backend
@@ -606,6 +619,13 @@ class SystemInformationCollector:
             backend.close()
             self.gpu_monitor.backend = None
         type(self)._close_windows_cpu_frequency_sampler()
+
+    @staticmethod
+    def _create_sensor_host(enabled, executable_path, pipe_name):
+        """按平台和配置创建 SensorHost 管理器。"""
+        if not enabled or platform.system() != "Windows" or SensorHostManager is None:
+            return None
+        return SensorHostManager(executable_path, pipe_name)
 
     @classmethod
     def _close_windows_cpu_frequency_sampler(cls):
