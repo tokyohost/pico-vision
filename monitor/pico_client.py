@@ -26,6 +26,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import serial
 from serial.tools import list_ports
 
+from usbCdcFramework import UsbCdcFramework
+
 
 FRAME_MAGIC = b"PV1"
 FRAME_MAX_PAYLOAD = 16 * 1024
@@ -133,6 +135,7 @@ class PicoJsonClient:
         self.styles = []
         self._json_request_sequence = 0
         self._json_ack_pending = {}
+        self.transport = None
 
     @property
     def is_connected(self):
@@ -186,6 +189,7 @@ class PicoJsonClient:
                         self.screen_width or "未知",
                         self.screen_height or "未知",
                     )
+                    self._start_cdc_framework()
                     return
                 LOGGER.warning("[串口握手] %s 未返回有效设备标识", port)
                 device.close()
@@ -242,6 +246,8 @@ class PicoJsonClient:
             raise RuntimeError("未找到 Pico LCD：所有候选串口均未响应")
         self.serial = winner.serial
         winner.serial = None
+        self.transport = winner.transport
+        winner.transport = None
         self.board_model = winner.board_model
         self.screen_color_profile = winner.screen_color_profile
         self.firmware_version = winner.firmware_version
@@ -249,6 +255,40 @@ class PicoJsonClient:
         self.screen_height = winner.screen_height
         self.styles = winner.styles
         winner.close()
+
+    def _start_cdc_framework(self):
+        """在握手完成后启动底层 USB CDC 读写线程。"""
+        if self.serial is None:
+            return
+        self.transport = UsbCdcFramework(
+            self.serial,
+            parse_frame,
+            port_name=self.port_name,
+            response_callback=self._handle_cdc_response,
+            error_callback=self._handle_cdc_error,
+        )
+        self.transport.start()
+
+    def _handle_cdc_response(self, label, response, frame):
+        """统一记录读线程收到的 Pico 响应，并把致命事件转为重连异常。"""
+        received_at = time.monotonic()
+        LOGGER.debug(
+            "[Pico -> Monitor][%s][%s 响应] %s%s",
+            self.port_name,
+            label,
+            response.decode("utf-8", errors="replace"),
+            self._format_json_ack_timing_suffix(frame, received_at),
+        )
+        if _is_restarting_fatal(frame):
+            raise PicoRestartingError("Pico 发生不可恢复的渲染错误，设备正在自动重启")
+
+    def _handle_cdc_error(self, frame):
+        """处理读线程提前收到的 ERR 帧，JSON 解析错误只记录不触发断线。"""
+        payload = frame[1].decode("utf-8", errors="replace")
+        if payload.startswith("BAD_JSON"):
+            LOGGER.warning("[JSONZ 异步错误][%s] %s", self.port_name, payload)
+            return True
+        return False
 
     @staticmethod
     def available_ports():
@@ -421,6 +461,23 @@ class PicoJsonClient:
 
     def _drain_json_responses(self):
         """非阻塞消费已经到达的 JSON 响应，避免 ACK 反向缓存持续积压。"""
+        if self.transport is not None:
+            self.transport.raise_error_if_any()
+            while True:
+                frame = self.transport.read_frame("JSONZ 异步响应", timeout=0.0)
+                if not frame:
+                    return
+                if frame[0] == "ACK" and frame[1].startswith(b"JSON"):
+                    continue
+                if frame[0] == "ERR":
+                    LOGGER.warning(
+                        "[JSONZ 异步错误][%s] %s",
+                        self.port_name,
+                        frame[1].decode("utf-8", errors="replace"),
+                    )
+                elif _is_restarting_fatal(frame):
+                    raise PicoRestartingError("Pico 发生不可恢复的渲染错误，设备正在自动重启")
+            return
         device = self.serial
         while device is not None and getattr(device, "in_waiting", 0) > 0:
             frame = self._read_protocol_frame("JSONZ 异步响应")
@@ -464,6 +521,52 @@ class PicoJsonClient:
 
     def _write_packet(self, packet, label, build_elapsed_ms=0.0):
         """按统一分块策略写入一条 PV1 帧，并输出串口写入耗时日志。"""
+        if self.transport is not None:
+            self.transport.raise_error_if_any()
+            packet_bytes = bytes(packet)
+            total_chunks = (len(packet_bytes) + SERIAL_WRITE_CHUNK_SIZE - 1) // SERIAL_WRITE_CHUNK_SIZE
+            LOGGER.debug(
+                "[Monitor -> Pico][%s][%s][发送帧 %d 字节，共 %d 块]",
+                self.port_name,
+                label,
+                len(packet_bytes),
+                total_chunks,
+            )
+            timing = self.transport.write_packet(
+                packet_bytes,
+                label,
+                build_elapsed_ms=build_elapsed_ms,
+                timeout=max(1.0, JSON_ACK_TIMEOUT),
+            )
+            total_elapsed_ms = build_elapsed_ms + timing["send_elapsed_ms"]
+            LOGGER.debug(
+                "[协议耗时][%s][%s 写入汇总] 构帧=%.1f ms，write合计=%.1f ms，最慢write=%.1f ms，flush=%.1f ms，发送阶段=%.1f ms，总写入=%d/%d 字节，共%d块",
+                self.port_name,
+                label,
+                build_elapsed_ms,
+                timing["write_elapsed_ms"],
+                timing["slowest_write_ms"],
+                timing["flush_elapsed_ms"],
+                timing["send_elapsed_ms"],
+                timing["total_written"],
+                len(packet_bytes),
+                timing["chunk_count"],
+            )
+            if total_elapsed_ms >= SERIAL_SLOW_SEND_WARNING_MS:
+                LOGGER.warning(
+                    "[协议慢发送][%s][%s] 总耗时=%.1f ms，构帧=%.1f ms，write合计=%.1f ms，最慢write=%.1f ms，flush=%.1f ms，总写入=%d/%d 字节，共%d块",
+                    self.port_name,
+                    label,
+                    total_elapsed_ms,
+                    build_elapsed_ms,
+                    timing["write_elapsed_ms"],
+                    timing["slowest_write_ms"],
+                    timing["flush_elapsed_ms"],
+                    timing["total_written"],
+                    len(packet_bytes),
+                    timing["chunk_count"],
+                )
+            return timing
         packet = memoryview(packet)
         total_chunks = (len(packet) + SERIAL_WRITE_CHUNK_SIZE - 1) // SERIAL_WRITE_CHUNK_SIZE
         LOGGER.debug(
@@ -551,6 +654,8 @@ class PicoJsonClient:
 
     def _read_protocol_frame(self, label):
         """读取并解析一条 Pico 返回帧，同时输出原始响应日志。"""
+        if self.transport is not None:
+            return self.transport.read_frame(label, timeout=0.3)
         device = self.serial
         if device is None:
             raise serial.SerialException("Pico 串口已关闭")
@@ -830,6 +935,9 @@ class PicoJsonClient:
 
     def close(self):
         """安全关闭串口，并恢复为未连接状态。"""
+        transport, self.transport = self.transport, None
+        if transport is not None:
+            transport.close(wait=True)
         device, self.serial = self.serial, None
         if device is not None:
             try:
