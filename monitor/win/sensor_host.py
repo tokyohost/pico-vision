@@ -40,7 +40,8 @@ class SensorHostManager:
         self.pipe_name = pipe_name or DEFAULT_PIPE_NAME
         self.process = None
         self.job = None
-        self.available = self._windows_dependencies_available() and self.executable_path is not None
+        self.dependency_unavailable_message = self._dependency_unavailable_reason()
+        self.available = self.dependency_unavailable_message is None and self.executable_path is not None
         self._unavailable_logged = False
 
     def start(self):
@@ -186,20 +187,31 @@ class SensorHostManager:
         """只记录一次 SensorHost 不可用原因。"""
         if self._unavailable_logged:
             return
-        if not self._windows_dependencies_available():
-            LOGGER.info("SensorHost 未启用：当前环境不是 Windows 或缺少 pywin32")
+        if self.dependency_unavailable_message is not None:
+            LOGGER.info("SensorHost 未启用：%s", self.dependency_unavailable_message)
         else:
-            LOGGER.info("SensorHost 未启用：未找到可执行文件")
+            LOGGER.info("SensorHost 未启用：未找到可执行文件，请检查 sensorhost/OmniWatch.SensorHost.exe 是否随程序发布")
         self._unavailable_logged = True
 
     @staticmethod
-    def _windows_dependencies_available():
-        """判断当前运行环境是否具备 Windows 与 pywin32 能力。"""
-        return (
-                platform.system() == "Windows"
-                and win32file is not None
-                and win32job is not None
-        )
+    def _dependency_unavailable_reason():
+        """返回 Windows 与 pywin32 能力缺失原因；可用时返回 None。"""
+        if platform.system() != "Windows":
+            return "当前环境不是 Windows"
+        missing_modules = [
+            name
+            for name, module in (
+                ("win32api", win32api),
+                ("win32con", win32con),
+                ("win32file", win32file),
+                ("win32job", win32job),
+                ("win32pipe", win32pipe),
+            )
+            if module is None
+        ]
+        if missing_modules:
+            return "缺少 pywin32 模块：{}".format("、".join(missing_modules))
+        return None
 
     @classmethod
     def _resolve_executable_path(cls, executable_path):
@@ -208,17 +220,8 @@ class SensorHostManager:
         for value in (executable_path, os.getenv("PICO_MONITOR_SENSOR_HOST_PATH")):
             if value:
                 candidates.append(Path(value))
-        base_directory = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[3]
-        candidates.extend(
-            (
-                base_directory / "sensorhost" / "OmniWatch.SensorHost.exe",
-                base_directory / "OmniWatch.SensorHost.exe",
-                base_directory / "omniwatch-sensor-host" / "OmniWatch.SensorHost.exe",
-                base_directory / "omniwatch-sensor-host" / "src" / "OmniWatch.SensorHost" / "bin" / "Release" / "net8.0-windows" / "win-x64" / "publish" / "OmniWatch.SensorHost.exe",
-                base_directory / "omniwatch-sensor-host" / "src" / "OmniWatch.SensorHost" / "bin" / "Release" / "net8.0-windows" / "OmniWatch.SensorHost.exe",
-                base_directory / "omniwatch-sensor-host" / "src" / "OmniWatch.SensorHost" / "bin" / "Debug" / "net8.0-windows" / "OmniWatch.SensorHost.exe",
-            )
-        )
+        for base_directory in cls._candidate_base_directories():
+            candidates.extend(cls._executable_candidates_from_base(base_directory))
         for candidate in candidates:
             try:
                 if candidate.is_file():
@@ -226,3 +229,43 @@ class SensorHostManager:
             except OSError:
                 continue
         return None
+
+    @staticmethod
+    def _candidate_base_directories():
+        """生成源码运行、测试脚本运行和 PyInstaller 打包运行的搜索根目录。"""
+        module_path = Path(__file__).resolve()
+        base_directories = []
+
+        def append_directory(directory):
+            """按顺序加入目录并去重，避免重复检查相同路径。"""
+            if directory is None:
+                return
+            try:
+                resolved = Path(directory).resolve()
+            except OSError:
+                resolved = Path(directory)
+            if resolved not in base_directories:
+                base_directories.append(resolved)
+
+        if getattr(sys, "frozen", False):
+            append_directory(getattr(sys, "_MEIPASS", None))
+            append_directory(Path(sys.executable).resolve().parent)
+        append_directory(module_path.parents[1])
+        append_directory(module_path.parents[2])
+        append_directory(module_path.parents[3])
+        append_directory(Path.cwd())
+        return base_directories
+
+    @staticmethod
+    def _executable_candidates_from_base(base_directory):
+        """按一个基准目录生成 SensorHost 可执行文件候选路径。"""
+        return (
+            base_directory / "sensorhost" / "OmniWatch.SensorHost.exe",
+            base_directory / "monitor" / "sensorhost" / "OmniWatch.SensorHost.exe",
+            base_directory / "pico-project" / "monitor" / "sensorhost" / "OmniWatch.SensorHost.exe",
+            base_directory / "OmniWatch.SensorHost.exe",
+            base_directory / "omniwatch-sensor-host" / "OmniWatch.SensorHost.exe",
+            base_directory / "omniwatch-sensor-host" / "src" / "OmniWatch.SensorHost" / "bin" / "Release" / "net8.0-windows" / "win-x64" / "publish" / "OmniWatch.SensorHost.exe",
+            base_directory / "omniwatch-sensor-host" / "src" / "OmniWatch.SensorHost" / "bin" / "Release" / "net8.0-windows" / "OmniWatch.SensorHost.exe",
+            base_directory / "omniwatch-sensor-host" / "src" / "OmniWatch.SensorHost" / "bin" / "Debug" / "net8.0-windows" / "OmniWatch.SensorHost.exe",
+        )

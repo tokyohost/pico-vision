@@ -1,10 +1,21 @@
 """SensorHost 生命周期和采集转换测试。"""
 
 import unittest
+import importlib.util
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
 from collectTask.tasks.sensor_host import SensorHostTask
+
+
+def load_sensor_host_manager():
+    """直接加载 SensorHost 模块，避免 win 包初始化引入托盘依赖。"""
+    module_path = Path(__file__).resolve().parents[1] / "win" / "sensor_host.py"
+    spec = importlib.util.spec_from_file_location("sensor_host_under_test", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.SensorHostManager
 
 
 class SensorHostTaskTest(unittest.TestCase):
@@ -48,6 +59,21 @@ class SensorHostTaskTest(unittest.TestCase):
             fragment = SensorHostTask(collector).collect()
         self.assertEqual(fragment, {})
         collector.sensor_host.snapshot.assert_not_called()
+
+
+class SensorHostManagerPathTest(unittest.TestCase):
+    """验证 SensorHost 可执行文件自动发现路径。"""
+
+    def test_resolve_executable_path_finds_monitor_sensorhost_directory(self):
+        """确认源码运行时会查找 monitor/sensorhost 目录。"""
+        sensor_host_manager = load_sensor_host_manager()
+        monitor_directory = Path(__file__).resolve().parents[1]
+        expected_path = monitor_directory / "sensorhost" / "OmniWatch.SensorHost.exe"
+
+        with mock.patch.object(sensor_host_manager, "_candidate_base_directories", return_value=[monitor_directory]):
+            resolved_path = sensor_host_manager._resolve_executable_path(None)
+
+        self.assertEqual(resolved_path, expected_path)
 
 
 if __name__ == "__main__":
