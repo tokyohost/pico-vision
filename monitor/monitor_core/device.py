@@ -9,6 +9,9 @@ def format_pico_information(information):
         "Pico 开发板型号：{}".format(
             information.get("board_model") or "未知（旧版固件未提供）"
         ),
+        "Pico LCD 设备类型：{}".format(
+            information.get("lcd_device_type") or "未知（旧版固件未提供）"
+        ),
         "Pico 屏幕色彩方案：{}".format(
             information.get("screen_color_profile") or "未知（旧版固件未提供）"
         ),
@@ -37,5 +40,4 @@ def show_pico_information(port=None):
 
     finally:
         client.close()
-
 

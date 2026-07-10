@@ -15,10 +15,13 @@
 
 
 from config import (
-    BLACK, BLUE, DARK, GRAY, GREEN, HEIGHT, PURPLE, RED, WHITE, WIDTH,
-    YELLOW,
+    BLACK, BLUE, DARK, GRAY, GREEN, PURPLE, RED, WHITE, YELLOW,
 )
 from styles.style_plugins import register_style
+
+
+SCREEN_WIDTH = 240
+SCREEN_HEIGHT = 320
 
 
 class DefaultStyle:
@@ -183,7 +186,7 @@ class DefaultStyle:
         if self._visible(canvas, 0, 35):
             canvas.text(8, 8, str(snapshot.get("host", "WAITING"))[:18], WHITE, 2)
             canvas.fill_rect(219, 10, 12, 12, GREEN if network.get("online") else RED)
-            canvas.line(0, 34, WIDTH - 1, 34, GRAY)
+            canvas.line(0, 34, SCREEN_WIDTH - 1, 34, GRAY)
         if self._visible(canvas, 43, 88):
             temperature = cpu.get("temperature_c")
             text = "--℃" if temperature is None else "{}℃".format(int(self._number(temperature)))
@@ -195,7 +198,7 @@ class DefaultStyle:
             detail = self._format_bytes(disk.get("used_bytes")) + "/" + self._format_bytes(disk.get("total_bytes"))
             self._draw_metric(canvas, 157, "DISK", disk, YELLOW, detail)
         if self._visible(canvas, 213, 280):
-            canvas.line(0, 213, WIDTH - 1, 213, GRAY)
+            canvas.line(0, 213, SCREEN_WIDTH - 1, 213, GRAY)
             canvas.text(8, 222, "NET", PURPLE, 2)
             canvas.text(8, 245, "UP " + self._format_network_rate(network.get("upload_bps"), network_unit), BLUE, 1)
             canvas.text(122, 245, "DN " + self._format_network_rate(network.get("download_bps"), network_unit), GREEN, 1)
@@ -203,8 +206,8 @@ class DefaultStyle:
             ping_text = "ERR" if ping is None else "{}MS".format(int(self._number(ping)))
             canvas.text(8, 261, "PING " + ping_text, PURPLE, 1)
             canvas.text(122, 261, str(network.get("ip", "0.0.0.0"))[:16], WHITE, 1)
-        if self._visible(canvas, 280, HEIGHT):
-            canvas.line(0, 280, WIDTH - 1, 280, GRAY)
+        if self._visible(canvas, 280, SCREEN_HEIGHT):
+            canvas.line(0, 280, SCREEN_WIDTH - 1, 280, GRAY)
             timestamp = str(snapshot.get("timestamp", ""))
             clock = timestamp[11:19] if len(timestamp) >= 19 else "--:--:--"
             canvas.text(8, 292, clock, WHITE, 2)

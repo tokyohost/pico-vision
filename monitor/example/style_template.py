@@ -16,7 +16,7 @@ CanvasC and the Python Canvas share the same public API; styles must not import
 ``fn_canvas`` directly or branch on the active backend.
 """
 
-from config import BLACK, BLUE, DARK, GRAY, GREEN, HEIGHT, WHITE, WIDTH, YELLOW
+from config import BLACK, BLUE, DARK, GRAY, GREEN, WHITE, YELLOW
 from canvas import DRAW_COMMAND_FILL_RECT, DRAW_COMMAND_LINE, DRAW_COMMAND_RECT
 from styles.style_plugins import register_style
 
@@ -32,8 +32,8 @@ class TemplateStyle:
 
     # 竖屏默认 240 x 320；横屏改为 width=320、height=240、landscape=True。
     # Portrait defaults to 240 x 320. For landscape use 320 x 240 and landscape=True.
-    width = WIDTH
-    height = HEIGHT
+    width = 240
+    height = 320
     landscape = False
     font_name = "native"  # 还可使用 screen_2inch / screen_2inch_compact。
 

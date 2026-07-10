@@ -11,7 +11,7 @@
 
 
 
-"""集中定义 RP2040、ST7789、WS2812 和通信协议参数。"""
+"""集中定义 RP2040 运行方案和通信协议参数。"""
 
 
 # 开发板型号：多色 WS2812 灯版本使用 rp2040_usb；GP25 单色灯版本使用
@@ -19,14 +19,11 @@
 BOARD_MODEL = "rp2040_usb"
 # 开发源码使用 development；正式升级包由打包工具写入发布版本。
 FIRMWARE_VERSION = "development"
-# 屏幕色彩方案：旧款 ST7789VW 二英寸屏使用 st7789vw_2inch；新款
-# 二点四英寸屏使用 st7789_2_4inch。当前默认选择新款屏幕。
-SCREEN_COLOR_PROFILE = "st7789vw_2inch"
+# LCD 屏幕方案：具体分辨率、色彩、显存偏移和 GPIO 均由 lcd 目录中的档案定义。
+LCD_DEVICE_TYPE = "st7789-2inch-8pin-a"
 
 
-# ST7789 显示参数。
-WIDTH = 240
-HEIGHT = 320
+# LCD 通用刷新参数。
 LCD_STRIP_HEIGHT = 40
 # 未收到新 JSON 时仍使用缓存快照主动刷新的最大间隔，保证至少一帧每秒。
 RENDER_INTERVAL_MS = 1000
@@ -37,15 +34,13 @@ LCD_STYLE = "disk"
 MAX_JSON_SIZE = 16 * 1024
 SERIAL_READ_BUDGET = 2048
 
-# ST7789 的 SPI 与控制引脚。
-PIN_SCK = 6
-PIN_MOSI = 7
-PIN_CS = 8
-PIN_DC = 14
-PIN_RST = 15
-PIN_BL = 26
-X_OFFSET = 0
-Y_OFFSET = 0
+# 后盖三按键使用 GP1、GP2、GP3，避开全部八针/十针 LCD 与两种板载状态灯。
+# 按键默认一端接 GPIO、另一端共接 GND，并使用 RP2040 内部上拉。
+PIN_BUTTON_STYLE_PREVIOUS = 1
+PIN_BUTTON_STYLE_NEXT = 2
+PIN_BUTTON_FUNCTION = 3
+BUTTON_ACTIVE_LOW = True
+BUTTON_DEBOUNCE_MS = 60
 
 # 板载状态灯公共时序参数。
 LED_BRIGHTNESS = 10
@@ -98,6 +93,11 @@ def _load_runtime_configuration():
         "TIME_CALIBRATION_SNAPSHOTS": int,
         "TIME_CALIBRATION_TOLERANCE_SECONDS": int,
         "LED_BRIGHTNESS": int,
+        "PIN_BUTTON_STYLE_PREVIOUS": int,
+        "PIN_BUTTON_STYLE_NEXT": int,
+        "PIN_BUTTON_FUNCTION": int,
+        "BUTTON_ACTIVE_LOW": bool,
+        "BUTTON_DEBOUNCE_MS": int,
     }
     for name, expected_type in allowed.items():
         if name in values:

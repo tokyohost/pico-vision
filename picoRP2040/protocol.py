@@ -65,14 +65,12 @@ from config import (
     BOARD_MODEL,
     DEVICE_NAME,
     FIRMWARE_VERSION,
-    HEIGHT,
+    LCD_DEVICE_TYPE,
     LCD_DRIVER,
     MAX_JSON_SIZE,
     MAX_UPGRADE_LINE_SIZE,
     PIXEL_FORMAT,
-    SCREEN_COLOR_PROFILE,
     SERIAL_READ_BUDGET,
-    WIDTH,
 )
 import protocolC
 
@@ -508,16 +506,19 @@ class JsonProtocol:
 
     def _write_pong(self):
         """返回设备能力、硬件型号、屏幕方案及固件版本。"""
+        from lcd import get_lcd_panel_profile
         from styles.style_plugins import style_catalog
 
+        panel_profile = get_lcd_panel_profile(LCD_DEVICE_TYPE)
         payload = json.dumps({
             "board_model": BOARD_MODEL,
-            "screen_color_profile": SCREEN_COLOR_PROFILE,
+            "screen_color_profile": panel_profile.color_profile_name,
             "firmware_version": FIRMWARE_VERSION,
             "device_name": DEVICE_NAME,
+            "lcd_device_type": LCD_DEVICE_TYPE,
             "lcd_driver": LCD_DRIVER,
-            "width": WIDTH,
-            "height": HEIGHT,
+            "width": panel_profile.width,
+            "height": panel_profile.height,
             "pixel_format": PIXEL_FORMAT,
             "styles": style_catalog(),
         }).encode("utf-8")

@@ -197,16 +197,17 @@ class WorkerControllerMixin:
                 if "[串口关闭]" in line or "监控通信异常：" in line:
                     self._update_device_connection({"connected": False})
                 connection = re.search(
-                    r"\[串口连接\].*握手成功：开发板=(.*)，屏幕方案=(.*)，固件版本=(.*)，分辨率=(.*)$",
+                    r"\[串口连接\].*握手成功：开发板=(.*)，LCD=(.*)，屏幕方案=(.*)，固件版本=(.*)，分辨率=(.*)$",
                     line.strip(),
                 )
                 if connection:
                     self._update_device_connection({
                         "connected": True,
                         "board_model": connection.group(1),
-                        "screen_color_profile": connection.group(2),
-                        "firmware_version": connection.group(3),
-                        "screen_resolution": connection.group(4),
+                        "lcd_device_type": connection.group(2),
+                        "screen_color_profile": connection.group(3),
+                        "firmware_version": connection.group(4),
+                        "screen_resolution": connection.group(5),
                     })
         return_code = process.wait()
         if not self.stopping.is_set() and process is self.worker_process and self.icon is not None:

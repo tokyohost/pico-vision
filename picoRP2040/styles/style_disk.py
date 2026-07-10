@@ -15,10 +15,13 @@
 
 
 from config import (
-    BLACK, BLUE, DARK, GRAY, GREEN, HEIGHT, PURPLE, WHITE, WIDTH, YELLOW,
+    BLACK, BLUE, DARK, GRAY, GREEN, PURPLE, WHITE, YELLOW,
 )
 from canvas import DRAW_COMMAND_FILL_RECT, DRAW_COMMAND_RECT
 from styles.style_plugins import register_style
+
+
+SCREEN_HEIGHT = 320
 
 
 class DiskStyle:
@@ -282,7 +285,7 @@ class DiskStyle:
             self._draw_frame(canvas, 2, 151, 236, 119, BLUE)
             self._draw_network_line(canvas, snapshot, True)
             self._draw_network_line(canvas, snapshot, False)
-        if self._visible(canvas, 277, HEIGHT):
+        if self._visible(canvas, 277, SCREEN_HEIGHT):
             self._draw_frame(canvas, 2, 277, 236, 41, BLUE)
             self._draw_footer(canvas, snapshot)
 

@@ -42,8 +42,9 @@ class Application:
         """按通信、LED、LCD 的顺序初始化各组件。"""
         from dashboard import DashboardRenderer
         from data_receiver import DataReceiver, SnapshotCache
-        from lcd import LcdDevice
+        from lcd import create_lcd_device
         from board_manager import get_board_profile
+        from button_controller import ButtonController
         from led import create_led_controller
 
         self._protocol = protocol
@@ -57,8 +58,13 @@ class Application:
             ).encode()
         )
         self._protocol.write(b"BOOT:LED_READY\n")
-        self._lcd = LcdDevice()
+        self._lcd = create_lcd_device()
         self._lcd.initialize()
+        self._protocol.write(
+            "BOOT:LCD_DEVICE_TYPE:{}\n".format(
+                self._lcd.device_type()
+            ).encode()
+        )
         self._protocol.write(
             "BOOT:LCD_COLOR_PROFILE:{}\n".format(
                 self._lcd.color_profile_name()
@@ -69,6 +75,7 @@ class Application:
         self._renderer = DashboardRenderer(
             self._lcd, style_name="boot"
         )
+        self._buttons = ButtonController()
         self._protocol.set_command_services({"renderer": self._renderer})
         self._boot_frame = 0
         self._boot_logs = []
@@ -85,6 +92,8 @@ class Application:
         self._monitor_interval_ms = 500
         self._monitor_connected = False
         self._dev_mode = False
+        self._button_style_override = None
+        self._last_display_style = LCD_STYLE
 
     def _write_custom_style_log(self, message):
         """向 Monitor 输出自定义样式启动加载结果。"""
@@ -129,6 +138,78 @@ class Application:
         changed = self._renderer.set_style(style_name)
         gc.collect()
         return changed or current_style != self._renderer.style_name()
+
+    def _style_switch_candidates(self):
+        """返回按键可循环切换的样式名称列表。"""
+        try:
+            from styles.style_plugins import style_catalog
+
+            names = [
+                item.get("name")
+                for item in style_catalog()
+                if isinstance(item, dict) and item.get("name")
+            ]
+        except Exception:
+            names = []
+        if LCD_STYLE not in names:
+            names.insert(0, LCD_STYLE)
+        current_style = self._renderer.style_name()
+        if current_style != "boot" and current_style not in names:
+            names.insert(0, current_style)
+        return tuple(name for name in names if name != "boot")
+
+    def _neighbor_style_name(self, direction):
+        """按方向返回当前样式在样式清单中的上一个或下一个名称。"""
+        names = self._style_switch_candidates()
+        if not names:
+            return LCD_STYLE
+        current_style = self._renderer.style_name()
+        try:
+            index = names.index(current_style)
+        except ValueError:
+            try:
+                index = names.index(self._button_style_override)
+            except ValueError:
+                index = 0
+        return names[(index + direction) % len(names)]
+
+    def _apply_button_style(self, style_name, snapshot):
+        """应用按键选择的样式，并强制下一帧完整刷新。"""
+        if snapshot is None:
+            self._protocol.write(b"BUTTON:LCD_STYLE_IGNORED:NO_SNAPSHOT\n")
+            return
+        try:
+            changed = self._set_style_after_system_boot(style_name)
+        except (ImportError, TypeError, ValueError) as error:
+            self._protocol.write(
+                "BUTTON:LCD_STYLE_ERROR:{}:{}\n".format(
+                    style_name, error
+                ).encode("utf-8")
+            )
+            return
+        self._button_style_override = self._renderer.style_name()
+        self._rendering_version = -1
+        self._renderer.request_render(snapshot or {}, force=True)
+        if changed:
+            self._protocol.write(
+                "BUTTON:LCD_STYLE:{}\n".format(
+                    self._renderer.style_name()
+                ).encode("utf-8")
+            )
+
+    def _handle_button_actions(self, actions, snapshot):
+        """处理本轮按键动作，样式键立即切换，功能键暂时仅上报事件。"""
+        for action in actions:
+            if action == "style_previous":
+                self._apply_button_style(
+                    self._neighbor_style_name(-1), snapshot
+                )
+            elif action == "style_next":
+                self._apply_button_style(
+                    self._neighbor_style_name(1), snapshot
+                )
+            elif action == "function":
+                self._protocol.write(b"BUTTON:FUNCTION:RESERVED\n")
 
     def _update_renderer_with_fallback(self, snapshot):
         """刷新一个区域，自定义样式画布超限时回退到内置默认样式。"""
@@ -212,6 +293,8 @@ class Application:
             self._receiver.update()
             self._led.update()
             now = time.ticks_ms()
+            snapshot, version = self._cache.latest()
+            self._handle_button_actions(self._buttons.update(now), snapshot)
             # Monitor 被强制结束后，USB CDC 可能持续报告端点可读或遗留半包，
             # 此时接收器会一直处于忙状态。超时判断必须先于忙状态短路，
             # 否则主循环永远无法切换回 SYSTEM BOOT 等待页。
@@ -221,7 +304,6 @@ class Application:
             if self._receiver.is_busy():
                 time.sleep_ms(0)
                 continue
-            snapshot, version = self._cache.latest()
             has_new_snapshot = version != self._rendering_version
             idle_refresh_due = time.ticks_diff(now, self._next_render) >= 0
             if (
@@ -258,7 +340,11 @@ class Application:
                     requested_rotation = int(requested_rotation)
                 except (TypeError, ValueError):
                     requested_rotation = 0
-                requested_style = display.get("style", LCD_STYLE)
+                display_style = display.get("style", LCD_STYLE)
+                if display_style != self._last_display_style:
+                    self._button_style_override = None
+                    self._last_display_style = display_style
+                requested_style = self._button_style_override or display_style
                 if requested_style == self._failed_custom_style:
                     requested_style = "default"
                 elif self._failed_custom_style is not None:

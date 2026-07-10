@@ -129,6 +129,7 @@ class PicoJsonClient:
         self.cancellation_event = cancellation_event
         self.serial = None
         self.board_model = None
+        self.lcd_device_type = None
         self.screen_color_profile = None
         self.firmware_version = None
         self.screen_width = None
@@ -184,9 +185,10 @@ class PicoJsonClient:
                 if self._handshake(device):
                     self.serial = device
                     LOGGER.info(
-                        "[串口连接] %s 握手成功：开发板=%s，屏幕方案=%s，固件版本=%s，分辨率=%sx%s",
+                        "[串口连接] %s 握手成功：开发板=%s，LCD=%s，屏幕方案=%s，固件版本=%s，分辨率=%sx%s",
                         port,
                         self.board_model or "未知",
+                        self.lcd_device_type or "未知",
                         self.screen_color_profile or "未知",
                         self.firmware_version or "未知",
                         self.screen_width or "未知",
@@ -257,6 +259,7 @@ class PicoJsonClient:
                 error_callback=self._handle_cdc_error,
             )
         self.board_model = winner.board_model
+        self.lcd_device_type = winner.lcd_device_type
         self.screen_color_profile = winner.screen_color_profile
         self.firmware_version = winner.firmware_version
         self.screen_width = winner.screen_width
@@ -307,6 +310,7 @@ class PicoJsonClient:
     def _handshake(self, device):
         """发送设备发现命令并验证 Pico 固件响应。"""
         self.board_model = None
+        self.lcd_device_type = None
         self.screen_color_profile = None
         self.firmware_version = None
         self.screen_width = None
@@ -367,6 +371,7 @@ class PicoJsonClient:
         """解析 PV1 PONG 的 JSON 设备信息。"""
         information = json.loads(payload.decode("utf-8"))
         self.board_model = information.get("board_model") or None
+        self.lcd_device_type = information.get("lcd_device_type") or None
         self.screen_color_profile = information.get("screen_color_profile") or None
         self.firmware_version = information.get("firmware_version") or None
         self.screen_width = information.get("width") or None
@@ -379,6 +384,7 @@ class PicoJsonClient:
         """返回当前已连接 Pico 的硬件配置与固件版本。"""
         return {
             "board_model": self.board_model,
+            "lcd_device_type": self.lcd_device_type,
             "screen_color_profile": self.screen_color_profile,
             "firmware_version": self.firmware_version,
             "screen_width": self.screen_width,

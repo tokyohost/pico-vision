@@ -11,54 +11,51 @@
 
 
 
-"""封装 ST7789 LCD 的硬件初始化和整帧输出。"""
+"""定义 LCD 设备的公共硬件操作和显示输出流程。"""
 
 
 from machine import Pin, PWM, SPI
 import struct
 import time
 
-from config import (
-    HEIGHT,
-    PIN_BL,
-    PIN_CS,
-    PIN_DC,
-    PIN_MOSI,
-    PIN_RST,
-    PIN_SCK,
-    SCREEN_COLOR_PROFILE,
-    WIDTH,
-    X_OFFSET,
-    Y_OFFSET,
-)
 from color_manager import get_color_profile
 
 
 class LcdDevice:
-    """封装 ST7789 的初始化、窗口设置和整帧传输。"""
+    """定义 LCD 公共操作，并由具体屏幕子类提供屏幕与脚位档案。"""
+
+    panel_profile = None
+    pin_profile = None
 
     def __init__(self):
-        """初始化 LCD 所需的 GPIO 与 SPI 外设。"""
-        self.cs = Pin(PIN_CS, Pin.OUT, value=1)
-        self.dc = Pin(PIN_DC, Pin.OUT, value=1)
-        self.rst = Pin(PIN_RST, Pin.OUT, value=1)
-        # Keep the backlight dark until the controller RAM has been cleared.
-        # Otherwise the panel briefly exposes uninitialised GRAM as snow.
-        self.bl = PWM(Pin(PIN_BL, Pin.OUT, value=0))
+        """初始化 LCD 所需的 GPIO、SPI 外设和屏幕档案。"""
+        if self.panel_profile is None or self.pin_profile is None:
+            raise ValueError("LCD 子类缺少屏幕档案或脚位档案")
+        self.cs = Pin(self.pin_profile.cs, Pin.OUT, value=1)
+        self.dc = Pin(self.pin_profile.dc, Pin.OUT, value=1)
+        self.rst = Pin(self.pin_profile.rst, Pin.OUT, value=1)
+        # 公共层只使用背光档案转换电平和占空比，不感知 BL 或 LED 正负极差异。
+        backlight = self.pin_profile.backlight
+        self.bl = PWM(
+            Pin(backlight.control_pin, Pin.OUT, value=backlight.off_level())
+        )
         self.bl.freq(1000)
-        self.bl.duty_u16(0)
+        self.bl.duty_u16(backlight.duty_for_brightness(0))
         self._backlight_brightness = 100
+        self._backlight_applied = False
         self.spi = SPI(
-            0,
-            baudrate=40_000_000,
+            self.pin_profile.spi_id,
+            baudrate=self.pin_profile.baudrate,
             polarity=0,
             phase=0,
-            sck=Pin(PIN_SCK),
-            mosi=Pin(PIN_MOSI),
+            sck=Pin(self.pin_profile.sck),
+            mosi=Pin(self.pin_profile.mosi),
         )
         self._rotation = 0
         self._landscape = False
-        self._color_profile = get_color_profile(SCREEN_COLOR_PROFILE)
+        self._color_profile = get_color_profile(
+            self.panel_profile.color_profile_name
+        )
 
     def write_command(self, command):
         """向 LCD 写入一个控制命令。"""
@@ -91,12 +88,26 @@ class LcdDevice:
 
     def set_window(self, x0, y0, x1, y1):
         """设置下一次显存写入覆盖的矩形区域。"""
-        self.command(0x2A, struct.pack(">HH", x0 + X_OFFSET, x1 + X_OFFSET))
-        self.command(0x2B, struct.pack(">HH", y0 + Y_OFFSET, y1 + Y_OFFSET))
+        self.command(
+            0x2A,
+            struct.pack(
+                ">HH",
+                x0 + self.panel_profile.x_offset,
+                x1 + self.panel_profile.x_offset,
+            ),
+        )
+        self.command(
+            0x2B,
+            struct.pack(
+                ">HH",
+                y0 + self.panel_profile.y_offset,
+                y1 + self.panel_profile.y_offset,
+            ),
+        )
         self.write_command(0x2C)
 
     def initialize(self):
-        """按照 ST7789 时序初始化当前屏幕显示方向。"""
+        """按照当前控制器方案初始化屏幕显示方向。"""
         self.reset()
         self.command(0x01)
         time.sleep_ms(150)
@@ -113,12 +124,15 @@ class LcdDevice:
         self.set_backlight_brightness(self._backlight_brightness)
 
     def set_backlight_brightness(self, brightness):
-        """将 LCD 背光亮度设置为一至一百的百分比。"""
+        """按档案声明的 BL 或 LED 正负极方案设置背光亮度百分比。"""
         normalized = max(1, min(100, int(brightness)))
-        if normalized == self._backlight_brightness and self.bl.duty_u16():
+        if normalized == self._backlight_brightness and self._backlight_applied:
             return False
         self._backlight_brightness = normalized
-        self.bl.duty_u16(round(65535 * normalized / 100))
+        self.bl.duty_u16(
+            self.pin_profile.backlight.duty_for_brightness(normalized)
+        )
+        self._backlight_applied = True
         return True
 
     def backlight_brightness(self):
@@ -126,18 +140,18 @@ class LcdDevice:
         return self._backlight_brightness
 
     def _clear_before_first_light(self):
-        """Fill controller memory with black before enabling the backlight."""
+        """背光点亮前先用黑色填充控制器显存。"""
         strip_height = 40
-        black_strip = bytes(WIDTH * strip_height * 2)
+        black_strip = bytes(self.panel_profile.width * strip_height * 2)
         y = 0
-        while y < HEIGHT:
-            height = min(strip_height, HEIGHT - y)
+        while y < self.panel_profile.height:
+            height = min(strip_height, self.panel_profile.height - y)
             self.show_region(
                 0,
                 y,
-                WIDTH,
+                self.panel_profile.width,
                 height,
-                memoryview(black_strip)[:WIDTH * height * 2],
+                memoryview(black_strip)[:self.panel_profile.width * height * 2],
             )
             y += height
 
@@ -161,7 +175,7 @@ class LcdDevice:
         return True
 
     def _write_orientation(self):
-        """根据画面方向与翻转角度写入 ST7789 MADCTL。"""
+        """根据画面方向与翻转角度写入控制器扫描方向。"""
         if self._landscape:
             value = 0xA0 if self._rotation == 180 else 0x60
         else:
@@ -173,6 +187,10 @@ class LcdDevice:
         """返回当前 LCD 正在使用的屏幕色彩方案名称。"""
         return self._color_profile.name
 
+    def device_type(self):
+        """返回当前 LCD 的规范硬件类型编码。"""
+        return self.panel_profile.device_type
+
     def rotation(self):
         """返回当前生效的屏幕旋转角度。"""
         return self._rotation
@@ -183,7 +201,9 @@ class LcdDevice:
 
     def show(self, frame):
         """将一帧大端 RGB565 数据完整写入 LCD。"""
-        self.show_region(0, 0, WIDTH, HEIGHT, frame)
+        self.show_region(
+            0, 0, self.panel_profile.width, self.panel_profile.height, frame
+        )
 
     def show_region(self, x, y, width, height, pixels):
         """将一块 RGB565 像素数据写入指定屏幕区域。"""

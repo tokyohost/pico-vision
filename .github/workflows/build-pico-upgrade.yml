@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   build:
-    name: 构建 ${{ matrix.board_model }} / ${{ matrix.screen_color_profile }}
+    name: 构建 ${{ matrix.board_model }} / ${{ matrix.lcd_device_type }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -24,10 +24,10 @@ jobs:
         board_model:
           - rp2040_usb
           - rp2040_typec
-        screen_color_profile:
-          - st7789vw_2inch
-          - st7789_2_4inch
-          - st7789_2_4inch_bgr
+        lcd_device_type:
+          - st7789-2inch-8pin-a
+          - st7789-2.4inch-10pin-a
+          - st7789-2.4inch-8pin-b
     steps:
       - name: 检出项目代码
         uses: actions/checkout@v6
@@ -41,18 +41,18 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then version="${{ inputs.version }}"; fi
           mkdir -p release-assets
-          package_name="OmniWatch-pico-upgrade-v${version}-${{ matrix.board_model }}-${{ matrix.screen_color_profile }}.zip"
+          package_name="OmniWatch-pico-upgrade-v${version}-${{ matrix.board_model }}-${{ matrix.lcd_device_type }}.zip"
           python tools/package_pico_upgrade.py \
             --source picoRP2040 \
             --output "release-assets/${package_name}" \
             --version "${version}" \
             --board-model "${{ matrix.board_model }}" \
-            --screen-color-profile "${{ matrix.screen_color_profile }}"
+            --lcd-device-type "${{ matrix.lcd_device_type }}"
           (cd release-assets && sha256sum --check "${package_name}.sha256")
       - name: 上传 Pico 升级包
         uses: actions/upload-artifact@v7
         with:
-          name: OmniWatch-pico-upgrade-${{ matrix.board_model }}-${{ matrix.screen_color_profile }}
+          name: OmniWatch-pico-upgrade-${{ matrix.board_model }}-${{ matrix.lcd_device_type }}
           path: release-assets/OmniWatch-pico-upgrade-*
           if-no-files-found: error
 
@@ -80,7 +80,7 @@ jobs:
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          source="release-assets/OmniWatch-pico-upgrade-v${version}-rp2040_usb-st7789vw_2inch.zip"
+          source="release-assets/OmniWatch-pico-upgrade-v${version}-rp2040_usb-st7789-2inch-8pin-a.zip"
           target="release-assets/OmniWatch-pico-upgrade-v${version}.zip"
           cp "${source}" "${target}"
           (cd release-assets && sha256sum "$(basename "${target}")" > "$(basename "${target}").sha256")

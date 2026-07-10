@@ -598,6 +598,7 @@ class PicoClientTest(unittest.TestCase):
         client = PicoJsonClient()
         client._parse_pong_payload(json.dumps({
             "board_model": "rp2040_typec",
+            "lcd_device_type": "st7789-2.4inch-8pin-b",
             "screen_color_profile": "st7789_2_4inch",
             "firmware_version": "1.2.3",
             "width": 320,
@@ -605,6 +606,7 @@ class PicoClientTest(unittest.TestCase):
         }).encode())
         self.assertEqual(client.device_information(), {
             "board_model": "rp2040_typec",
+            "lcd_device_type": "st7789-2.4inch-8pin-b",
             "screen_color_profile": "st7789_2_4inch",
             "firmware_version": "1.2.3",
             "screen_width": 320,
@@ -654,12 +656,14 @@ class PicoClientTest(unittest.TestCase):
         """确认 Pico 信息使用清晰的中文字段输出。"""
         text = format_pico_information({
             "board_model": "rp2040_typec",
+            "lcd_device_type": "st7789-2.4inch-8pin-b",
             "screen_color_profile": "st7789_2_4inch",
             "firmware_version": "1.2.3",
             "screen_width": 320,
             "screen_height": 240,
         })
         self.assertIn("Pico 开发板型号：rp2040_typec", text)
+        self.assertIn("Pico LCD 设备类型：st7789-2.4inch-8pin-b", text)
         self.assertIn("Pico 屏幕色彩方案：st7789_2_4inch", text)
         self.assertIn("Pico 固件版本：1.2.3", text)
         self.assertIn("Pico 屏幕分辨率：320 x 240", text)

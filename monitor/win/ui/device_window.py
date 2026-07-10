@@ -68,12 +68,14 @@ class DeviceWindowMixin:
         device_panel.pack(fill=tk.X, padx=16, pady=(0, 12))
         device_labels = {
             "board_model": "开发板型号",
+            "lcd_device_type": "LCD 设备类型",
             "screen_color_profile": "屏幕色彩方案",
             "firmware_version": "固件版本",
             "screen_resolution": "屏幕分辨率",
         }
         device_values = {
             "board_model": tk.StringVar(master=root, value="未连接"),
+            "lcd_device_type": tk.StringVar(master=root, value="--"),
             "screen_color_profile": tk.StringVar(master=root, value="--"),
             "firmware_version": tk.StringVar(master=root, value="--"),
             "screen_resolution": tk.StringVar(master=root, value="--"),
@@ -124,6 +126,7 @@ class DeviceWindowMixin:
         def clear_connected_device():
             """清空已连接设备信息，并禁用依赖有效串口的重启操作。"""
             device_values["board_model"].set("未连接")
+            device_values["lcd_device_type"].set("--")
             device_values["screen_color_profile"].set("--")
             device_values["firmware_version"].set("--")
             device_values["screen_resolution"].set("--")
@@ -142,6 +145,9 @@ class DeviceWindowMixin:
                         continue
                     device_values["board_model"].set(
                         connection.get("board_model") or "未知"
+                    )
+                    device_values["lcd_device_type"].set(
+                        connection.get("lcd_device_type") or "未知"
                     )
                     device_values["screen_color_profile"].set(
                         connection.get("screen_color_profile") or "未知"
@@ -425,6 +431,7 @@ class DeviceWindowMixin:
             progress.configure(mode="indeterminate")
             progress.start(12)
             device_values["board_model"].set("探测中……")
+            device_values["lcd_device_type"].set("--")
             device_values["screen_color_profile"].set("--")
             device_values["firmware_version"].set("--")
             device_values["screen_resolution"].set("--")

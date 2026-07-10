@@ -18,7 +18,7 @@ import gc
 import time
 
 from canvas_backend import Canvas, canvas_backend_name
-from config import HEIGHT, LCD_STRIP_HEIGHT, LCD_STYLE, WIDTH
+from config import LCD_STRIP_HEIGHT, LCD_STYLE
 from styles.style_plugins import create_style, normalize_style_name, release_style
 
 
@@ -78,8 +78,9 @@ class DashboardRenderer:
 
     def _apply_style_geometry(self):
         """应用样式声明的画布尺寸和 LCD 横竖屏方向。"""
-        self._width = int(getattr(self._style, "width", WIDTH))
-        self._height = int(getattr(self._style, "height", HEIGHT))
+        panel_profile = self.lcd.panel_profile
+        self._width = int(getattr(self._style, "width", panel_profile.width))
+        self._height = int(getattr(self._style, "height", panel_profile.height))
         required_pixels = self._width * LCD_STRIP_HEIGHT
         current_canvas = getattr(self, "canvas", None)
         if (
