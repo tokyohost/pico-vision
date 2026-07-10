@@ -16,6 +16,8 @@
 
 import json
 import io
+import itertools
+import logging
 import os
 import tempfile
 import threading
@@ -41,6 +43,7 @@ from pico_monitor import (
 from system_monitor import PowerMonitor, SystemInformationCollector
 from monitor_core.console import _stop_log_listener, configure_logging
 from monitor_core.runtime_operations import RuntimeOperationsMixin
+from json_ack_timing_cache import ExpiringJsonAckTimingCache
 
 
 class FakeSerial:
@@ -332,7 +335,10 @@ class PicoClientTest(unittest.TestCase):
 
         with mock.patch(
             "pico_client.time.monotonic",
-            side_effect=[0.0, 0.01, 0.16, 0.17, 0.25],
+            side_effect=itertools.chain(
+                [0.0, 0.01, 0.16, 0.17, 0.25, 0.26],
+                itertools.repeat(0.26),
+            ),
         ):
             with self.assertLogs("pico-monitor.serial", level="WARNING") as logs:
                 client._write_packet(b"123", "JSONZ#1", build_elapsed_ms=5.0)
@@ -463,14 +469,17 @@ class PicoClientTest(unittest.TestCase):
         self.assertIn("发送到收到ACK耗时=200.0 ms", suffix)
         self.assertIn("写完到ACK=未知", suffix)
 
-    @mock.patch("pico_client.time.monotonic")
-    def test_json_ack_timing_cache_expires_old_requests(self, monotonic):
+    def test_json_ack_timing_cache_expires_old_requests(self):
         """确认超过一分钟的 ACK 计时记录会自动淘汰，避免缓存无限增长。"""
-        monotonic.side_effect = iter([0.0, 0.0, 61.0])
         client = PicoJsonClient()
-        client._begin_json_ack_timing(7, 0.0, 0.0)
+        client._json_ack_pending = ExpiringJsonAckTimingCache(ttl_seconds=60.0)
 
-        suffix = client._format_json_ack_timing_suffix(("ACK", b"JSON:7"), 61.0)
+        with mock.patch("pico_client.time.monotonic", return_value=0.0), mock.patch(
+            "json_ack_timing_cache.time.monotonic",
+            side_effect=itertools.chain([0.0, 61.0], itertools.repeat(61.0)),
+        ):
+            client._begin_json_ack_timing(7, 0.0, 0.0)
+            suffix = client._format_json_ack_timing_suffix(("ACK", b"JSON:7"), 61.0)
 
         self.assertIn("request_id=7", suffix)
         self.assertIn("发送到收到ACK耗时=未知", suffix)
@@ -956,8 +965,15 @@ class PicoClientTest(unittest.TestCase):
             once=False,
         )
         service.stopping = mock.Mock()
-        service.stopping.is_set.side_effect = [False, False, True]
-        service.stopping.wait.return_value = False
+        service.stopping.is_set.return_value = False
+
+        def stop_after_reconnect_wait(timeout):
+            """在首次重连等待后结束服务，避免依赖内部停止检查次数。"""
+            if timeout == service.arguments.reconnect_interval:
+                service.stopping.is_set.return_value = True
+            return service.stopping.is_set.return_value
+
+        service.stopping.wait.side_effect = stop_after_reconnect_wait
         service.client = mock.Mock()
         service.client.is_connected = True
         service.client.available_ports.return_value = frozenset({"COM11"})
@@ -986,13 +1002,15 @@ class PicoClientTest(unittest.TestCase):
     def test_transmit_worker_drops_snapshot_when_previous_send_is_busy(self):
         """确认上一帧仍在串口发送时，新快照会被直接丢弃而不排队。"""
         service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(adaptive_transmit=False, interval=1.0)
         service.stopping = threading.Event()
         service.client = mock.Mock()
         send_started = threading.Event()
         release_send = threading.Event()
 
-        def slow_send(snapshot):
+        def slow_send(snapshot, **options):
             """模拟串口写入被驱动背压阻塞。"""
+            del snapshot, options
             send_started.set()
             release_send.wait(1.0)
 
@@ -1009,12 +1027,17 @@ class PicoClientTest(unittest.TestCase):
         service._stop_transmit_worker(wait=True)
 
         self.assertFalse(accepted)
-        service.client.send.assert_called_once_with({"sequence": 1})
+        service.client.send.assert_called_once_with(
+            {"sequence": 1},
+            wait_ack=False,
+            ack_timeout=15.0,
+        )
         self.assertIn("JSON 快照发送仍在进行，丢弃本轮快照", "\n".join(logs.output))
 
     def test_transmit_worker_error_is_raised_on_main_loop(self):
         """确认发送线程中的通信异常会转交主循环继续走重连流程。"""
         service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(adaptive_transmit=False, interval=1.0)
         service.stopping = threading.Event()
         service.client = mock.Mock()
         service.client.send.side_effect = RuntimeError("串口写入失败")

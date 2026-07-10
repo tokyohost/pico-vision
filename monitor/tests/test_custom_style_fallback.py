@@ -70,6 +70,10 @@ class FakeLcdDevice:
     def initialize(self):
         """模拟 LCD 初始化完成。"""
 
+    def device_type(self):
+        """返回模拟屏幕设备类型。"""
+        return "fake"
+
     def color_profile_name(self):
         """返回模拟屏幕色彩方案。"""
         return "fake"
@@ -80,6 +84,13 @@ class FakeLedController:
 
     def start(self):
         """模拟状态灯启动。"""
+
+
+class FakeButtonController:
+    """提供启动阶段需要的按键控制器接口。"""
+
+    def __init__(self):
+        """模拟按键控制器初始化。"""
 
 
 class FakeClock:
@@ -184,12 +195,17 @@ class CustomStyleFallbackTest(unittest.TestCase):
             DataReceiver=FakeDataReceiver,
             SnapshotCache=FakeSnapshotCache,
         )
-        lcd_module = types.SimpleNamespace(LcdDevice=FakeLcdDevice)
+        lcd_module = types.SimpleNamespace(
+            create_lcd_device=lambda: FakeLcdDevice(),
+        )
         board_manager_module = types.SimpleNamespace(
             get_board_profile=lambda name: types.SimpleNamespace(name=name),
         )
         led_module = types.SimpleNamespace(
             create_led_controller=lambda profile: FakeLedController(),
+        )
+        button_controller_module = types.SimpleNamespace(
+            ButtonController=FakeButtonController,
         )
         modules = {
             "dashboard": dashboard_module,
@@ -197,6 +213,7 @@ class CustomStyleFallbackTest(unittest.TestCase):
             "lcd": lcd_module,
             "board_manager": board_manager_module,
             "led": led_module,
+            "button_controller": button_controller_module,
         }
         FakeDashboardRenderer.created_styles = []
         protocol = RecordingProtocol()
