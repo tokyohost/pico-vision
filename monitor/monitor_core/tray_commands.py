@@ -31,6 +31,10 @@ def _dispatch_tray_command(service, command):
         service.request_custom_style_delete(
             json.loads(command[len("CUSTOM_STYLE_DELETE:"):])
         )
+    elif command.startswith("CUSTOM_DATA_ACTIVATE:"):
+        service.activate_custom_data_plugin(
+            json.loads(command[len("CUSTOM_DATA_ACTIVATE:"):]).get("name")
+        )
     return False
 
 
@@ -56,4 +60,3 @@ def start_tray_command_listener(service, input_stream):
     )
     thread.start()
     return thread
-

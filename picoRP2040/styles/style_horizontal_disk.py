@@ -238,6 +238,31 @@ class HorizontalDiskStyle:
             return name[:max_chars - len(suffix)] + suffix
         return name[:max_chars]
 
+    @staticmethod
+    def _fit_text_with_ellipsis(canvas, text, max_width):
+        """按实际像素宽度裁剪文本，超出可用区域时追加三个点。"""
+        text = str(text or "")
+        if max_width <= 0:
+            return ""
+        if canvas.text_width(text) <= max_width:
+            return text
+        ellipsis = "..."
+        ellipsis_width = canvas.text_width(ellipsis)
+        if ellipsis_width > max_width:
+            result = ""
+            for character in ellipsis:
+                if canvas.text_width(result + character) > max_width:
+                    break
+                result += character
+            return result
+        result = ""
+        for character in text:
+            candidate = result + character
+            if canvas.text_width(candidate) + ellipsis_width > max_width:
+                break
+            result = candidate
+        return result + ellipsis
+
     @classmethod
     def _format_rate(cls, value, unit):
         """按监控端配置生成不超过八个字符的网络速率。"""
@@ -490,9 +515,13 @@ class HorizontalDiskStyle:
                 name = "WARN"
             temperature = disk.get("temperature_c")
             temperature_text = "--℃" if temperature is None else "{}℃".format(int(self._number(temperature)))
+            temperature_x = x + 64 - canvas.text_width(temperature_text)
+            name = self._fit_text_with_ellipsis(
+                canvas, name, max(0, temperature_x - (x + 4) - 2)
+            )
             canvas.text(x + 4, y + 4, name, RED if all_red else name_color, 1)
             canvas.text(
-                x + 64 - canvas.text_width(temperature_text), y + 4, temperature_text,
+                temperature_x, y + 4, temperature_text,
                 RED if all_red else self._temperature_color(temperature), 1,
             )
             capacity = self._format_disk_capacity(

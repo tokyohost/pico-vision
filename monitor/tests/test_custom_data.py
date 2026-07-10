@@ -15,17 +15,19 @@ import collectTask.system_tasks as system_tasks
 class CustomDataTaskTest(unittest.TestCase):
     """覆盖标准目录插件和 ZIP 插件包的完整管理流程。"""
 
-    def _create_plugin(self, root, name="demo"):
+    def _create_plugin(self, root, name="demo", key="demo_json", task="demo_task", zh_name="演示数据", value=2):
         """创建包含清单和入口文件的标准测试插件目录。"""
         plugin = Path(root) / name
         plugin.mkdir(parents=True)
         (plugin / "plugin.json").write_text(
-            '{"protocol":1,"key":"demo_json","name":"demo_task","zh_name":"演示数据","interval":7}',
+            (
+                '{{"protocol":1,"key":"{}","name":"{}","zh_name":"{}","interval":7}}'
+            ).format(key, task, zh_name),
             encoding="utf-8",
             newline="\n",
         )
         (plugin / "main.py").write_text(
-            'def collect():\n    """返回标准插件测试数据。"""\n    return {"value": 2}\n',
+            'def collect():\n    """返回标准插件测试数据。"""\n    return {{"value": {}}}\n'.format(value),
             encoding="utf-8",
             newline="\n",
         )
@@ -219,12 +221,55 @@ class CustomDataTaskTest(unittest.TestCase):
             manager = custom_data.CustomDataManager(root / "customData", root / "envs")
             definition = manager.import_plugin(archive)
             self._create_test_environment(definition)
+            manager.reload_scripts()
+            manager.activate_plugin(definition.name)
 
             result = manager.collect_task_data(definition.name)
             manager.close()
 
         self.assertEqual(definition.zh_name, "压缩包插件")
         self.assertEqual(result, {"zip_data": {"source": "zip"}})
+
+    def test_imported_plugin_stays_not_running_until_activated(self):
+        """确认运行中导入的新插件默认不进入采集任务，激活后才参与调度。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self._create_plugin(root / "source")
+            manager = custom_data.CustomDataManager(root / "customData", root / "envs")
+
+            definition = manager.import_plugin(source)
+            items, _ = manager.list_items()
+
+            self.assertEqual(manager.task_definitions(), ())
+            self.assertFalse(items[0].runtime_enabled)
+            self.assertEqual(manager.collect_task_data(definition.name), {})
+
+            with mock.patch.object(manager, "prepare_environments_async"):
+                activated = manager.activate_plugin(definition.name)
+
+            self.assertEqual(activated.name, definition.name)
+            self.assertEqual(manager.task_definitions()[0].name, definition.name)
+            self.assertTrue(manager.list_items()[0][0].runtime_enabled)
+
+    def test_newly_discovered_plugin_is_not_running_until_activated(self):
+        """确认后台进程运行中扫描到的新插件默认显示未运行。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            custom_root = root / "customData"
+            manager = custom_data.CustomDataManager(custom_root, root / "envs")
+
+            self._create_plugin(custom_root)
+            manager.reload_if_changed()
+            items, _ = manager.list_items()
+
+            self.assertEqual(manager.task_definitions(), ())
+            self.assertEqual(len(items), 1)
+            self.assertFalse(items[0].runtime_enabled)
+
+            with mock.patch.object(manager, "prepare_environments_async"):
+                manager.activate_plugin(items[0].definition.name)
+
+            self.assertEqual(manager.task_definitions()[0].name, "demo_task")
 
     def test_zip_plugin_rejects_path_traversal(self):
         """确认 ZIP 插件包不能通过路径穿越写出解压目录。"""
@@ -237,6 +282,78 @@ class CustomDataTaskTest(unittest.TestCase):
 
             with self.assertRaises(custom_data.CustomDataError):
                 manager.import_plugin(archive)
+
+    def test_duplicate_plugin_import_reports_overwritable_conflict(self):
+        """确认重复 key 的插件导入会返回可供窗口确认覆盖的冲突信息。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = self._create_plugin(root / "first")
+            second = self._create_plugin(root / "second", task="other_task", zh_name="重复数据")
+            manager = custom_data.CustomDataManager(root / "customData", root / "envs")
+            manager.import_plugin(first)
+
+            with self.assertRaises(custom_data.CustomDataDuplicateError) as context:
+                manager.import_plugin(second)
+
+            self.assertIn("插件重复", str(context.exception))
+            self.assertEqual(context.exception.definition.name, "other_task")
+            self.assertEqual(context.exception.conflicts[0].name, "demo_task")
+
+    def test_duplicate_plugin_import_can_overwrite_existing_plugin(self):
+        """确认用户确认覆盖后会替换旧插件目录和独立环境。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = self._create_plugin(root / "first", value=2)
+            second = self._create_plugin(root / "second", task="other_task", zh_name="覆盖数据", value=9)
+            manager = custom_data.CustomDataManager(root / "customData", root / "envs")
+            original = manager.import_plugin(first)
+            original.environment_directory.mkdir(parents=True)
+            (original.environment_directory / "old.txt").write_text("old", encoding="utf-8", newline="\n")
+
+            replacement = manager.import_plugin(second, overwrite=True)
+            self._create_test_environment(replacement)
+            manager.reload_scripts()
+            manager.activate_plugin(replacement.name)
+            result = manager.collect_task_data(replacement.name)
+            manager.close()
+
+            self.assertFalse(original.plugin_directory.exists())
+            self.assertFalse(original.environment_directory.exists())
+            self.assertEqual(replacement.name, "other_task")
+            self.assertEqual(result, {"demo_json": {"value": 9}})
+
+    def test_import_reports_orphan_target_directory_as_overwritable(self):
+        """确认目标目录残留但未加载时仍提示用户可覆盖恢复。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = self._create_plugin(root / "source")
+            custom_root = root / "customData"
+            orphan = custom_root / "demo_task"
+            orphan.mkdir(parents=True)
+            (orphan / "stale.txt").write_text("残留目录", encoding="utf-8", newline="\n")
+            manager = custom_data.CustomDataManager(custom_root, root / "envs")
+
+            with self.assertRaises(custom_data.CustomDataDuplicateError) as context:
+                manager.import_plugin(source)
+            definition = manager.import_plugin(source, overwrite=True)
+
+            self.assertIn("目标目录已存在但当前未加载", str(context.exception))
+            self.assertEqual(context.exception.conflicts, ())
+            self.assertEqual(definition.name, "demo_task")
+            self.assertTrue((definition.plugin_directory / "plugin.json").is_file())
+            self.assertFalse((definition.plugin_directory / "stale.txt").exists())
+
+    def test_remove_directory_retries_when_temporarily_busy(self):
+        """确认 Windows 短暂占用目录时删除操作会自动重试。"""
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "busy"
+            target.mkdir()
+            with mock.patch("custom_data.shutil.rmtree", side_effect=[PermissionError("busy"), None]) as remove:
+                with mock.patch("custom_data.time.sleep") as sleep:
+                    custom_data._rmtree_with_retry(target, "测试目录")
+
+            self.assertEqual(remove.call_count, 2)
+            sleep.assert_called_once_with(custom_data.CUSTOM_DATA_REMOVE_RETRY_DELAY_SECONDS)
 
     def test_delete_plugin_removes_directory_and_environment(self):
         """确认删除操作按插件目录执行，并同步清理对应独立环境。"""

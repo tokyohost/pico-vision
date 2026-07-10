@@ -69,6 +69,7 @@ class CustomDataWindowMixin:
         output = scrolledtext.ScrolledText(root, height=9, wrap=tk.WORD)
         output.pack(fill=tk.BOTH, expand=False, padx=10, pady=(0, 10))
         path_by_item = {}
+        script_by_item = {}
         name_by_item = {}
 
         def append_log(content):
@@ -110,18 +111,38 @@ class CustomDataWindowMixin:
                 return None
             return name
 
+        def selected_script_path():
+            """返回当前选中插件的入口脚本路径。"""
+            selection = table.selection()
+            if not selection:
+                append_log("操作未执行：请先选择一个插件。")
+                messagebox.showinfo("自定义数据", "请先选择一个插件", parent=root)
+                return None
+            script_path = script_by_item.get(selection[0])
+            if script_path is None:
+                append_log("操作未执行：当前条目加载失败，无法查看入口源码。")
+                messagebox.showinfo("自定义数据", "当前条目加载失败，请先修复插件", parent=root)
+                return None
+            return script_path
+
         def refresh(log_operation=True):
             """刷新插件列表和加载错误。"""
             if log_operation:
                 append_log("正在刷新插件列表……")
             path_by_item.clear()
+            script_by_item.clear()
             name_by_item.clear()
             for item in table.get_children():
                 table.delete(item)
             items, errors = manager.list_items()
             for state in items:
                 definition = state.definition
-                status_text = "正常" if not state.error else "执行错误"
+                if not state.runtime_enabled:
+                    status_text = "未运行"
+                elif state.error:
+                    status_text = "执行错误"
+                else:
+                    status_text = "正常"
                 item = table.insert("", tk.END, values=(
                     definition.plugin_directory.name,
                     definition.key,
@@ -132,6 +153,7 @@ class CustomDataWindowMixin:
                     status_text,
                 ))
                 path_by_item[item] = definition.plugin_directory
+                script_by_item[item] = definition.path
                 name_by_item[item] = definition.name
             for script_path, error in errors.items():
                 item = table.insert("", tk.END, values=(Path(script_path).name, "加载失败", "-", "-", "-", "-", error))
@@ -156,7 +178,9 @@ class CustomDataWindowMixin:
                 return
             append_log("开始加载文件：{}".format(script_path))
             try:
-                definition = manager.import_plugin(script_path)
+                definition = import_plugin_with_overwrite_confirm(script_path, "ZIP 插件包")
+                if definition is None:
+                    return
                 append_log("导入成功：{}；key={}；task={}；中文名称={}；间隔={:g}s。".format(
                     definition.plugin_directory.name,
                     definition.key,
@@ -164,10 +188,32 @@ class CustomDataWindowMixin:
                     definition.zh_name,
                     definition.interval,
                 ))
-                append_log("请选中插件并单击“安装依赖”创建独立环境。")
+                append_log("插件当前为未运行状态；请选中插件安装依赖，准备好后单击“立即运行”。")
                 refresh(log_operation=False)
             except Exception as error:
                 append_log("加载失败：{}".format(error))
+
+        def import_plugin_with_overwrite_confirm(source_path, source_label):
+            """导入插件，遇到重复 key 或任务名时询问用户是否覆盖。"""
+            try:
+                return manager.import_plugin(source_path)
+            except custom_data.CustomDataDuplicateError as error:
+                conflict_text = "\n".join(
+                    " - {}（key={}，task={}）".format(conflict.zh_name, conflict.key, conflict.task_name)
+                    for conflict in error.conflicts
+                )
+                if not conflict_text:
+                    conflict_text = " - 目标插件目录已存在，但当前没有成功加载到列表中"
+                message = (
+                    "检测到重复的自定义数据插件：\n{}\n\n"
+                    "是否覆盖已安装插件？覆盖会删除旧插件目录及其独立环境。"
+                ).format(conflict_text)
+                append_log("{} 重复：{}".format(source_label, error))
+                if not messagebox.askyesno("覆盖自定义数据插件", message, parent=root):
+                    append_log("已取消覆盖：{}。".format(source_path))
+                    return None
+                append_log("用户确认覆盖重复插件，正在重新导入：{}。".format(source_path))
+                return manager.import_plugin(source_path, overwrite=True)
 
         def load_directory():
             """选择包含 plugin.json 的本地插件目录并导入。"""
@@ -177,12 +223,31 @@ class CustomDataWindowMixin:
                 return
             append_log("开始加载插件目录：{}".format(plugin_directory))
             try:
-                definition = manager.import_plugin(plugin_directory)
+                definition = import_plugin_with_overwrite_confirm(plugin_directory, "插件目录")
+                if definition is None:
+                    return
                 append_log("目录导入成功：{}（{}）。".format(definition.zh_name, definition.task_name))
-                append_log("请选中插件并单击“安装依赖”创建独立环境。")
+                append_log("插件当前为未运行状态；请选中插件安装依赖，准备好后单击“立即运行”。")
                 refresh(log_operation=False)
             except Exception as error:
                 append_log("目录加载失败：{}".format(error))
+
+        def activate_plugin():
+            """将未运行插件实时加入后台 Monitor 采集任务。"""
+            name = selected_name()
+            if name is None:
+                return
+            try:
+                definition = manager.activate_plugin(name)
+                if not self._activate_custom_data_plugin(name):
+                    append_log("插件 {} 已标记为运行；后台 Monitor 未运行，请下次启动后自动生效。".format(name))
+                    messagebox.showinfo("自定义数据", "后台 Monitor 未运行，插件将在下次启动时运行。", parent=root)
+                else:
+                    append_log("插件 {} 已实时加入 Monitor 采集任务。".format(definition.task_name))
+                refresh(log_operation=False)
+            except Exception as error:
+                append_log("实时运行失败：{}".format(error))
+                messagebox.showerror("自定义数据", "实时运行失败：{}".format(error), parent=root)
 
         def install_dependencies():
             """在后台创建所选插件的独立环境并安装依赖。"""
@@ -236,7 +301,7 @@ class CustomDataWindowMixin:
 
         def view_script():
             """在只读窗口中查看当前选中脚本源码。"""
-            script_path = selected_path()
+            script_path = selected_script_path()
             if script_path is None:
                 return
             append_log("正在查看插件入口源码：{}。".format(script_path))
@@ -259,6 +324,7 @@ class CustomDataWindowMixin:
         ttk.Button(button_frame, text="加载 ZIP", command=load_plugin).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(button_frame, text="加载目录", command=load_directory).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(button_frame, text="安装依赖", command=install_dependencies).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(button_frame, text="立即运行", command=activate_plugin).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(button_frame, text="测试", command=test_script).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(button_frame, text="删除", command=delete_plugin).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(button_frame, text="查看", command=view_script).pack(side=tk.LEFT, padx=(0, 6))

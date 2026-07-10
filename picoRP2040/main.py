@@ -65,12 +65,9 @@ class Application:
             ).encode()
         )
         self._protocol.write(b"BOOT:LCD_READY\n")
-        # 优先把首个有效自定义样式用于 SYSTEM BOOT 页面；目录为空时使用内置启动样式。
-        from styles.style_plugins import load_startup_custom_style
-        startup_style = load_startup_custom_style(self._write_custom_style_log)
         self._failed_custom_style = None
         self._renderer = DashboardRenderer(
-            self._lcd, style_name=startup_style or "boot"
+            self._lcd, style_name="boot"
         )
         self._protocol.set_command_services({"renderer": self._renderer})
         self._boot_frame = 0
@@ -109,6 +106,29 @@ class Application:
         if flush:
             while self._renderer.is_rendering():
                 self._update_renderer_with_fallback(boot_snapshot)
+
+    def _set_style_after_system_boot(self, style_name):
+        """先切换到系统启动页整理内存，再尝试加载指定样式。"""
+        current_style = self._renderer.style_name()
+        if style_name == current_style:
+            return False
+        if style_name == "boot":
+            return self._renderer.set_style(style_name)
+        self._renderer.set_style("boot")
+        self._protocol.write(
+            "CONFIG:LCD_STYLE_PREPARE:{}\n".format(style_name).encode("utf-8")
+        )
+        self._show_boot(
+            100,
+            "STYLE:PREPARE:{}".format(style_name),
+            "loading style...",
+            flush=True,
+        )
+        # 先释放上一样式和启动页刷新产生的短命对象，再导入可能较大的目标样式。
+        gc.collect()
+        changed = self._renderer.set_style(style_name)
+        gc.collect()
+        return changed or current_style != self._renderer.style_name()
 
     def _update_renderer_with_fallback(self, snapshot):
         """刷新一个区域，自定义样式画布超限时回退到内置默认样式。"""
@@ -256,7 +276,7 @@ class Application:
                         ).encode()
                     )
                 try:
-                    if self._renderer.set_style(requested_style):
+                    if self._set_style_after_system_boot(requested_style):
                         self._protocol.write(
                             "CONFIG:LCD_STYLE:{}\n".format(
                                 self._renderer.style_name()

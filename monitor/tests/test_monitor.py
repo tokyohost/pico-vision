@@ -294,6 +294,37 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertLessEqual(client.serial.write_calls, 6)
 
+    def test_large_snapshot_is_split_into_jsonz_packets(self):
+        """确认超过四千字节的快照会按字段拆成多条 JSONZ。"""
+        snapshot = {"display": {"style": "default"}}
+        snapshot.update({
+            "field{}".format(index): "x" * 700
+            for index in range(10)
+        })
+
+        packets = PicoJsonClient.build_snapshot_packets(snapshot, request_id=7)
+
+        self.assertGreater(len(packets), 1)
+        decoded_messages = []
+        for packet in packets:
+            message_type, payload = parse_frame(packet)
+            self.assertEqual("JSONZ", message_type)
+            message = json.loads(zlib.decompress(base64.b64decode(payload)))
+            decoded_messages.append(message)
+            self.assertLessEqual(
+                len(json.dumps(message, ensure_ascii=True, separators=(",", ":")).encode("utf-8")),
+                4096 + 32,
+            )
+        merged = {}
+        for message in decoded_messages:
+            merged.update(message["data"])
+        self.assertEqual(snapshot, merged)
+        self.assertEqual(7, decoded_messages[-1]["request_id"])
+        self.assertEqual(
+            ["7.{}/{}".format(index + 1, len(decoded_messages)) for index in range(len(decoded_messages) - 1)],
+            [message["request_id"] for message in decoded_messages[:-1]],
+        )
+
     def test_slow_serial_write_emits_warning(self):
         """确认串口发送耗时过高时输出慢发送告警，便于定位 USB 背压。"""
         client = PicoJsonClient()

@@ -21,6 +21,18 @@ MAXIMUM_LOG_SIZE = 15 * 1024 * 1024
 class WorkerControllerMixin:
     """为托盘应用提供独立的业务能力。"""
 
+    @staticmethod
+    def _parse_worker_result(line, prefix, fallback_message):
+        """从后台输出行中解析结构化 JSON 结果，兼容后续日志粘连到同一行的情况。"""
+        payload = line[len(prefix):].strip()
+        try:
+            result, _ = json.JSONDecoder().raw_decode(payload)
+        except json.JSONDecodeError:
+            return {"status": "error", "message": fallback_message}
+        if not isinstance(result, dict):
+            return {"status": "error", "message": fallback_message}
+        return result
+
     def _worker_command(self):
         """构造应用当前托盘配置后的后台监控命令。"""
         arguments = apply_worker_arguments(self.worker_arguments, self.settings)
@@ -123,6 +135,23 @@ class WorkerControllerMixin:
         except (BrokenPipeError, OSError):
             return False
 
+    def _activate_custom_data_plugin(self, name):
+        """通知运行中的 Monitor 将指定自定义数据插件加入采集任务。"""
+        process = self.worker_process
+        if process is None or process.poll() is not None or process.stdin is None:
+            return False
+        payload = {"name": name}
+        try:
+            process.stdin.write(
+                "CUSTOM_DATA_ACTIVATE:{}\n".format(
+                    json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+                )
+            )
+            process.stdin.flush()
+            return True
+        except (BrokenPipeError, OSError):
+            return False
+
     def _collect_output(self):
         """收集工作进程日志，并在 Pico 样式清单变化后刷新托盘菜单。"""
         process = self.worker_process
@@ -140,35 +169,30 @@ class WorkerControllerMixin:
                     if self.icon is not None:
                         self.icon.update_menu()
                 if line.startswith("DEVICE_REBOOT_RESULT:"):
-                    try:
-                        result = json.loads(line.split(":", 1)[1])
-                    except json.JSONDecodeError:
-                        result = {"status": "error", "message": "设备返回了无效响应"}
+                    result = self._parse_worker_result(
+                        line, "DEVICE_REBOOT_RESULT:", "设备返回了无效响应",
+                    )
                     self.device_management_messages.put(result)
                 if line.startswith("CUSTOM_STYLE_LIST_RESULT:"):
-                    try:
-                        result = json.loads(line.split(":", 1)[1])
-                    except json.JSONDecodeError:
-                        result = {"status": "error", "message": "设备返回了无效响应"}
+                    result = self._parse_worker_result(
+                        line, "CUSTOM_STYLE_LIST_RESULT:", "设备返回了无效响应",
+                    )
                     self.custom_style_messages.put(result)
                 if line.startswith("CUSTOM_STYLE_UPLOAD_RESULT:"):
-                    try:
-                        result = json.loads(line.split(":", 1)[1])
-                    except json.JSONDecodeError:
-                        result = {"status": "error", "message": "设备返回了无效响应"}
+                    result = self._parse_worker_result(
+                        line, "CUSTOM_STYLE_UPLOAD_RESULT:", "设备返回了无效响应",
+                    )
                     self.custom_style_upload_messages.put(result)
                     self.custom_style_upload_active.clear()
                 if line.startswith("CUSTOM_STYLE_DELETE_RESULT:"):
-                    try:
-                        result = json.loads(line.split(":", 1)[1])
-                    except json.JSONDecodeError:
-                        result = {"status": "error", "message": "设备返回了无效响应"}
+                    result = self._parse_worker_result(
+                        line, "CUSTOM_STYLE_DELETE_RESULT:", "设备返回了无效响应",
+                    )
                     self.custom_style_delete_messages.put(result)
                 if line.startswith("SCREENSHOT_RESULT:"):
-                    try:
-                        result = json.loads(line.split(":", 1)[1])
-                    except json.JSONDecodeError:
-                        result = {"status": "error", "message": "设备返回了无效截图响应"}
+                    result = self._parse_worker_result(
+                        line, "SCREENSHOT_RESULT:", "设备返回了无效截图响应",
+                    )
                     self._handle_screenshot_result(result)
                 if "[串口关闭]" in line or "监控通信异常：" in line:
                     self._update_device_connection({"connected": False})

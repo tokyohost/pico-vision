@@ -35,6 +35,7 @@ FRAME_MAX_PAYLOAD = 16 * 1024
 TRANSPORT_BLOCK_SIZE = 64
 ZLIB_WINDOW_BITS = 9
 STYLE_UPLOAD_CHUNK_SIZE = 512
+SNAPSHOT_JSON_CHUNK_SIZE = 4 * 1024
 JSON_ACK_TIMEOUT = 8.0
 JSON_PROGRESS_GRACE_SECONDS = 2.0
 SERIAL_SLOW_SEND_WARNING_MS = 200.0
@@ -385,32 +386,101 @@ class PicoJsonClient:
         }
 
     @staticmethod
-    def build_json_payload(snapshot):
-        """生成实际在线路上传输的紧凑 JSON 字节串。"""
+    def _wire_snapshot(snapshot):
+        """生成实际在线路上传输的快照对象，移除 Pico 端不需要的重复字段。"""
         wire_snapshot = snapshot
         if snapshot.get("physical_disks") is not None and "disks" in snapshot:
             # physical_disks 已包含 Pico 样式所需的磁盘指标；避免在线路上再发送
             # 内容高度重复的逻辑 disks 列表，但不修改采集器持有的原始快照。
             wire_snapshot = dict(snapshot)
             wire_snapshot.pop("disks", None)
+        return wire_snapshot
+
+    @staticmethod
+    def build_json_payload(snapshot):
+        """生成实际在线路上传输的紧凑 JSON 字节串。"""
         return json.dumps(
-            wire_snapshot,
+            PicoJsonClient._wire_snapshot(snapshot),
             ensure_ascii=True,
             separators=(",", ":"),
         ).encode("utf-8")
 
     @staticmethod
-    def build_packet(snapshot, request_id=None):
-        """把 JSON 编码为带长度与 CRC 的 PV1 数据帧。"""
-        snapshot_payload = PicoJsonClient.build_json_payload(snapshot)
+    def _snapshot_envelope_payload(snapshot, request_id=None):
+        """把快照对象封装为 JSONZ 压缩前的信封字节。"""
         envelope = {
             "mode": "snapshot",
-            "data": json.loads(snapshot_payload.decode("utf-8")),
+            "data": snapshot,
         }
         if request_id is not None:
             envelope["request_id"] = request_id
-        payload = json.dumps(envelope, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+        return json.dumps(envelope, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+
+    @staticmethod
+    def build_packet(snapshot, request_id=None):
+        """把 JSON 编码为带长度与 CRC 的 PV1 数据帧。"""
+        payload = PicoJsonClient._snapshot_envelope_payload(
+            PicoJsonClient._wire_snapshot(snapshot),
+            request_id=request_id,
+        )
         return PicoJsonClient._build_jsonz_packet(payload)
+
+    @staticmethod
+    def _split_snapshot_payloads(snapshot, request_id=None):
+        """按顶层字段把大快照拆成多份小 JSON 信封。"""
+        full_payload = PicoJsonClient._snapshot_envelope_payload(
+            snapshot,
+            request_id=request_id,
+        )
+        if len(full_payload) <= SNAPSHOT_JSON_CHUNK_SIZE:
+            return [full_payload]
+
+        payloads = []
+        current = {}
+        items = list(snapshot.items())
+        total_items = len(items)
+        for index, (key, value) in enumerate(items):
+            candidate = dict(current)
+            candidate[key] = value
+            candidate_payload = PicoJsonClient._snapshot_envelope_payload(candidate)
+            if current and len(candidate_payload) > SNAPSHOT_JSON_CHUNK_SIZE:
+                payloads.append(PicoJsonClient._snapshot_envelope_payload(current))
+                current = {key: value}
+                continue
+            current = candidate
+            if index == total_items - 1:
+                payloads.append(PicoJsonClient._snapshot_envelope_payload(current))
+
+        if not payloads:
+            payloads.append(PicoJsonClient._snapshot_envelope_payload(snapshot))
+        if request_id is not None:
+            total_payloads = len(payloads)
+            for index, payload in enumerate(list(payloads)):
+                fragment_snapshot = json.loads(payload.decode("utf-8"))["data"]
+                fragment_request_id = request_id
+                if index < total_payloads - 1:
+                    fragment_request_id = "{}.{}/{}".format(
+                        request_id,
+                        index + 1,
+                        total_payloads,
+                    )
+                payloads[index] = PicoJsonClient._snapshot_envelope_payload(
+                    fragment_snapshot,
+                    request_id=fragment_request_id,
+                )
+        return payloads
+
+    @staticmethod
+    def build_snapshot_packets(snapshot, request_id=None):
+        """构建一份快照对应的一条或多条 JSONZ 帧。"""
+        wire_snapshot = PicoJsonClient._wire_snapshot(snapshot)
+        return [
+            PicoJsonClient._build_jsonz_packet(payload)
+            for payload in PicoJsonClient._split_snapshot_payloads(
+                wire_snapshot,
+                request_id=request_id,
+            )
+        ]
 
     def _next_json_request_id(self):
         """生成进程内单调递增的 JSON 快照请求序号。"""
@@ -838,11 +908,18 @@ class PicoJsonClient:
         ack_event = self._register_json_ack_waiter(request_id) if wait_ack else None
         build_started = time.monotonic()
         try:
-            packet = self.build_packet(snapshot, request_id=request_id)
+            packets = self.build_snapshot_packets(snapshot, request_id=request_id)
             build_elapsed_ms = (time.monotonic() - build_started) * 1000
-            self._begin_json_ack_timing(request_id, build_started, build_elapsed_ms)
-            write_timing = self._write_packet(packet, "JSONZ#{}".format(request_id), build_elapsed_ms)
-            self._complete_json_ack_timing(request_id, build_started, write_timing)
+            for index, packet in enumerate(packets):
+                is_final_packet = index == len(packets) - 1
+                label = "JSONZ#{}".format(request_id)
+                if len(packets) > 1:
+                    label = "{}.{}/{}".format(label, index + 1, len(packets))
+                if is_final_packet:
+                    self._begin_json_ack_timing(request_id, build_started, build_elapsed_ms)
+                write_timing = self._write_packet(packet, label, build_elapsed_ms)
+                if is_final_packet:
+                    self._complete_json_ack_timing(request_id, build_started, write_timing)
             if wait_ack:
                 self._wait_json_ack(request_id, ack_event, ack_timeout)
         finally:

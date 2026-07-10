@@ -91,6 +91,16 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
             arguments.collection_task_intervals,
         )
 
+    def activate_custom_data_plugin(self, name):
+        """将运行中新加载的自定义数据插件实时加入采集任务。"""
+        definition = self._custom_data_coordinator.activate_plugin(name)
+        LOGGER.info(
+            "自定义数据插件实时加入 Monitor 任务：插件=%s，任务=%s",
+            definition.name,
+            definition.task_name,
+        )
+        return definition
+
     @staticmethod
     def _create_initial_snapshot(arguments):
         """创建连接后立即发送的完整默认快照，真实采集结果稍后原子替换。"""

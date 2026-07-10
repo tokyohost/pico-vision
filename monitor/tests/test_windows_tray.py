@@ -19,6 +19,7 @@ from windows_tray import (
     style_label,
     style_names,
 )
+from monitor_core.tray_commands import _dispatch_tray_command
 from win.tray import APPLICATION_NAME
 from win.worker_controller import MAXIMUM_LOG_SIZE, WorkerControllerMixin
 from style_validator import ValidatedStyle
@@ -81,6 +82,52 @@ class WindowsTraySettingsTest(unittest.TestCase):
             WorkerControllerMixin._truncate_log_file(log_file, 7)
 
         self.assertEqual("乙丙", log_path.read_text(encoding="utf-8"))
+
+    def test_activate_custom_data_plugin_writes_worker_command(self):
+        """确认自定义数据实时运行命令会写入后台监控管道。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.worker_process = mock.Mock()
+        application.worker_process.poll.return_value = None
+
+        result = application._activate_custom_data_plugin("weather")
+
+        self.assertTrue(result)
+        command = application.worker_process.stdin.write.call_args.args[0]
+        self.assertEqual(json.loads(command.removeprefix("CUSTOM_DATA_ACTIVATE:")), {"name": "weather"})
+        application.worker_process.stdin.flush.assert_called_once_with()
+
+    def test_tray_command_dispatch_activates_custom_data_plugin(self):
+        """确认后台进程能解析自定义数据实时运行命令。"""
+        service = mock.Mock()
+
+        should_stop = _dispatch_tray_command(service, 'CUSTOM_DATA_ACTIVATE:{"name":"weather"}')
+
+        self.assertFalse(should_stop)
+        service.activate_custom_data_plugin.assert_called_once_with("weather")
+
+    def test_worker_result_parser_ignores_trailing_log_text(self):
+        """确认后台结构化结果后粘连普通日志时仍按第一段 JSON 解析。"""
+        line = (
+            'CUSTOM_STYLE_UPLOAD_RESULT:{"status":"ok","data":{"filename":"style_weather_panel.py"}}'
+            "2026-07-10 11:08:20,233 [INFO] STYLE_CATALOG_UPDATED：已同步 15 个 Pico 样式"
+        )
+
+        result = WorkerControllerMixin._parse_worker_result(
+            line, "CUSTOM_STYLE_UPLOAD_RESULT:", "设备返回了无效响应",
+        )
+
+        self.assertEqual("ok", result["status"])
+        self.assertEqual("style_weather_panel.py", result["data"]["filename"])
+
+    def test_worker_result_parser_reports_invalid_json(self):
+        """确认后台结构化结果无法解析时返回统一的中文错误。"""
+        result = WorkerControllerMixin._parse_worker_result(
+            "CUSTOM_STYLE_UPLOAD_RESULT:not-json",
+            "CUSTOM_STYLE_UPLOAD_RESULT:",
+            "设备返回了无效响应",
+        )
+
+        self.assertEqual({"status": "error", "message": "设备返回了无效响应"}, result)
 
     def test_error_log_is_created_only_for_error_level_messages(self):
         """确认错误消息会自动写入以 error.log 结尾的独立日志文件。"""

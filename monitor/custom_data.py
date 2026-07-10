@@ -33,6 +33,8 @@ CUSTOM_DATA_COLLECTION_POOL_CORE_WORKERS = 1
 CUSTOM_DATA_COLLECTION_POOL_MAX_WORKERS = 5
 CUSTOM_DATA_COLLECTION_QUEUE_CAPACITY = 100
 CUSTOM_DATA_SLOW_TASK_WARNING_SECONDS = 1.0
+CUSTOM_DATA_REMOVE_RETRY_COUNT = 8
+CUSTOM_DATA_REMOVE_RETRY_DELAY_SECONDS = 0.25
 
 TEMPLATE_MANIFEST_CONTENT = '''{
   "protocol": 1,
@@ -91,6 +93,7 @@ class CustomDataState:
     """保存单个自定义数据插件的运行状态和最近结果。"""
 
     definition: CustomDataDefinition
+    runtime_enabled: bool = True
     last_run_time: float = 0.0
     data: object = None
     error: str = ""
@@ -101,6 +104,16 @@ class CustomDataState:
 
 class CustomDataError(Exception):
     """表示自定义数据插件校验、安装或执行失败。"""
+
+
+class CustomDataDuplicateError(CustomDataError):
+    """表示导入插件的数据 key 或任务名与现有插件冲突。"""
+
+    def __init__(self, message, definition, conflicts):
+        """保存待导入插件定义和冲突的已安装插件定义。"""
+        super().__init__(message)
+        self.definition = definition
+        self.conflicts = tuple(conflicts)
 
 
 def get_data_root():
@@ -257,6 +270,40 @@ def _locate_manifest_root(extracted_directory):
     return manifests[0].parent
 
 
+def _retry_remove_readonly(function, path, exc_info):
+    """在删除只读文件失败时临时增加写权限并重试。"""
+    del exc_info
+    try:
+        os.chmod(path, 0o700)
+        function(path)
+    except OSError:
+        raise
+
+
+def _rmtree_with_retry(path, description):
+    """删除目录，并兼容 Windows 刚释放进程句柄时的短暂占用。"""
+    path = Path(path)
+    if not path.exists():
+        return
+    last_error = None
+    for attempt in range(CUSTOM_DATA_REMOVE_RETRY_COUNT):
+        try:
+            shutil.rmtree(path, onerror=_retry_remove_readonly)
+            return
+        except OSError as error:
+            last_error = error
+            if attempt + 1 >= CUSTOM_DATA_REMOVE_RETRY_COUNT:
+                break
+            time.sleep(CUSTOM_DATA_REMOVE_RETRY_DELAY_SECONDS)
+    raise CustomDataError(
+        "无法删除{}：{}。可能仍有窗口、插件进程或杀毒软件正在占用，请稍后重试。原始错误：{}".format(
+            description,
+            path,
+            last_error,
+        )
+    ) from last_error
+
+
 class CustomDataWorker:
     """维护单个插件的常驻隔离进程，避免高频采集反复启动解释器。"""
 
@@ -396,6 +443,16 @@ class CustomDataCollectionCoordinator:
                 task.mark_finished()
                 logger.warning("自定义数据任务被丢弃：任务=%s，%s", self._task_label(task), self._pool_state_text())
 
+    def activate_plugin(self, name):
+        """将指定插件加入当前协调器，并把首次采集时间提前到现在。"""
+        definition = self.manager.activate_plugin(name)
+        self._sync_tasks()
+        for task in self.tasks:
+            if task.plugin_name == definition.name:
+                task.next_run_time = 0.0
+                break
+        return definition
+
     def next_schedule_delay(self):
         """返回下一次自定义数据任务到期前需要等待的秒数。"""
         now = time.monotonic()
@@ -498,6 +555,8 @@ class CustomDataManager:
         self.load_errors = {}
         self.last_scan_time = 0.0
         self._environment_threads = {}
+        self._runtime_enabled_names = set()
+        self._runtime_initialized = False
         self.reload_scripts()
 
     def close(self):
@@ -539,13 +598,18 @@ class CustomDataManager:
                     errors[str(plugin_path)] = traceback.format_exception_only(type(error), error)[-1].strip()
             old_states = self.states
             old_workers = self.workers
+            old_enabled_names = set(self._runtime_enabled_names)
+            initial_scan = not self._runtime_initialized
             self.states = {}
             self.workers = {}
+            enabled_names = set()
             for name, definition in definitions.items():
                 old_state = old_states.get(name)
+                runtime_enabled = initial_scan or name in old_enabled_names
                 if old_state and old_state.definition.path == definition.path:
                     definition_changed = old_state.definition.modified_time != definition.modified_time
                     old_state.definition = definition
+                    old_state.runtime_enabled = runtime_enabled
                     old_state.environment_ready = self._is_environment_ready(definition)
                     if definition_changed:
                         old_state.environment_preparing = False
@@ -554,8 +618,11 @@ class CustomDataManager:
                 else:
                     self.states[name] = CustomDataState(
                         definition=definition,
+                        runtime_enabled=runtime_enabled,
                         environment_ready=self._is_environment_ready(definition),
                     )
+                if runtime_enabled:
+                    enabled_names.add(name)
                 old_worker = old_workers.pop(name, None)
                 if old_worker and old_worker.definition.modified_time == definition.modified_time:
                     old_worker.definition = definition
@@ -568,6 +635,8 @@ class CustomDataManager:
                 worker.stop()
             self.load_errors = errors
             self.last_scan_time = time.monotonic()
+            self._runtime_enabled_names = enabled_names
+            self._runtime_initialized = True
 
     def reload_if_changed(self):
         """检测插件入口、清单或目录列表变化，并在变化时自动重载。"""
@@ -675,7 +744,8 @@ class CustomDataManager:
         with self.lock:
             names = [
                 name for name, state in self.states.items()
-                if not state.environment_ready and not state.environment_preparing and not state.environment_error
+                if state.runtime_enabled
+                and not state.environment_ready and not state.environment_preparing and not state.environment_error
             ]
             for name in names:
                 state = self.states[name]
@@ -748,6 +818,8 @@ class CustomDataManager:
         self.reload_if_changed()
         with self.lock:
             for state in self.states.values():
+                if not state.runtime_enabled:
+                    continue
                 if state.last_run_time and now - state.last_run_time < state.definition.interval:
                     continue
                 try:
@@ -767,6 +839,9 @@ class CustomDataManager:
             state = self.states.get(name)
             if state is None:
                 logger.warning("自定义数据插件不存在，跳过执行：插件=%s", name)
+                return {}
+            if not state.runtime_enabled:
+                logger.info("自定义数据插件未加入当前运行任务，跳过执行：插件=%s", name)
                 return {}
             if not state.environment_ready and self._is_environment_ready(state.definition):
                 state.environment_ready = True
@@ -820,13 +895,32 @@ class CustomDataManager:
         """返回启动时可注册为采集任务的插件定义。"""
         self.reload_if_changed()
         with self.lock:
-            return tuple(state.definition for state in self.states.values())
+            return tuple(state.definition for state in self.states.values() if state.runtime_enabled)
 
     def list_items(self):
         """返回管理窗口需要展示的插件状态和加载错误。"""
         self.reload_if_changed()
         with self.lock:
             return list(self.states.values()), dict(self.load_errors)
+
+    def activate_plugin(self, name):
+        """将指定插件加入当前运行的自定义数据采集任务。"""
+        self.reload_if_changed()
+        with self.lock:
+            state = self.states.get(name)
+            if state is None:
+                raise CustomDataError("插件不存在或尚未加载：{}".format(name))
+            state.runtime_enabled = True
+            self._runtime_enabled_names.add(name)
+            state.last_run_time = 0.0
+            definition = state.definition
+        logging.getLogger("pico-monitor.custom-data").info(
+            "自定义数据插件已加入当前运行任务：插件=%s，任务=%s",
+            name,
+            definition.task_name,
+        )
+        self.prepare_environments_async()
+        return definition
 
     def _existing_identifiers(self, ignored_path=None):
         """返回除指定路径外已占用的数据 key 和任务名。"""
@@ -835,7 +929,29 @@ class CustomDataManager:
         names = {state.definition.name for state in self.states.values() if state.definition.plugin_directory.resolve() != ignored_path}
         return keys, names
 
-    def import_plugin(self, source_path):
+    def _conflicting_definitions(self, definition, ignored_path=None):
+        """返回与待导入插件数据 key 或任务名重复的已安装插件。"""
+        ignored_path = Path(ignored_path).resolve() if ignored_path else None
+        conflicts = []
+        for state in self.states.values():
+            installed = state.definition
+            if ignored_path and installed.plugin_directory.resolve() == ignored_path:
+                continue
+            if installed.key == definition.key or installed.name == definition.name:
+                conflicts.append(installed)
+        return tuple(conflicts)
+
+    def _remove_installed_definition(self, definition):
+        """停止并移除一个已安装插件目录和对应独立环境。"""
+        worker = self.workers.pop(definition.name, None)
+        if worker:
+            worker.stop()
+        if definition.plugin_directory.is_dir():
+            _rmtree_with_retry(definition.plugin_directory, "旧插件目录")
+        if definition.environment_directory.is_dir():
+            _rmtree_with_retry(definition.environment_directory, "旧插件独立环境")
+
+    def import_plugin(self, source_path, overwrite=False):
         """从插件目录或 ZIP 包导入自定义数据插件。"""
         source_path = Path(source_path).resolve()
         if source_path.is_dir():
@@ -855,9 +971,36 @@ class CustomDataManager:
             raise CustomDataError("仅支持包含 plugin.json 的插件目录或 ZIP 插件包，不再支持单文件 .py 插件")
         try:
             definition = _load_definition(source_root, self.environment_root)
-            keys, names = self._existing_identifiers()
-            _validate_uniqueness(definition, keys, names)
             target = self.custom_directory / definition.name
+            if source_root.resolve() == target.resolve():
+                self.reload_scripts()
+                if definition.name not in self.states:
+                    raise CustomDataError("插件已在目标目录中，但当前未能成功加载：{}".format(definition.name))
+                return self.states[definition.name].definition
+            conflicts = self._conflicting_definitions(definition)
+            target_conflicts = target.exists()
+            if (conflicts or target_conflicts) and not overwrite:
+                conflict_text = "、".join(
+                    "{}(key={}，task={})".format(conflict.zh_name, conflict.key, conflict.task_name)
+                    for conflict in conflicts
+                )
+                if target_conflicts and target.resolve() not in {conflict.plugin_directory.resolve() for conflict in conflicts}:
+                    target_text = "目标目录已存在但当前未加载：{}".format(target)
+                    conflict_text = "、".join(filter(None, (conflict_text, target_text)))
+                raise CustomDataDuplicateError(
+                    "插件重复：{}。确认覆盖后会替换这些已安装插件。".format(conflict_text),
+                    definition,
+                    conflicts,
+                )
+            if overwrite:
+                removed_paths = set()
+                for conflict in conflicts:
+                    removed_paths.add(conflict.plugin_directory.resolve())
+                    self._remove_installed_definition(conflict)
+                if target.exists() and target.resolve() not in removed_paths:
+                    _rmtree_with_retry(target, "目标插件目录")
+                if definition.environment_directory.is_dir():
+                    _rmtree_with_retry(definition.environment_directory, "目标插件独立环境")
             if target.exists():
                 raise CustomDataError("目标插件已存在：{}".format(definition.name))
             shutil.copytree(source_root, target, ignore=shutil.ignore_patterns(".venv", "venv", "__pycache__", "*.pyc"))
@@ -865,7 +1008,11 @@ class CustomDataManager:
             if cleanup_root is not None:
                 cleanup_root.cleanup()
         self.reload_scripts()
-        return self.states[definition.name].definition
+        with self.lock:
+            state = self.states[definition.name]
+            state.runtime_enabled = False
+            self._runtime_enabled_names.discard(definition.name)
+            return state.definition
 
     def delete_plugin(self, plugin_path):
         """删除指定插件及其独立虚拟环境。"""
@@ -882,9 +1029,9 @@ class CustomDataManager:
         worker = self.workers.get(definition.name)
         if worker:
             worker.stop()
-        shutil.rmtree(definition.plugin_directory)
+        _rmtree_with_retry(definition.plugin_directory, "插件目录")
         if definition.environment_directory.is_dir():
-            shutil.rmtree(definition.environment_directory)
+            _rmtree_with_retry(definition.environment_directory, "插件独立环境")
         self.reload_scripts()
 
     def test_plugin(self, name):

@@ -11,6 +11,7 @@ sys.path.insert(0, str(PICO_ROOT))
 
 import protocol  # noqa: E402
 import protocolC  # noqa: E402
+from data_receiver import SnapshotCache  # noqa: E402
 
 
 class PartialWriteStream:
@@ -51,6 +52,28 @@ class BackpressureStream(PartialWriteStream):
 
 class ProtocolBackendTest(unittest.TestCase):
     """验证原生协议后端只在接口完整兼容时启用。"""
+
+    def test_snapshot_cache_reuses_missing_fragment_fields(self):
+        """确认分片快照缺省字段会复用上一份内存快照。"""
+        cache = SnapshotCache()
+
+        cache.update({
+            "display": {"style": "default", "brightness": 80},
+            "cpu": {"percent": 12.5, "temperature": 48},
+            "memory": {"percent": 40},
+        })
+        cache.update({
+            "display": {"brightness": 60},
+            "cpu": {"percent": 20.0},
+        })
+        snapshot, version = cache.latest()
+
+        self.assertEqual(2, version)
+        self.assertEqual("default", snapshot["display"]["style"])
+        self.assertEqual(60, snapshot["display"]["brightness"])
+        self.assertEqual(20.0, snapshot["cpu"]["percent"])
+        self.assertEqual(48, snapshot["cpu"]["temperature"])
+        self.assertEqual({"percent": 40}, snapshot["memory"])
 
     def test_python_fallback_without_native_module(self):
         """确认 UF2 缺少原生模块时仍使用原有 Python 解析器。"""

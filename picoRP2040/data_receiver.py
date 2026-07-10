@@ -21,6 +21,20 @@ from config import (
 from timeIncrease import TimeIncrease
 
 
+def _merge_snapshot(previous, incoming):
+    """递归合并快照字段，未出现在本次数据中的字段沿用旧值。"""
+    if not isinstance(previous, dict) or not isinstance(incoming, dict):
+        return incoming
+    merged = dict(previous)
+    for key, value in incoming.items():
+        old_value = merged.get(key)
+        if isinstance(old_value, dict) and isinstance(value, dict):
+            merged[key] = _merge_snapshot(old_value, value)
+        else:
+            merged[key] = value
+    return merged
+
+
 
 class SnapshotCache:
     """在单核事件循环中保存最新系统快照及版本号。"""
@@ -35,8 +49,10 @@ class SnapshotCache:
         )
 
     def update(self, snapshot):
-        """替换最新快照并递增版本号。"""
-        self.snapshot = self._time_increase.receive(snapshot)
+        """合并最新快照并递增版本号。"""
+        self.snapshot = self._time_increase.receive(
+            _merge_snapshot(self.snapshot, snapshot)
+        )
         self.version += 1
 
     def latest(self):
