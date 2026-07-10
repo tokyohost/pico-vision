@@ -54,6 +54,7 @@ install_application() {
     install -m 0644 "$script_directory/custom_data.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/custom_data_runner.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/json_ack_timing_cache.py" "$INSTALL_ROOT/"
+    install -m 0644 "$script_directory/usbCdcFramework.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/pico_client.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/pico_upgrade.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/monitor_update.py" "$INSTALL_ROOT/"
