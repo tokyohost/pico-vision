@@ -9,11 +9,13 @@
 #
 #  This software is provided "as is", without warranty of any kind.
 
-"""采集 NVIDIA、Windows PDH 和 Linux sysfs GPU 指标。"""
+"""采集 NVIDIA、Windows PDH、Linux sysfs 和 Intel i915 PMU GPU 指标。"""
 
 import ctypes
 import os
 import platform
+import re
+import sys
 import threading
 import time
 from pathlib import Path
@@ -192,6 +194,7 @@ class _WindowsPdhGpuBackend:
             self.library.PdhCloseQuery(query)
             self.query = ctypes.c_void_p()
 
+
 class _LinuxSysfsGpuBackend:
     """通过 Linux DRM sysfs 低开销采集 AMD GPU 使用率。"""
 
@@ -239,6 +242,118 @@ class _LinuxSysfsGpuBackend:
     def close(self):
         """兼容统一后端关闭接口，sysfs 无需释放资源。"""
 
+
+class _PerfEventAttr(ctypes.Structure):
+    """描述 Linux perf_event_open 所需的基础事件属性。"""
+
+    _fields_ = [
+        ("type", ctypes.c_uint32),
+        ("size", ctypes.c_uint32),
+        ("config", ctypes.c_uint64),
+        ("sample_period", ctypes.c_uint64),
+        ("sample_type", ctypes.c_uint64),
+        ("read_format", ctypes.c_uint64),
+        ("flags", ctypes.c_uint64),
+        ("wakeup_events", ctypes.c_uint32),
+        ("bp_type", ctypes.c_uint32),
+        ("config1", ctypes.c_uint64),
+    ]
+
+
+class _LinuxIntelGpuBackend:
+    """通过 Linux i915 PMU 采集 Intel 核显各引擎的使用率。"""
+
+    _SYSCALL_NUMBERS = {
+        "x86_64": 298,
+        "amd64": 298,
+        "i386": 336,
+        "i686": 336,
+        "aarch64": 241,
+        "arm64": 241,
+        "armv7l": 364,
+        "riscv64": 241,
+    }
+
+    def __init__(self, pmu_root=Path("/sys/bus/event_source/devices/i915")):
+        """发现 i915 忙碌事件并为每个 GPU 引擎打开系统级 PMU 计数器。"""
+        self.pmu_root = Path(pmu_root)
+        self.event_fds = []
+        self.previous_counters = None
+        self.previous_time_ns = None
+        try:
+            event_type = int((self.pmu_root / "type").read_text(encoding="ascii").strip())
+            for event_path in sorted((self.pmu_root / "events").glob("*-busy")):
+                config = self._parse_event_config(event_path.read_text(encoding="ascii"))
+                self.event_fds.append(self._open_perf_event(event_type, config))
+        except (OSError, ValueError):
+            self.close()
+            raise
+        if not self.event_fds:
+            raise OSError("未发现可用 i915 GPU 忙碌事件")
+
+    @staticmethod
+    def _parse_event_config(value):
+        """从 i915 PMU 事件描述中解析十进制或十六进制配置值。"""
+        match = re.search(r"(?:event|config)\s*=\s*([^,\s]+)", value)
+        if match is None:
+            raise ValueError("无法解析 i915 PMU 事件配置")
+        return int(match.group(1), 0)
+
+    @classmethod
+    def _open_perf_event(cls, event_type, config):
+        """调用 perf_event_open，为指定 i915 引擎创建系统级计数器。"""
+        syscall_number = cls._SYSCALL_NUMBERS.get(platform.machine().lower())
+        if syscall_number is None:
+            raise OSError("当前 CPU 架构不支持 perf_event_open")
+        attributes = _PerfEventAttr(type=event_type, size=ctypes.sizeof(_PerfEventAttr), config=config)
+        libc = ctypes.CDLL(None, use_errno=True)
+        file_descriptor = libc.syscall(
+            syscall_number, ctypes.byref(attributes), -1, 0, -1, 0,
+        )
+        if file_descriptor < 0:
+            error_number = ctypes.get_errno()
+            raise OSError(error_number, os.strerror(error_number))
+        return file_descriptor
+
+    def sample(self):
+        """按相邻样本的忙碌时间增量计算 Intel GPU 最高引擎使用率。"""
+        now_ns = time.monotonic_ns()
+        counters = []
+        for file_descriptor in self.event_fds:
+            raw_value = os.read(file_descriptor, 8)
+            if len(raw_value) != 8:
+                raise OSError("i915 PMU 计数器读取不完整")
+            counters.append(int.from_bytes(raw_value, byteorder=sys.byteorder, signed=False))
+
+        percent = None
+        if self.previous_counters is not None and self.previous_time_ns is not None:
+            elapsed_ns = now_ns - self.previous_time_ns
+            if elapsed_ns > 0:
+                usages = [
+                    max(0, current - previous) * 100 / elapsed_ns
+                    for current, previous in zip(counters, self.previous_counters)
+                ]
+                percent = max(usages) if usages else None
+        self.previous_counters = counters
+        self.previous_time_ns = now_ns
+        return {
+            "name": "Intel GPU",
+            "percent": percent,
+            "dedicated_memory_used_bytes": None,
+            "dedicated_memory_total_bytes": None,
+            "temperature_c": None,
+        }
+
+    def close(self):
+        """关闭已经打开的全部 i915 PMU 文件描述符。"""
+        for file_descriptor in self.event_fds:
+            try:
+                os.close(file_descriptor)
+            except OSError:
+                pass
+        self.event_fds = []
+
+
 class GpuMonitor:
     """使用常驻原生接口每秒采集 GPU，主循环仅从内存读取快照。"""
 
@@ -259,12 +374,12 @@ class GpuMonitor:
 
     @staticmethod
     def _create_backend():
-        """依次创建 NVIDIA 专用后端和当前系统的通用低开销后端。"""
+        """依次创建 NVIDIA 后端以及当前系统的 PDH、sysfs 或 i915 后端。"""
         backend_types = [_NvmlGpuBackend]
         if platform.system() == "Windows":
             backend_types.append(_WindowsPdhGpuBackend)
         elif platform.system() == "Linux":
-            backend_types.append(_LinuxSysfsGpuBackend)
+            backend_types.extend((_LinuxSysfsGpuBackend, _LinuxIntelGpuBackend))
         for backend_type in backend_types:
             try:
                 return backend_type()
@@ -294,4 +409,3 @@ class GpuMonitor:
                     value["temperature_c"] = round(float(value["temperature_c"]), 1)
                 self._result = (value, self._result[1] + 1)
             time.sleep(max(0.05, self.interval - (time.monotonic() - started)))
-
