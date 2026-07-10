@@ -18,7 +18,7 @@ import gc
 import time
 
 from canvas_backend import Canvas, canvas_backend_name
-from config import LCD_STRIP_HEIGHT, LCD_STYLE
+from config import BLACK, LCD_STRIP_HEIGHT, LCD_STYLE
 from styles.style_plugins import create_style, normalize_style_name, release_style
 
 
@@ -117,19 +117,22 @@ class DashboardRenderer:
         return changed
 
     def _clear_screen(self):
-        """按当前屏幕方向分条带写入黑色，避免旋转后残留旧画面。"""
+        """复用画布缓冲分条带清屏，避免旋转时触发内存峰值。"""
         strip_height = min(LCD_STRIP_HEIGHT, self._height)
-        black_strip = bytes(self._width * strip_height * 2)
         y = 0
         while y < self._height:
             height = min(strip_height, self._height - y)
             byte_count = self._width * height * 2
+            # 旋转发生在样式和字体已经加载后的堆内存高峰期。若重新创建整条
+            # 黑色像素数据，RP2040 可能因连续内存不足触发 MemoryError 并复位。
+            self.canvas.set_view(0, y, self._width, height)
+            self.canvas.clear(BLACK)
             self.lcd.show_region(
                 0,
                 y,
                 self._width,
                 height,
-                memoryview(black_strip)[:byte_count],
+                memoryview(self.canvas.buffer)[:byte_count],
             )
             y += height
 
