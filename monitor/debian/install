@@ -4,6 +4,10 @@ pico_client.py usr/lib/pico-monitor
 pico_upgrade.py usr/lib/pico-monitor
 monitor_update.py usr/lib/pico-monitor
 build_info.py usr/lib/pico-monitor
+constants.py usr/lib/pico-monitor
+custom_data.py usr/lib/pico-monitor
+custom_data_runner.py usr/lib/pico-monitor
+json_ack_timing_cache.py usr/lib/pico-monitor
 qbittorrent_monitor.py usr/lib/pico-monitor
 system_monitor.py usr/lib/pico-monitor
 history.py usr/lib/pico-monitor
