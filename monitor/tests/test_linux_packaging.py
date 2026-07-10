@@ -69,6 +69,26 @@ class LinuxPackagingTest(unittest.TestCase):
         )
         self.assertEqual([], missing, "通用安装脚本缺少运行模块：{}".format("、".join(missing)))
 
+    def test_systemd_services_provide_writable_state_directory(self):
+        """确认两种 Linux 服务均把运行数据指向 systemd 可写状态目录。"""
+        service_paths = (
+            MONITOR_ROOT / "debian" / "pico-monitor.service",
+            MONITOR_ROOT / "packaging" / "pico-monitor-generic.service",
+        )
+        for service_path in service_paths:
+            with self.subTest(service=service_path.name):
+                content = service_path.read_text(encoding="utf-8-sig")
+                self.assertIn("StateDirectory=pico-monitor", content)
+                self.assertIn("Environment=HOME=/var/lib/pico-monitor", content)
+                self.assertIn(
+                    "Environment=PICO_MONITOR_DATA_ROOT=/var/lib/pico-monitor",
+                    content,
+                )
+                self.assertIn(
+                    "Environment=PICO_MONITOR_SCREENSHOT_DIR=/var/lib/pico-monitor/screenshot",
+                    content,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -118,6 +118,9 @@ class CustomDataDuplicateError(CustomDataError):
 
 def get_data_root():
     """返回 Monitor 当前用户数据根目录。"""
+    configured_root = os.environ.get("PICO_MONITOR_DATA_ROOT")
+    if configured_root:
+        return Path(configured_root).expanduser()
     if sys.platform == "win32" and os.environ.get("LOCALAPPDATA"):
         return Path(os.environ["LOCALAPPDATA"]) / "PicoMonitor"
     return Path.home() / "PicoMonitor"

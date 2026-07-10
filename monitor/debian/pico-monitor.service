@@ -9,6 +9,11 @@ ExecStart=/usr/bin/pico-monitor --config /etc/pico-monitor.conf
 Restart=always
 RestartSec=3
 User=root
+StateDirectory=pico-monitor
+StateDirectoryMode=0750
+Environment=HOME=/var/lib/pico-monitor
+Environment=PICO_MONITOR_DATA_ROOT=/var/lib/pico-monitor
+Environment=PICO_MONITOR_SCREENSHOT_DIR=/var/lib/pico-monitor/screenshot
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true

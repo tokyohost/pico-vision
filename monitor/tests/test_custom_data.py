@@ -42,6 +42,14 @@ class CustomDataTaskTest(unittest.TestCase):
             "无第三方依赖", encoding="utf-8", newline="\n"
         )
 
+    def test_data_root_prefers_explicit_environment(self):
+        """确认 Linux systemd 服务可把用户数据写入显式状态目录。"""
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
+            os.environ,
+            {"PICO_MONITOR_DATA_ROOT": directory},
+        ):
+            self.assertEqual(Path(directory), custom_data.get_data_root())
+
     def test_plugin_definition_exposes_task_name_and_zh_name(self):
         """确认插件清单的英文标识和中文名会形成稳定任务配置 key。"""
         with tempfile.TemporaryDirectory() as directory:
