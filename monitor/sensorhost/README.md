@@ -17,7 +17,7 @@ GitHub Actions 配置位于 `.github/workflows/release.yml`。
 - 创建 `v*` 标签，例如 `v1.0.0`：自动创建 GitHub Release，并上传 zip 与 SHA256。
 - 手动运行 `workflow_dispatch`：可填写版本号，并选择是否创建 GitHub Release。
 
-发布包名称格式为 `omniwatch-sensor-host-win-x64-<version>.zip`，包含 Windows x64 自包含可执行文件、Python Named Pipe 客户端和 README。
+发布包名称格式为 `omniwatch-sensor-host-win-x64-<version>.zip`，包内可执行文件名称格式为 `OmniWatch.SensorHost-<version>.exe`，包含 Windows x64 自包含可执行文件、Python Named Pipe 客户端和 README。
 
 ## 调试
 

@@ -90,6 +90,50 @@ class SensorHostTaskTest(unittest.TestCase):
         self.assertNotIn("total_bytes", fragment["disks"][0])
         collector.mark_sensor_host_metric_available.assert_any_call("disk_space_percent")
 
+    def test_cpu_frequency_uses_cores_average_clock_sensor(self):
+        """确认 CPU 频率字段缺失时会从 Cores (Average) 时钟传感器补齐。"""
+        collector = SimpleNamespace(
+            sensor_host=mock.Mock(),
+            histories={"cpu": [], "memory": []},
+            history_states={},
+            gpu_history=[],
+            power_history=[],
+            mark_sensor_host_metric_available=mock.Mock(),
+            _disk_task_snapshot={"disk": {}, "disks": [], "physical_disks": []},
+            _cpu_frequency_ghz=mock.Mock(return_value=3.6),
+        )
+        collector.sensor_host.snapshot.return_value = {
+            "cpu": {"percent": 12.3},
+            "hardware": [{
+                "type": "Cpu",
+                "sensors": [{"name": "Cores (Average)", "type": "Clock", "value": 4061, "unit": "MHz"}],
+            }],
+        }
+
+        fragment = SensorHostTask(collector).collect()
+
+        self.assertEqual(fragment["cpu"]["frequency_ghz"], 4.06)
+        collector._cpu_frequency_ghz.assert_not_called()
+
+    def test_cpu_frequency_falls_back_to_legacy_collector(self):
+        """确认 SensorHost 传感器也缺失时会降级执行旧 CPU 速度采集。"""
+        collector = SimpleNamespace(
+            sensor_host=mock.Mock(),
+            histories={"cpu": [], "memory": []},
+            history_states={},
+            gpu_history=[],
+            power_history=[],
+            mark_sensor_host_metric_available=mock.Mock(),
+            _disk_task_snapshot={"disk": {}, "disks": [], "physical_disks": []},
+            _cpu_frequency_ghz=mock.Mock(return_value=3.6),
+        )
+        collector.sensor_host.snapshot.return_value = {"cpu": {"percent": 12.3}, "hardware": []}
+
+        fragment = SensorHostTask(collector).collect()
+
+        self.assertEqual(fragment["cpu"]["frequency_ghz"], 3.6)
+        collector._cpu_frequency_ghz.assert_called_once_with()
+
     def test_task_declares_windows_only_platform(self):
         """确认 SensorHost 任务只通过平台声明参与 Windows 调度。"""
         self.assertTrue(SensorHostTask.supports_current_platform("Windows"))

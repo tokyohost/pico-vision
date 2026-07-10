@@ -66,6 +66,12 @@ class SensorHostTask(CollectionTask):
         """把 SensorHost CPU 数据转换为完整 CPU 快照片段。"""
         percent = self._number(cpu.get("percent"))
         frequency_ghz = self._number(cpu.get("frequency_ghz"))
+        if frequency_ghz is None:
+            frequency_ghz = self._cpu_frequency_from_hardware(hardware)
+        if frequency_ghz is None:
+            frequency_reader = getattr(self.collector, "_cpu_frequency_ghz", None)
+            if frequency_reader is not None:
+                frequency_ghz = self._number(frequency_reader())
         temperature_c = self._number(cpu.get("temperature_c"))
         if temperature_c is None:
             temperature_c = self._cpu_temperature_from_hardware(hardware)
@@ -234,6 +240,28 @@ class SensorHostTask(CollectionTask):
                 if name == preferred:
                     return value
         return candidates[0][1] if candidates else None
+
+    @classmethod
+    def _cpu_frequency_from_hardware(cls, hardware):
+        """从 SensorHost 原始硬件传感器中兜底提取 CPU MHz 并换算为 GHz。"""
+        preferred_names = ("Cores (Average)", "CPU Core")
+        candidates = []
+        for item in hardware:
+            hardware_type = str(item.get("type") or "")
+            for sensor in item.get("sensors") or ():
+                if str(sensor.get("type") or "") != "Clock":
+                    continue
+                name = str(sensor.get("name") or "")
+                value = cls._number(sensor.get("value"))
+                if value is None or value <= 0:
+                    continue
+                if hardware_type == "Cpu" or name in preferred_names or name.startswith("CPU"):
+                    candidates.append((name, value))
+        for preferred in preferred_names:
+            values = [value for name, value in candidates if name == preferred or preferred in name]
+            if values:
+                return round(sum(values) / len(values) / 1000, 2)
+        return round(candidates[0][1] / 1000, 2) if candidates else None
 
     def _append_disk_rate_history(self, item):
         """维护 SensorHost 磁盘读写速率历史，保证显示端趋势字段完整。"""
