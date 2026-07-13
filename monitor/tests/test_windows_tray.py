@@ -26,6 +26,8 @@ from style_validator import ValidatedStyle
 
 
 class WindowsTraySettingsTest(unittest.TestCase):
+    """验证 Windows 托盘配置、窗口与后台进程控制行为。"""
+
     def setUp(self):
         """创建测试使用的临时目录。"""
         self.temporary_directory = tempfile.TemporaryDirectory()
@@ -237,6 +239,7 @@ class WindowsTraySettingsTest(unittest.TestCase):
 
     @mock.patch("win.tray.threading.Thread")
     def test_settings_window_can_only_be_opened_once(self, thread_class):
+        """确认设置窗口已打开时只请求恢复，不会重复创建线程。"""
         application = WindowsTrayApplication.__new__(WindowsTrayApplication)
         application.settings_window_lock = threading.Lock()
         application.settings_window_open = False
@@ -349,6 +352,31 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertEqual("--pico-info", command[-1])
         self.assertEqual("COM9", command[-2])
 
+    def test_device_probe_command_can_override_saved_websocket_url(self):
+        """确认局域网候选地址会覆盖已保存地址，且不会产生重复参数。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application._worker_command = mock.Mock(return_value=[
+            "pico-monitor.exe", "--worker", "--websocket-url", "ws://192.168.1.8:8765/pv1",
+        ])
+
+        command = application._device_probe_command("ws://192.168.1.20:8765/pv1")
+
+        self.assertEqual(1, command.count("--websocket-url"))
+        self.assertIn("ws://192.168.1.20:8765/pv1", command)
+        self.assertNotIn("ws://192.168.1.8:8765/pv1", command)
+
+    def test_websocket_url_is_persisted_and_applied_to_worker(self):
+        """确认发现的 WebSocket 地址保存后会在下次启动传给工作进程。"""
+        path = Path(self.temporary_directory.name) / "settings.json"
+        store = TraySettingsStore(path)
+        settings = dict(DEFAULT_SETTINGS, websocket_url="ws://192.168.1.20:8765/pv1")
+
+        store.save(settings)
+        arguments = apply_worker_arguments(["--worker"], store.load())
+
+        index = arguments.index("--websocket-url")
+        self.assertEqual("ws://192.168.1.20:8765/pv1", arguments[index + 1])
+
     def test_device_connection_snapshot_is_saved_and_copied(self):
         """确认设备连接状态可供新打开的设备管理窗口安全读取。"""
         application = WindowsTrayApplication.__new__(WindowsTrayApplication)
@@ -363,6 +391,31 @@ class WindowsTraySettingsTest(unittest.TestCase):
 
         self.assertTrue(application._get_device_connection()["connected"])
         self.assertEqual(connection, application.device_connection_messages.get_nowait())
+
+    def test_device_connection_change_produces_success_and_failure_notifications(self):
+        """确认连接成功和随后断开各产生一次托盘通知。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.device_connection_lock = threading.Lock()
+        application.current_device_connection = {"connected": None}
+        application.device_connection_messages = queue.Queue()
+        application.icon = mock.Mock()
+
+        application._update_device_connection({
+            "connected": True,
+            "address": "ws://192.168.1.20:8765/pv1",
+        })
+        application._update_device_connection({
+            "connected": False,
+            "message": "连接超时",
+        })
+        application._update_device_connection({
+            "connected": False,
+            "message": "重复失败",
+        })
+
+        self.assertEqual(2, application.icon.notify.call_count)
+        self.assertIn("设备连接成功", application.icon.notify.call_args_list[0].args[0])
+        self.assertIn("设备连接已断开", application.icon.notify.call_args_list[1].args[0])
 
     @mock.patch("style_validator.StyleFileValidator.validate")
     def test_custom_style_upload_rejects_existing_filename(self, validate):
@@ -440,6 +493,7 @@ class WindowsTraySettingsTest(unittest.TestCase):
         application.worker_process.stdin.flush.assert_called_once_with()
 
     def test_every_style_has_a_chinese_label(self):
+        """确认每个内置样式都提供规范中文显示名称。"""
         for name in STYLE_NAMES:
             self.assertNotEqual(STYLE_NAMES[name], name)
             self.assertIn(name, style_label(name))
@@ -484,6 +538,7 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertIsNone(application.worker_process)
 
     def test_managed_arguments_are_replaced_without_losing_worker_flag(self):
+        """确认托盘参数覆盖配置时保留后台工作模式标志。"""
         settings = dict(
             DEFAULT_SETTINGS,
             lcd_style="simple",
@@ -612,6 +667,7 @@ class WindowsTraySettingsTest(unittest.TestCase):
         tk_class.return_value.destroy.assert_called_once_with()
 
     def test_first_run_imports_existing_arguments(self):
+        """确认首次运行会把已有命令行配置迁移到托盘配置。"""
         settings = settings_from_arguments([
             "--lcd-style", "diskv4", "--interval", "1.5",
             "--qbittorrent-enabled",
@@ -625,6 +681,7 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertTrue(settings_from_arguments(["--dev"])["dev"])
 
     def test_store_ignores_unknown_fields_and_keeps_defaults(self):
+        """确认配置读取忽略未知字段，并为缺失字段补齐默认值。"""
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "settings.json"
             path.write_text(json.dumps({"lcd_style": "simple", "unknown": 1}), encoding="utf-8")
@@ -632,6 +689,39 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertEqual(settings["lcd_style"], "simple")
         self.assertEqual(settings["ping_target"], DEFAULT_SETTINGS["ping_target"])
         self.assertNotIn("unknown", settings)
+
+    def test_store_loads_and_normalizes_lan_probe_settings(self):
+        """确认局域网探测参数可由配置文件提供，并规范化协议路径。"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.json"
+            path.write_text(json.dumps({
+                "lan_probe_port": "9876",
+                "lan_probe_path": "device",
+                "lan_probe_timeout": "0.8",
+                "lan_probe_max_workers": "32",
+            }), encoding="utf-8")
+            settings = TraySettingsStore(path).load()
+        self.assertEqual(settings["lan_probe_port"], 9876)
+        self.assertEqual(settings["lan_probe_path"], "/device")
+        self.assertEqual(settings["lan_probe_timeout"], 0.8)
+        self.assertEqual(settings["lan_probe_max_workers"], 32)
+
+    def test_store_repairs_invalid_lan_probe_settings(self):
+        """确认无效局域网探测参数会恢复为安全默认值。"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.json"
+            path.write_text(json.dumps({
+                "lan_probe_port": 70000,
+                "lan_probe_path": "",
+                "lan_probe_timeout": 0,
+                "lan_probe_max_workers": -1,
+            }), encoding="utf-8")
+            settings = TraySettingsStore(path).load()
+        for name in (
+                "lan_probe_port", "lan_probe_path", "lan_probe_timeout",
+                "lan_probe_max_workers",
+        ):
+            self.assertEqual(settings[name], DEFAULT_SETTINGS[name])
 
     def test_store_persists_pico_style_catalog(self):
         """确认设备自定义样式与完整内置样式清单合并持久化。"""

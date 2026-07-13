@@ -40,9 +40,22 @@ class WorkerControllerMixin:
             return [sys.executable, *arguments]
         return [sys.executable, str(MONITOR_DIRECTORY / "pico_monitor.py"), *arguments]
 
-    def _device_probe_command(self):
-        """构造仅执行一次 Pico 设备探测的子进程命令。"""
-        return [argument for argument in self._worker_command() if argument != "--worker"] + ["--pico-info"]
+    def _device_probe_command(self, websocket_url=None):
+        """构造单次设备探测命令，并可覆盖或清除已保存的 WebSocket 地址。"""
+        command = [argument for argument in self._worker_command() if argument != "--worker"]
+        if websocket_url is not None:
+            filtered = []
+            index = 0
+            while index < len(command):
+                if command[index] == "--websocket-url":
+                    index += 2
+                    continue
+                filtered.append(command[index])
+                index += 1
+            command = filtered
+            if websocket_url:
+                command.extend(("--websocket-url", str(websocket_url)))
+        return command + ["--pico-info"]
 
     def _start_worker(self):
         """启动后台监控进程，并创建日志收集线程。"""
@@ -194,20 +207,28 @@ class WorkerControllerMixin:
                         line, "SCREENSHOT_RESULT:", "设备返回了无效截图响应",
                     )
                     self._handle_screenshot_result(result)
-                if "[串口关闭]" in line or "监控通信异常：" in line:
-                    self._update_device_connection({"connected": False})
+                if "[串口关闭]" in line:
+                    self._update_device_connection({"connected": None}, announce=False)
+                if "监控通信异常：" in line:
+                    detail = line.split("监控通信异常：", 1)[1].split("；准备重新连接", 1)[0].strip()
+                    self._update_device_connection({
+                        "connected": False,
+                        "message": detail,
+                    })
                 connection = re.search(
-                    r"\[串口连接\].*握手成功：开发板=(.*)，LCD=(.*)，屏幕方案=(.*)，固件版本=(.*)，分辨率=(.*)$",
+                    r"\[(串口|WebSocket)连接\]\s+(.+?)\s+握手成功：开发板=(.*)，LCD=(.*)，屏幕方案=(.*)，固件版本=(.*)，分辨率=(.*)$",
                     line.strip(),
                 )
                 if connection:
                     self._update_device_connection({
                         "connected": True,
-                        "board_model": connection.group(1),
-                        "lcd_device_type": connection.group(2),
-                        "screen_color_profile": connection.group(3),
-                        "firmware_version": connection.group(4),
-                        "screen_resolution": connection.group(5),
+                        "transport": connection.group(1),
+                        "address": connection.group(2),
+                        "board_model": connection.group(3),
+                        "lcd_device_type": connection.group(4),
+                        "screen_color_profile": connection.group(5),
+                        "firmware_version": connection.group(6),
+                        "screen_resolution": connection.group(7),
                     })
         return_code = process.wait()
         if not self.stopping.is_set() and process is self.worker_process and self.icon is not None:
@@ -227,12 +248,25 @@ class WorkerControllerMixin:
         log_file.truncate()
         log_file.seek(0, os.SEEK_END)
 
-    def _update_device_connection(self, connection):
-        """保存最新设备连接快照，并通知已打开的设备管理窗口。"""
+    def _update_device_connection(self, connection, announce=True):
+        """保存设备连接快照，并在状态变化时同步窗口和托盘通知。"""
         snapshot = dict(connection)
         with self.device_connection_lock:
+            previous = dict(self.current_device_connection)
             self.current_device_connection = snapshot
         self.device_connection_messages.put(snapshot)
+        if not announce or previous.get("connected") == snapshot.get("connected"):
+            return
+        icon = getattr(self, "icon", None)
+        if icon is None:
+            return
+        if snapshot.get("connected"):
+            target = snapshot.get("address") or snapshot.get("board_model") or "OmniWatch 设备"
+            icon.notify("设备连接成功：{}".format(target), APPLICATION_NAME)
+            return
+        detail = snapshot.get("message") or "未找到可用设备"
+        title = "设备连接已断开" if previous.get("connected") else "设备连接失败"
+        icon.notify("{}：{}".format(title, detail), APPLICATION_NAME)
 
     def _handle_screenshot_result(self, result):
         """提示截图结果，并在成功时打开截图目录。"""

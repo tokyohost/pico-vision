@@ -8,6 +8,7 @@ import threading
 from datetime import datetime
 
 from build_info import GITHUB_REPOSITORY
+from net import LanWebSocketScanner
 from windows_update import WindowsReleaseUpdater
 
 from ..constants import APPLICATION_NAME
@@ -392,7 +393,7 @@ class DeviceWindowMixin:
             status.set("设备已连接")
 
         def perform_probe():
-            """暂停常驻监控，执行单次设备探测并在结束后恢复监控。"""
+            """暂停常驻监控，并发扫描局域网后执行 PV1 设备身份确认。"""
             worker_process = self.worker_process
             if worker_process is not None and worker_process.poll() is None:
                 messages.put(("log", "检测到当前设备连接，正在断开……\n"))
@@ -401,27 +402,77 @@ class DeviceWindowMixin:
             else:
                 messages.put(("log", "当前没有已连接设备，开始探测。\n"))
             self.worker_process = None
-            process = None
             try:
-                process = subprocess.Popen(
-                    self._device_probe_command(),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    creationflags=0x08000000,
-                    env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PYTHONUNBUFFERED="1"),
+                scanner = LanWebSocketScanner(
+                    port=self.settings["lan_probe_port"],
+                    path=self.settings["lan_probe_path"],
+                    timeout=self.settings["lan_probe_timeout"],
+                    max_workers=self.settings["lan_probe_max_workers"],
                 )
-                for line in process.stdout:
-                    messages.put(("log", line))
-                messages.put(("done", process.wait()))
-            except OSError as error:
+                networks = scanner.local_networks()
+                messages.put((
+                    "log",
+                    "正在扫描局域网网段：{}\n".format(
+                        "、".join(str(network) for network in networks) or "未发现可用 IPv4 网段"
+                    ),
+                ))
+                candidates = scanner.scan()
+                messages.put((
+                    "log",
+                    "WebSocket 协议握手完成，发现 {} 个候选服务。\n".format(len(candidates)),
+                ))
+                successful_url = None
+                for candidate in candidates:
+                    messages.put((
+                        "log",
+                        "正在确认 OmniWatch 设备：{}（WebSocket 握手 {:.0f} 毫秒）\n".format(
+                            candidate.url,
+                            candidate.elapsed_ms,
+                        ),
+                    ))
+                    if run_probe_process(self._device_probe_command(candidate.url)) == 0:
+                        successful_url = candidate.url
+                        break
+                if successful_url is not None:
+                    self.settings["websocket_url"] = successful_url
+                    self.settings_store.save(self.settings)
+                    messages.put(("log", "已保存连接地址：{}，下次启动将自动连接。\n".format(successful_url)))
+                    messages.put(("done", 0))
+                    return
+                messages.put(("log", "局域网未发现有效设备，继续探测 USB CDC。\n"))
+                result = run_probe_process(self._device_probe_command(""))
+                if result == 0:
+                    self.settings["websocket_url"] = ""
+                    self.settings_store.save(self.settings)
+                messages.put(("done", result))
+            except Exception as error:
+                LOGGER.exception("主动设备探测失败：%s", error)
                 messages.put(("log", "启动设备探测失败：{}\n".format(error)))
                 messages.put(("done", 1))
             finally:
                 if not self.stopping.is_set():
                     self._start_worker()
+
+        def run_probe_process(command):
+            """运行单次设备信息查询，并把实时输出转发到窗口日志。"""
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=0x08000000,
+                env=dict(
+                    os.environ,
+                    PYTHONIOENCODING="utf-8",
+                    PYTHONUTF8="1",
+                    PYTHONUNBUFFERED="1",
+                ),
+            )
+            for line in process.stdout:
+                messages.put(("log", line))
+            return process.wait()
 
         def start_probe():
             """启动主动设备探测线程，避免阻塞设备管理窗口。"""

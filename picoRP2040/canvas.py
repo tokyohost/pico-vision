@@ -72,6 +72,9 @@ class Canvas:
             "screen_2inch": FONT_SCREEN_2INCH,
             "screen_2inch_compact": FONT_SCREEN_2INCH_COMPACT,
         }
+        if normalized_name == "fusion_pixel_8px":
+            from font_fusion_pixel import FUSION_PIXEL_8PX
+            fonts[normalized_name] = FUSION_PIXEL_8PX
         if normalized_name not in fonts:
             raise ValueError("未知点阵字体：{}".format(normalized_name))
         if normalized_name != self._font_name:
@@ -464,9 +467,9 @@ class Canvas:
             return
         cursor_x = x
         for character in value:
-            columns = self._font.get(character, self._font["?"])
+            columns = self._font_glyph(character)
             for column_index, bits in enumerate(columns):
-                for row_index in range(7):
+                for row_index in range(self._font_height()):
                     if bits & (1 << row_index):
                         self.fill_rect(
                             cursor_x + column_index * scale,
@@ -476,7 +479,7 @@ class Canvas:
             cursor_x += self._character_advance(character, scale)
 
     def _blit_cached_text(self, x, y, value, color, scale):
-        """Blit a bounded, whole-string bitmap cache for non-native text."""
+        """为非原生字体复制容量受限的整段文字位图缓存。"""
         if len(value) < 2 or MAX_TEXT_CACHE_BYTES <= 0:
             if scale == 1:
                 self._blit_font_text(x, y, value, color)
@@ -490,7 +493,7 @@ class Canvas:
             bitmap, _ = cached
         else:
             width = self.text_width(value, scale)
-            height = 7 * scale
+            height = self._font_height() * scale
             size = ((width + 7) // 8) * height
             seen_count = self._text_seen.get(key, 0) + 1
             if (
@@ -554,12 +557,25 @@ class Canvas:
 
     def _character_advance(self, character, scale=1):
         """返回单个字符的水平步进，宽字形会自动扩展间距。"""
-        columns = self._font.get(character, self._font["?"])
+        advance = getattr(self._font, "advance", None)
+        if callable(advance):
+            return advance(character) * scale
+        columns = self._font_glyph(character)
         if self._font_name == "screen_2inch_compact":
             return (len(columns) + 1) * scale
         if scale == 1 and self._font_name != "native":
             return max(8, len(columns) + 1)
         return max(6, len(columns) + 1) * scale
+
+    def _font_height(self):
+        """返回当前字体的字形画布高度。"""
+        return int(getattr(self._font, "height", 7))
+
+    def _font_glyph(self, character):
+        """读取当前字体字形，并在字典字体缺字时回退为问号。"""
+        if hasattr(self._font, "glyph"):
+            return self._font.glyph(character)
+        return self._font.get(character, self._font["?"])
 
     def _blit_font_text(self, x, y, value, color):
         """按照原生字符间距绘制当前样式选择的点阵字体。"""
@@ -603,9 +619,9 @@ class Canvas:
             # 重新生成大量仍会重复使用的字形。
             oldest_key = next(iter(self._glyph_cache))
             del self._glyph_cache[oldest_key]
-        columns = self._font.get(character, self._font["?"])
+        columns = self._font_glyph(character)
         width = max(6, len(columns)) * scale
-        height = 7 * scale
+        height = self._font_height() * scale
         glyph_buffer = bytearray(((width + 7) // 8) * height)
         glyph = framebuf.FrameBuffer(
             glyph_buffer,
@@ -615,7 +631,7 @@ class Canvas:
         )
         glyph.fill(0)
         for column_index, bits in enumerate(columns):
-            for row_index in range(7):
+            for row_index in range(self._font_height()):
                 if bits & (1 << row_index):
                     glyph.fill_rect(
                         column_index * scale,

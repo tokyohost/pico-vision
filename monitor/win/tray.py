@@ -110,7 +110,7 @@ class WindowsTrayApplication(
         self.device_management_messages = queue.Queue()
         self.device_connection_messages = queue.Queue()
         self.device_connection_lock = threading.Lock()
-        self.current_device_connection = {"connected": False}
+        self.current_device_connection = {"connected": None}
         self.custom_style_messages = queue.Queue()
         self.custom_style_upload_messages = queue.Queue()
         self.custom_style_upload_logs = queue.Queue()

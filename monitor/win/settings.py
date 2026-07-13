@@ -33,11 +33,16 @@ COLLECTION_TASK_ZH_NAMES = system_task_zh_names()
 COLLECTION_TASK_ZH_NAMES.update(custom_data_task_zh_names())
 DEFAULT_SETTINGS = {
     "port": "",
+    "websocket_url": "",
     "ping_target": "www.baidu.com",
     "interval": 0.5,
     "adaptive_transmit": True,
     "reconnect_interval": 3.0,
     "serial_probe_interval": 3.0,
+    "lan_probe_port": 8765,
+    "lan_probe_path": "/pv1",
+    "lan_probe_timeout": 0.3,
+    "lan_probe_max_workers": 256,
     "collection_task_intervals": dict(DEFAULT_COLLECTION_TASK_INTERVALS),
     "screen_rotation": 0,
     "lcd_brightness": 100,
@@ -54,6 +59,7 @@ DEFAULT_SETTINGS = {
 }
 ARGUMENT_NAMES = {
     "--port": "port",
+    "--websocket-url": "websocket_url",
     "--ping-target": "ping_target",
     "--interval": "interval",
     "--reconnect-interval": "reconnect_interval",
@@ -129,6 +135,7 @@ class TraySettingsStore:
         self.path = Path(path)
 
     def load(self):
+        """读取托盘 JSON 配置，并对缺失或无效字段执行默认值修复。"""
         settings = dict(DEFAULT_SETTINGS)
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
@@ -147,6 +154,30 @@ class TraySettingsStore:
         if not 1 <= settings["lcd_brightness"] <= 100:
             settings["lcd_brightness"] = DEFAULT_SETTINGS["lcd_brightness"]
         settings["adaptive_transmit"] = bool(settings.get("adaptive_transmit", True))
+        try:
+            settings["lan_probe_port"] = int(settings["lan_probe_port"])
+            if not 1 <= settings["lan_probe_port"] <= 65535:
+                raise ValueError
+        except (TypeError, ValueError):
+            settings["lan_probe_port"] = DEFAULT_SETTINGS["lan_probe_port"]
+        lan_probe_path = str(settings.get("lan_probe_path") or "").strip()
+        settings["lan_probe_path"] = (
+            "/" + lan_probe_path.lstrip("/")
+            if lan_probe_path
+            else DEFAULT_SETTINGS["lan_probe_path"]
+        )
+        try:
+            settings["lan_probe_timeout"] = float(settings["lan_probe_timeout"])
+            if settings["lan_probe_timeout"] <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            settings["lan_probe_timeout"] = DEFAULT_SETTINGS["lan_probe_timeout"]
+        try:
+            settings["lan_probe_max_workers"] = int(settings["lan_probe_max_workers"])
+            if settings["lan_probe_max_workers"] <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            settings["lan_probe_max_workers"] = DEFAULT_SETTINGS["lan_probe_max_workers"]
         return settings
 
     def save(self, settings):
@@ -176,7 +207,10 @@ def apply_worker_arguments(arguments, settings):
         index += 1
     for option, name in ARGUMENT_NAMES.items():
         value = settings[name]
-        if name in ("port", "qbittorrent_address", "qbittorrent_username", "qbittorrent_password") and not value:
+        if name in (
+            "port", "websocket_url", "qbittorrent_address",
+            "qbittorrent_username", "qbittorrent_password",
+        ) and not value:
             continue
         if name == "collection_task_intervals":
             value = json.dumps(normalize_collection_task_intervals(value), ensure_ascii=False)

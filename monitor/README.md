@@ -81,6 +81,8 @@ qBittorrent 也可通过环境变量 `PICO_MONITOR_QBITTORRENT_ENABLED`、`PICO_
 
 WebSocket 地址也可通过 `PICO_MONITOR_WEBSOCKET_URL` 配置。首次配网时先使用 USB CDC 连接，通过 `PicoJsonClient.request_wifi_list()` 发送 `wifi.list` 搜索网络，再通过 `PicoJsonClient.set_wifi(ssid, password)` 发送 `wifi.set`。命令使用结构化 `COMMAND` 帧返回扫描结果、连接成功详情或具体失败原因；配网成功后关闭 USB 数据串口，再以设备返回的 IP 启动 WebSocket 模式。
 
+Windows 托盘的“设备管理 → 主动探测”会枚举所有启用网卡的 IPv4 局域网地址，以线程池探测 `8765` 端口并校验 `/pv1` 的标准 WebSocket 升级握手。候选服务还会经过 PV1 设备握手确认；确认成功后，连接地址保存到当前用户的 `settings.json`，以后启动时自动连接。连接成功、首次连接失败和已连接后断开都会产生托盘通知，相同失败状态不会重复通知。
+
 ## 构建 Windows 安装包
 
 在 Windows 命令提示符执行：

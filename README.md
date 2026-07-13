@@ -31,6 +31,7 @@
 - `config.py`：开发板、屏幕方案、周期和协议配置。
 - `color_manager.py`：按屏幕型号管理反色模式和 RGB/BGR 颜色顺序。
 - `board_manager.py`：注册开发板硬件档案并隔离不同板载 LED 类型。
+- `fonts/`：ESP32-S3 按需读取的 Fusion Pixel 中文点阵字库及其 OFL 授权。
 
 Pico 握手会向 Monitor 返回当前开发板型号、屏幕色彩方案、运行固件版本和 `net` 状态；USB 模式返回 `mode=usb`，Wi-Fi 模式还返回 SSID、IP、网关、RSSI、WebSocket 端口与路径。源码
 直接部署时版本为 `development`，发布升级包会自动写入对应的发布版本。
@@ -41,6 +42,11 @@ Pico 握手会向 Monitor 返回当前开发板型号、屏幕色彩方案、运
 BOARD_MODEL = "ESP32-S3"
 WIFI_ENABLED = True
 ```
+
+ESP32-S3 模式默认使用 `ESP32_FONT_NAME = "fusion_pixel_8px"`，支持 Fusion Pixel
+8px 比例简体中文字形。字库保存在闪存中并按 Unicode 码点二分读取，不会整体载入
+内存。将该配置改为 `native`、`screen_2inch` 或 `screen_2inch_compact` 可恢复原字体。
+RP2040 不会自动加载该中文字库。
 
 仅使用 USB CDC 时把 `WIFI_ENABLED` 设为 `False`，固件不会初始化无线网卡或 WebSocket 服务。支持的板型包括：
 

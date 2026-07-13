@@ -79,6 +79,9 @@ class CanvasC(PythonCanvas):
 
     def text(self, x, y, value, color, scale=1):
         """通过单次 C 调用绘制放大文字或自定义字体文字。"""
+        if self._font_name == "fusion_pixel_8px":
+            PythonCanvas.text(self, x, y, value, color, scale)
+            return
         if self._font_name == "native" and scale == 1:
             super().text(x, y, value, color, scale)
             return

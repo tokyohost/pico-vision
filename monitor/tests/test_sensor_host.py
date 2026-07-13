@@ -41,7 +41,10 @@ class SensorHostTaskTest(unittest.TestCase):
         )
         collector.sensor_host.snapshot.return_value = {
             "cpu": {"percent": 12.3, "frequency_ghz": 4.2, "temperature_c": 55.0},
-            "memory": {"percent": 67.8, "used_bytes": 600, "available_bytes": 400},
+            "memory": {
+                "physical": {"percent": 67.8, "used_bytes": 600, "available_bytes": 400},
+                "virtual": {"percent": 75.0, "used_bytes": 1500, "available_bytes": 500},
+            },
             "gpu": {
                 "name": "GPU",
                 "percent": 45,
@@ -57,6 +60,7 @@ class SensorHostTaskTest(unittest.TestCase):
 
         self.assertEqual(fragment["cpu"]["temperature_c"], 55.0)
         self.assertEqual(fragment["memory"]["total_bytes"], 1000)
+        self.assertEqual(fragment["memory"]["used_bytes"], 600)
         self.assertEqual(fragment["gpu"]["source"], "sensor_host")
         self.assertEqual(fragment["power"]["watts"], 88.8)
         self.assertEqual(fragment["disks"][0]["temperature_c"], 40.0)

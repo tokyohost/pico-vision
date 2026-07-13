@@ -24,8 +24,19 @@ import zipfile
 
 
 CONFIG_ASSIGNMENT_PATTERN = r"(?m)^{}\s*=\s*[\"'][^\"']*[\"']\s*$"
+CONFIG_BOOLEAN_ASSIGNMENT_PATTERN = r"(?m)^{}\s*=\s*(?:True|False)\s*$"
 CONFIG_VALUE_PATTERN = re.compile(r"^[a-z0-9_.-]+$")
 VERSION_VALUE_PATTERN = re.compile(r"^[0-9A-Za-z.+_-]+$")
+FIRMWARE_FILE_SUFFIXES = frozenset((".py", ".fpf", ".txt"))
+ESP32_BOARD_MODELS = frozenset(("esp32-s3",))
+ESP32_ONLY_FILES = frozenset((
+    "command/wifi_list.py",
+    "command/wifi_set.py",
+    "font_fusion_pixel.py",
+    "net/websocket.py",
+    "net/wifi.py",
+))
+ESP32_ONLY_PREFIXES = ("fonts/",)
 
 
 def load_lcd_profiles(source_directory):
@@ -82,6 +93,15 @@ def configure_firmware(
             "BOARD_MODEL": board_model,
             "LCD_DEVICE_TYPE": lcd_device_type,
         })
+        wifi_enabled = str(board_model).lower() in ESP32_BOARD_MODELS
+        boolean_pattern = CONFIG_BOOLEAN_ASSIGNMENT_PATTERN.format("WIFI_ENABLED")
+        text, count = re.subn(
+            boolean_pattern,
+            "WIFI_ENABLED = {}".format(wifi_enabled),
+            text,
+        )
+        if count != 1:
+            raise ValueError("config.py 中 WIFI_ENABLED 配置项数量异常：{}".format(count))
     if firmware_version:
         if not VERSION_VALUE_PATTERN.fullmatch(firmware_version):
             raise ValueError("固件版本包含非法字符：{}".format(firmware_version))
@@ -100,10 +120,19 @@ def collect_files(
     source_directory, board_model=None, lcd_device_type=None,
     firmware_version=None, screen_color_profile=None,
 ):
-    """收集固件目录内允许发布的 Python 文件并生成清单。"""
+    """收集固件源码和字体资源并生成完整性校验清单。"""
     files = []
-    for path in sorted(source_directory.rglob("*.py")):
+    for path in sorted(
+        path for path in source_directory.rglob("*")
+        if path.is_file() and path.suffix.lower() in FIRMWARE_FILE_SUFFIXES
+    ):
         relative = path.relative_to(source_directory).as_posix()
+        is_esp32_target = str(board_model or "").lower() in ESP32_BOARD_MODELS
+        if not is_esp32_target and (
+            relative in ESP32_ONLY_FILES
+            or relative.startswith(ESP32_ONLY_PREFIXES)
+        ):
+            continue
         data = path.read_bytes()
         if relative == "config.py":
             data = configure_firmware(
@@ -139,7 +168,7 @@ def build_package(
         screen_color_profile,
     )
     if not files:
-        raise ValueError("Pico 固件目录内没有 Python 文件")
+        raise ValueError("Pico 固件目录内没有可发布文件")
     manifest = {"format": 1, "version": version, "files": files}
     if board_model:
         manifest["target"] = {

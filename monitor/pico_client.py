@@ -220,7 +220,16 @@ class PicoJsonClient:
                 raise RuntimeError("WebSocket 未返回有效设备标识")
             self.serial = device
             self._start_cdc_framework()
-            LOGGER.info("[WebSocket 连接] %s 握手成功", self.websocket_url)
+            LOGGER.info(
+                "[WebSocket 连接] %s 握手成功：开发板=%s，LCD=%s，屏幕方案=%s，固件版本=%s，分辨率=%sx%s",
+                self.websocket_url,
+                self.board_model or "未知",
+                self.lcd_device_type or "未知",
+                self.screen_color_profile or "未知",
+                self.firmware_version or "未知",
+                self.screen_width or "未知",
+                self.screen_height or "未知",
+            )
         except Exception:
             if device is not None:
                 device.close()

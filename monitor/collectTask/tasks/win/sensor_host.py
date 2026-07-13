@@ -93,9 +93,11 @@ class SensorHostTask(CollectionTask):
 
     def _memory_fragment(self, memory):
         """把 SensorHost 内存数据转换为 monitor 内存快照片段。"""
-        percent = self._number(memory.get("percent"))
-        used_bytes = self._integer(memory.get("used_bytes"))
-        available_bytes = self._integer(memory.get("available_bytes"))
+        # 新版 SensorHost 明确拆分物理内存与虚拟内存；旧版扁平结构仅用于兼容升级过程。
+        physical_memory = memory.get("physical") or memory
+        percent = self._number(physical_memory.get("percent"))
+        used_bytes = self._integer(physical_memory.get("used_bytes"))
+        available_bytes = self._integer(physical_memory.get("available_bytes"))
         total_bytes = used_bytes + available_bytes if used_bytes is not None and available_bytes is not None else None
         if percent is None and used_bytes is None and total_bytes is None:
             return None
