@@ -24,6 +24,7 @@ jobs:
         board_model:
           - rp2040_usb
           - rp2040_typec
+          - esp32-s3
         lcd_device_type:
           - st7789-2inch-8pin-a
           - st7789-2.4inch-10pin-a
