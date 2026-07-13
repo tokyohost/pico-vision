@@ -11,7 +11,7 @@
 
 
 
-"""启动 RP2040 状态灯、JSON 接收和 LCD 异步刷新服务。"""
+"""启动状态灯、多传输 JSON 接收和 LCD 异步刷新服务。"""
 
 
 import gc
@@ -20,6 +20,8 @@ import time
 
 from config import (
     BOARD_MODEL,
+    GC_ALLOCATION_THRESHOLD,
+    LCD_BOOT_PRELOAD_STYLES,
     LCD_STYLE,
     MONITOR_TIMEOUT_INTERVALS,
     RENDER_INTERVAL_MS,
@@ -35,11 +37,36 @@ def memory_usage():
     return allocated, allocated + free
 
 
-class Application:
-    """以单核协作式循环编排 LED、USB JSON 与 LCD 刷新。"""
+def collect_memory_error_ram_status():
+    """记录内存异常现场，并返回垃圾回收前后的 RAM 使用情况。"""
+    allocated_before_gc = gc.mem_alloc()
+    free_before_gc = gc.mem_free()
+    total = allocated_before_gc + free_before_gc
+    gc.collect()
+    return (
+        allocated_before_gc,
+        free_before_gc,
+        gc.mem_free(),
+        total,
+    )
 
-    def __init__(self, protocol):
+
+def configure_garbage_collection():
+    """启用按累计分配量触发的主动垃圾回收，减缓堆碎片形成。"""
+    gc.collect()
+    threshold = getattr(gc, "threshold", None)
+    if callable(threshold):
+        threshold(GC_ALLOCATION_THRESHOLD)
+        return GC_ALLOCATION_THRESHOLD
+    return None
+
+
+class Application:
+    """以单核协作式循环编排 LED、JSON 传输与 LCD 刷新。"""
+
+    def __init__(self, protocol, transport=None):
         """按通信、LED、LCD 的顺序初始化各组件。"""
+        gc_threshold = configure_garbage_collection()
         from dashboard import DashboardRenderer
         from data_receiver import DataReceiver, SnapshotCache
         from lcd import create_lcd_device
@@ -48,7 +75,12 @@ class Application:
         from led import create_led_controller
 
         self._protocol = protocol
+        self._transport = transport
         self._protocol.write(b"BOOT:PROTOCOL_READY\n")
+        if gc_threshold is not None:
+            self._protocol.write(
+                "BOOT:GC_THRESHOLD:{}\n".format(gc_threshold).encode()
+            )
         self._board_profile = get_board_profile(BOARD_MODEL)
         self._led = create_led_controller(self._board_profile)
         self._led.start()
@@ -81,6 +113,7 @@ class Application:
         self._boot_logs = []
         self._next_boot_animation = time.ticks_ms()
         self._show_boot(72, "BOOT:LCD_READY", "loading...", flush=True)
+        self._preload_boot_styles()
         self._cache = SnapshotCache()
         self._show_boot(84, "BOOT:CACHE_READY", "loading...", flush=True)
         self._receiver = DataReceiver(self._protocol, self._cache, self._led)
@@ -94,6 +127,50 @@ class Application:
         self._dev_mode = False
         self._button_style_override = None
         self._last_display_style = LCD_STYLE
+
+    def _preload_boot_styles(self):
+        """在启动页阶段预加载大型样式，避免连接后首次编译造成内存峰值。"""
+        preload_style = getattr(self._renderer, "preload_style", None)
+        if not callable(preload_style):
+            return
+        style_count = len(LCD_BOOT_PRELOAD_STYLES)
+        for style_index, style_name in enumerate(LCD_BOOT_PRELOAD_STYLES, 1):
+            loading_log = "STYLE:LOADING:{}/{}:{}".format(
+                style_index, style_count, style_name
+            )
+            try:
+                self._protocol.write(
+                    "BOOT:{}\n".format(loading_log).encode()
+                )
+                self._show_boot(
+                    76,
+                    loading_log,
+                    "loading {}/{}...".format(style_index, style_count),
+                    flush=True,
+                )
+                preload_style(style_name)
+                self._protocol.write(
+                    "BOOT:STYLE_PRELOADED:{}\n".format(style_name).encode()
+                )
+                self._show_boot(
+                    80,
+                    "STYLE:LOADED:{}".format(style_name),
+                    "style ready {}/{}".format(style_index, style_count),
+                    flush=True,
+                )
+            except (ImportError, MemoryError, TypeError, ValueError) as error:
+                gc.collect()
+                self._protocol.write(
+                    "BOOT:STYLE_PRELOAD_ERROR:{}:{}\n".format(
+                        style_name, error
+                    ).encode("utf-8")
+                )
+                self._show_boot(
+                    80,
+                    "STYLE:FAILED:{}".format(style_name),
+                    "style failed {}/{}".format(style_index, style_count),
+                    flush=True,
+                )
 
     def _write_custom_style_log(self, message):
         """向 Monitor 输出自定义样式启动加载结果。"""
@@ -109,12 +186,29 @@ class Application:
                 "progress": progress,
                 "logs": self._boot_logs,
                 "status": status,
+                "wifi": self._boot_wifi_status(),
             }
         }
         self._renderer.request_render(boot_snapshot, force=True)
         if flush:
             while self._renderer.is_rendering():
                 self._update_renderer_with_fallback(boot_snapshot)
+
+    def _boot_wifi_status(self):
+        """返回系统启动页固定展示的 Wi-Fi 状态。"""
+        transport = getattr(self, "_transport", None)
+        provider = getattr(transport, "wifi_status", None)
+        if not callable(provider):
+            return {"enabled": False}
+        try:
+            return provider()
+        except (OSError, RuntimeError, ValueError) as error:
+            return {
+                "enabled": True,
+                "available": False,
+                "connected": False,
+                "error": str(error),
+            }
 
     def _set_style_after_system_boot(self, style_name):
         """先切换到系统启动页整理内存，再尝试加载指定样式。"""
@@ -180,7 +274,10 @@ class Application:
             return
         try:
             changed = self._set_style_after_system_boot(style_name)
-        except (ImportError, TypeError, ValueError) as error:
+        except (ImportError, MemoryError, TypeError, ValueError) as error:
+            if isinstance(error, MemoryError):
+                self._failed_custom_style = style_name
+                gc.collect()
             self._protocol.write(
                 "BUTTON:LCD_STYLE_ERROR:{}:{}\n".format(
                     style_name, error
@@ -212,9 +309,25 @@ class Application:
                 self._protocol.write(b"BUTTON:FUNCTION:RESERVED\n")
 
     def _update_renderer_with_fallback(self, snapshot):
-        """刷新一个区域，自定义样式画布超限时回退到内置默认样式。"""
+        """刷新一个区域，并在可恢复的渲染内存不足时降级到启动页。"""
         try:
             return self._renderer.update_pending(max_regions=1)
+        except MemoryError as error:
+            failed_style = self._renderer.style_name()
+            self._protocol.write(
+                "MEMORY:RENDER_RECOVERY:{}:{}\n".format(
+                    failed_style, error,
+                ).encode("utf-8")
+            )
+            # 放弃当前复杂帧，先释放其快照、脏区和字形缓存；显示启动页虽会
+            # 变慢，但可继续处理 USB 数据，避免直接触发整机硬复位。
+            self._renderer.abort_render(release_snapshot=True)
+            gc.collect()
+            self._renderer.set_style("boot")
+            self._boot_logs = ["MEMORY:RECOVERED", "STYLE:{}".format(failed_style)]
+            self._show_boot(100, None, "freeing memory...", flush=False)
+            self._rendering_version = -1
+            return False
         except ValueError as error:
             if (
                 str(error) != CANVAS_CAPACITY_ERROR
@@ -228,7 +341,7 @@ class Application:
                     failed_style, error,
                 ).encode("utf-8")
             )
-            self._renderer.set_style("default")
+            self._renderer.set_style(failed_style)
             self._renderer.request_render(snapshot, force=True)
             self._protocol.write(
                 "CONFIG:LCD_STYLE_FALLBACK:{}:default\n".format(
@@ -345,11 +458,11 @@ class Application:
                     self._button_style_override = None
                     self._last_display_style = display_style
                 requested_style = self._button_style_override or display_style
-                if requested_style == self._failed_custom_style:
-                    requested_style = "default"
-                elif self._failed_custom_style is not None:
-                    # 用户切换到其他样式后允许未来再次尝试已修复的同名样式。
-                    self._failed_custom_style = None
+                # if requested_style == self._failed_custom_style:
+                #     requested_style = "default"
+                # elif self._failed_custom_style is not None:
+                #     # 用户切换到其他样式后允许未来再次尝试已修复的同名样式。
+                #     self._failed_custom_style = None
                 requested_brightness = display.get("brightness", 100)
                 try:
                     requested_brightness = int(requested_brightness)
@@ -368,12 +481,32 @@ class Application:
                                 self._renderer.style_name()
                             ).encode()
                         )
-                except (ImportError, TypeError, ValueError) as error:
-                    self._protocol.write(
-                        "CONFIG:LCD_STYLE_ERROR:{}:{}\n".format(
-                            requested_style, error
-                        ).encode("utf-8")
-                    )
+                except (ImportError, MemoryError, TypeError, ValueError) as error:
+                    if isinstance(error, MemoryError):
+                        # DashboardRenderer 已尽力恢复启动页；本轮跳过复杂样式，
+                        # 后续快照将回退默认样式，不让异常进入顶层硬复位策略。
+                        self._failed_custom_style = requested_style
+                        ram_status = collect_memory_error_ram_status()
+                        self._protocol.write(
+                            (
+                                "CONFIG:LCD_STYLE_ERROR:{}:{}:"
+                                "RAM:ALLOC_BEFORE_GC={}:FREE_BEFORE_GC={}:"
+                                "FREE_AFTER_GC={}:TOTAL={}\n"
+                            ).format(
+                                requested_style,
+                                error,
+                                ram_status[0],
+                                ram_status[1],
+                                ram_status[2],
+                                ram_status[3],
+                            ).encode("utf-8")
+                        )
+                    else:
+                        self._protocol.write(
+                            "CONFIG:LCD_STYLE_ERROR:{}:{}\n".format(
+                                requested_style, error
+                            ).encode("utf-8")
+                        )
                 if self._renderer.set_rotation(requested_rotation):
                     self._protocol.write(
                         "CONFIG:SCREEN_ROTATION:{}\n".format(
@@ -424,16 +557,28 @@ class Application:
 
 
 def main():
-    """优先建立诊断通道，再启动硬件应用。"""
+    """创建可竞争的 USB/Wi-Fi 传输通道，再启动硬件应用。"""
     protocol = None
     try:
         from upgrade_manager import UpgradeManager
 
+        from config import WIFI_ENABLED, WEBSOCKET_PATH, WEBSOCKET_PORT
+        from net import TransportManager
         from usb_transport import create_data_cdc
 
-        protocol = JsonProtocol(stream=create_data_cdc())
+        transport = TransportManager(
+            usb_stream=create_data_cdc(wait_for_open=False),
+            wifi_enabled=WIFI_ENABLED,
+            websocket_port=WEBSOCKET_PORT,
+            websocket_path=WEBSOCKET_PATH,
+        )
+        protocol = JsonProtocol(stream=transport)
+        protocol.set_command_services({
+            "transport": transport,
+            "wifi": transport.wifi,
+        })
         protocol._upgrade_manager = UpgradeManager(protocol.write_upgrade_response)
-        Application(protocol).run()
+        Application(protocol, transport=transport).run()
     except Exception as error:
         message = "FATAL:{}:{}\n".format(type(error).__name__, error)
         if protocol is not None:

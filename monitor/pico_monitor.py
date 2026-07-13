@@ -83,9 +83,13 @@ def show_admin_required_message():
         print(message, file=sys.stderr)
 
 
-def show_pico_information(port=None):
-    """连接指定或自动发现的 Pico，输出设备信息后安全断开。"""
-    client = PicoJsonClient(port)
+def show_pico_information(port=None, websocket_url=None):
+    """通过 USB 或 WebSocket 连接设备，输出信息后安全断开。"""
+    client = (
+        PicoJsonClient(port, websocket_url=websocket_url)
+        if websocket_url
+        else PicoJsonClient(port)
+    )
     try:
         client.connect()
         _write_version_to_console(format_pico_information(client.device_information()))
@@ -116,7 +120,7 @@ def main():
     configure_logging("DEBUG" if arguments.dev else arguments.log_level)
     log_monitor_version()
     if arguments.pico_info:
-        return show_pico_information(arguments.port)
+        return show_pico_information(arguments.port, arguments.websocket_url)
     if arguments.update:
         LinuxDebUpdater(GITHUB_REPOSITORY, MONITOR_VERSION).update()
         return 0

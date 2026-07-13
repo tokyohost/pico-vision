@@ -229,7 +229,7 @@ class DiskV2Style:
         percent = self._number(data.get("percent"))
         self._frame(canvas, 2, 182, 70, 56, DARK)
         canvas.text(8, 187, "GPU", GREEN, 2)
-        value = "N/A" if not data else "{:.1f}%".format(percent)
+        value = "N/A" if data.get("percent") is None else "{:.1f}%".format(percent)
         canvas.text(8, 204, value, WHITE, 2)
         self._history(canvas, 8, 224, 58, 10, data.get("history", ()), GREEN)
 

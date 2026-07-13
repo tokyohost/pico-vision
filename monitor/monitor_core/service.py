@@ -53,7 +53,11 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
                 arguments.qbittorrent_interval,
             )
             self.qbittorrent_monitor.start()
-        self.client = PicoJsonClient(arguments.port, arguments.serial_probe_interval)
+        self.client = PicoJsonClient(
+            arguments.port,
+            arguments.serial_probe_interval,
+            websocket_url=getattr(arguments, "websocket_url", None),
+        )
         self.stopping = threading.Event()
         self.reboot_requested = threading.Event()
         self.custom_style_catalog_requested = threading.Event()

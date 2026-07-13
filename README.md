@@ -3,7 +3,7 @@
 项目包含电脑端数据采集程序和 Pico RP2040 显示程序，实现两个独立功能：
 
 1. 按开发板型号非阻塞控制 WS2812 多色灯或 GPIO 单色状态灯。
-2. 通过 USB 串口增量接收 JSON，并将 ST7789 LCD 按 48 行条带异步刷新。
+2. 通过 USB CDC 或 Wi-Fi WebSocket 增量接收 JSON，并将 ST7789 LCD 按条带异步刷新。
 
 ## 设计约束
 
@@ -19,7 +19,8 @@
 
 - `main.py`：应用入口和协作式主循环。
 - `led/`：不同板载状态灯的非阻塞控制策略与控制器工厂。
-- `protocol.py`：USB 握手及 JSON 增量接收状态机。
+- `protocol.py`：PV1 握手及 JSON 增量接收状态机。
+- `net/`：USB CDC、Wi-Fi、WebSocket 传输策略及首连接锁定选择器。
 - `usb_transport.py`：创建与 REPL 隔离的 USB CDC 数据通道。
 - `usb/device/`：上游 MicroPython `usb-device` 和 `usb-device-cdc` MIT 实现。
 - `upgrade_manager.py`：串口升级会话、临时写入、SHA-256 校验、安装和自动重启。
@@ -31,13 +32,21 @@
 - `color_manager.py`：按屏幕型号管理反色模式和 RGB/BGR 颜色顺序。
 - `board_manager.py`：注册开发板硬件档案并隔离不同板载 LED 类型。
 
-Pico 握手会向 Monitor 返回当前开发板型号、屏幕色彩方案和运行固件版本；源码
+Pico 握手会向 Monitor 返回当前开发板型号、屏幕色彩方案、运行固件版本和 `net` 状态；USB 模式返回 `mode=usb`，Wi-Fi 模式还返回 SSID、IP、网关、RSSI、WebSocket 端口与路径。源码
 直接部署时版本为 `development`，发布升级包会自动写入对应的发布版本。
 
-开发板型号由 `picoRP2040/config.py` 中的 `BOARD_MODEL` 选择：
+开发板型号和 Wi-Fi 开关由 `picoRP2040/config.py` 配置。例如 ESP32-S3 开启 Wi-Fi：
+
+```python
+BOARD_MODEL = "ESP32-S3"
+WIFI_ENABLED = True
+```
+
+仅使用 USB CDC 时把 `WIFI_ENABLED` 设为 `False`，固件不会初始化无线网卡或 WebSocket 服务。支持的板型包括：
 
 - `rp2040_usb`：GP22 上的 WS2812 多色状态灯。
 - `rp2040_typec`：GP25 控制的单色状态灯。
+- `ESP32-S3`：默认使用 GPIO48 上的板载 WS2812；具体开发板引脚不同时可修改 `board_manager.py` 中的档案。
 
 新增型号时，可创建 `BoardProfile` 并通过 `register_board_profile()` 注册；业务层
 无需感知 LED 的具体实现。
@@ -69,6 +78,10 @@ GitHub Actions 会按照全部开发板型号与规范 LCD 设备类型的笛卡
 兼容包固定对应 `rp2040_usb` 与 `st7789-2inch-8pin-a`，其他硬件不可混用该兼容包。
 
 ## 通信协议
+
+PV1 帧可承载在 USB CDC 字节流或 WebSocket 二进制消息中。USB 和 WebSocket 同时可用时，设备锁定首个建立的连接；活动连接断开后才释放并重新选择。WebSocket 默认监听 `ws://设备IP:8765/pv1`，双方发送 Ping/Pong 心跳，Monitor 通信异常后按重连间隔重新握手。
+
+设备提供两个配网命令：`wifi.list` 返回按信号强度排序的附近网络；`wifi.set` 的 `params` 接受 `ssid`、`password` 和可选 `timeout_ms`，并通过 `COMMAND` 帧返回连接成功详情或失败原因。Wi-Fi 凭据仅保存在设备端 `wifi_config.json`，PONG 和日志不会返回密码。
 
 数据包采用纯 ASCII 行协议，避免 MicroPython 将二进制 `0x03` 解释为 Ctrl+C：
 

@@ -11,7 +11,7 @@
 
 
 
-"""实现基于纯 ASCII 行的 USB 串口握手与 JSON 接收协议。"""
+"""实现可承载于 USB 或 WebSocket 的 PV1 握手与 JSON 接收协议。"""
 
 
 import sys
@@ -143,11 +143,12 @@ class JsonProtocol:
         self._input = stream if stream is not None else sys.stdin
         self._reader = stream if stream is not None else getattr(sys.stdin, "buffer", sys.stdin)
         self._output = stream if stream is not None else getattr(sys.stdout, "buffer", sys.stdout)
-        self._poller = select.poll()
+        self._poller = None if callable(getattr(stream, "available", None)) else select.poll()
         # RP2 的 USB REPL 在 sys.stdin 上实现流轮询接口；部分固件的
         # sys.stdin.buffer 虽可非阻塞读取，却不会正确报告 POLLIN 可读事件。
         # 因此轮询文本流、读取二进制流，兼顾 Linux CDC 与 Windows 串口行为。
-        self._poller.register(self._input, select.POLLIN)
+        if self._poller is not None:
+            self._poller.register(self._input, select.POLLIN)
         self._buffer = bytearray()
         # 独立 CDC 的 readinto() 会按当前 FIFO 可用长度立即返回；
         # 内置 REPL stdin 则只能安全地逐字节读取。
@@ -175,9 +176,11 @@ class JsonProtocol:
         data = bytes(data)
         offset = 0
         stalled_since_ms = None
+        preferred_write_size = getattr(self._output, "preferred_write_size", None)
+        write_size = preferred_write_size() if callable(preferred_write_size) else 63
         while offset < len(data):
             # 避免写满 64 字节 USB 端点后立即继续写入导致 CDC 暂时返回零。
-            remaining = data[offset:offset + 63]
+            remaining = data[offset:offset + write_size]
             try:
                 written = self._output.write(remaining)
             except TypeError:
@@ -233,7 +236,7 @@ class JsonProtocol:
         """在固定读取预算内接收数据并返回最新完整 JSON 对象。"""
         self._expire_partial_frame()
         read_count = 0
-        while read_count < SERIAL_READ_BUDGET and self._poller.poll(0):
+        while read_count < SERIAL_READ_BUDGET and self._input_available():
             received = self._reader.readinto(self._read_buffer)
             if not received:
                 break
@@ -254,7 +257,14 @@ class JsonProtocol:
 
     def is_busy(self):
         """判断串口是否有待接收字节或未完成的行。"""
-        return bool(self._buffer) or bool(self._poller.poll(0))
+        return bool(self._buffer) or self._input_available()
+
+    def _input_available(self):
+        """兼容策略流和系统流，判断是否存在可立即读取的数据。"""
+        available = getattr(self._input, "available", None)
+        if callable(available):
+            return bool(available())
+        return bool(self._poller.poll(0))
 
     def _parse_lines(self):
         """依次解析已完整接收的命令行，并保留最后一个 JSON。"""
@@ -505,11 +515,16 @@ class JsonProtocol:
             self._buffer = bytearray(self._buffer[count:])
 
     def _write_pong(self):
-        """返回设备能力、硬件型号、屏幕方案及固件版本。"""
+        """返回设备能力、硬件型号、屏幕方案、固件版本及网络状态。"""
         from lcd import get_lcd_panel_profile
         from styles.style_plugins import style_catalog
 
         panel_profile = get_lcd_panel_profile(LCD_DEVICE_TYPE)
+        transport = self._command_services.get("transport")
+        net_status = transport.status() if transport is not None else {
+            "mode": "usb" if self._dedicated_stream else "none",
+            "connected": True,
+        }
         payload = json.dumps({
             "board_model": BOARD_MODEL,
             "screen_color_profile": panel_profile.color_profile_name,
@@ -521,6 +536,7 @@ class JsonProtocol:
             "height": panel_profile.height,
             "pixel_format": PIXEL_FORMAT,
             "styles": style_catalog(),
+            "net": net_status,
         }).encode("utf-8")
         self._write_frame("PONG", payload)
 

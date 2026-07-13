@@ -59,22 +59,58 @@ class DashboardRenderer:
         """返回当前渲染器使用的 Canvas 后端名称。"""
         return canvas_backend_name()
 
+    def preload_style(self, style_name):
+        """预加载并注册指定样式，但保持当前启动页面和画布不变。"""
+        normalized_name = normalize_style_name(style_name)
+        if normalized_name == self._style_name:
+            return False
+        style = create_style(normalized_name)
+        del style
+        gc.collect()
+        return True
+
     def set_style(self, style_name):
-        """切换样式插件，并要求下一次渲染执行完整刷新。"""
+        """分阶段释放旧帧和旧样式后加载新样式，避免切换内存峰值。"""
         normalized_name = normalize_style_name(style_name)
         if normalized_name == self._style_name:
             return False
         self.canvas.clear_glyph_cache()
-        gc.collect()
         previous_style_name = self._style_name
-        style = create_style(normalized_name)
+        # 大型样式模块首次导入时需要编译源码。必须先断开旧样式、快照和
+        # 脏区的全部强引用，否则新旧对象会在堆中短暂重叠并耗尽连续内存。
+        self.abort_render(release_snapshot=True)
+        self._style = None
+        release_style(previous_style_name)
+        gc.collect()
+        try:
+            style = create_style(normalized_name)
+        except Exception:
+            # 目标样式加载失败后尽力恢复轻量启动页，让主循环仍可通信和重试。
+            release_style(normalized_name)
+            gc.collect()
+            if normalized_name != "boot":
+                style = create_style("boot")
+                self._style = style
+                self._style_name = style.name
+                self._apply_style_geometry()
+                self._initialized = False
+            raise
         self._style = style
         self._style_name = style.name
         self._apply_style_geometry()
         self._initialized = False
-        release_style(previous_style_name)
         gc.collect()
         return True
+
+    def abort_render(self, release_snapshot=False):
+        """中止当前帧并释放临时区域，可选择同时丢弃帧快照。"""
+        self._dirty_regions = []
+        self._dirty_index = 0
+        self._next_y = self._height
+        self._render_started = None
+        self._completion_pending = False
+        if release_snapshot:
+            self._snapshot = None
 
     def _apply_style_geometry(self):
         """应用样式声明的画布尺寸和 LCD 横竖屏方向。"""

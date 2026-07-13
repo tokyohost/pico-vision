@@ -250,13 +250,15 @@ class GameStyle:
     @classmethod
     def _draw_summary_card(cls, canvas, y, label, data, color, detail):
         """首行大号显示名称和右对齐百分比，次行显示占用详情。"""
-        percent = int(round(cls._number(data.get("percent"))))
-        percent_color = cls._usage_color(data.get("percent"))
+        raw_percent = data.get("percent")
+        percent = int(round(cls._number(raw_percent)))
+        percent_color = cls._usage_color(raw_percent)
+        percent_text = "N/A" if label == "GPU" and raw_percent is None else "{}%".format(percent)
         cls._frame(canvas, 164, y, 151, 37)
         # 名称与百分比使用相同字号和基线，构成清晰的首行信息。
         canvas.text(171, y + 5, label, color, 2)
         cls._right_text(
-            canvas, 309, y + 5, "{}%".format(percent), percent_color, 2,
+            canvas, 309, y + 5, percent_text, percent_color, 2,
         )
         detail_text = str(detail)
         cls._right_text(canvas, 309, y + 25, detail_text[:10], WHITE, 1)
@@ -265,11 +267,13 @@ class GameStyle:
     def _draw_metric_chart(cls, canvas, x, label, data, color):
         """绘制底部单项指标标题、当前值、刻度和历史趋势。"""
         cls._frame(canvas, x, 155, 100, 80)
-        percent = int(round(cls._number(data.get("percent"))))
-        percent_color = cls._usage_color(data.get("percent"))
+        raw_percent = data.get("percent")
+        percent = int(round(cls._number(raw_percent)))
+        percent_color = cls._usage_color(raw_percent)
+        percent_text = "N/A" if label == "GPU" and raw_percent is None else "{}%".format(percent)
         canvas.text(x + 7, 163, label, color, 2)
         cls._right_text(
-            canvas, x + 93, 163, "{}%".format(percent), percent_color, 2,
+            canvas, x + 93, 163, percent_text, percent_color, 2,
         )
         canvas.text(x + 7, 190, "100", GRAY, 1)
         canvas.text(x + 14, 218, "0", GRAY, 1)

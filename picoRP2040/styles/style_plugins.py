@@ -194,7 +194,15 @@ def _load_style_module(name):
         "customStyles.style_" + name
         if custom_exists else "styles.style_" + name
     )
-    __import__(module_name)
+    try:
+        __import__(module_name)
+    except Exception:
+        # 导入中断时可能已经执行 register_style，必须清掉半成品，避免下一次
+        # 切换误用未完整初始化的模块，同时释放编译器留下的临时对象。
+        _STYLE_FACTORIES.pop(name, None)
+        sys.modules.pop(module_name, None)
+        gc.collect()
+        raise
     _STYLE_MODULES[name] = module_name
     # 及时释放导入期间产生的临时解析对象，为条带画布保留连续空间。
     gc.collect()

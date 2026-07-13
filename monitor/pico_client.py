@@ -11,7 +11,7 @@
 
 
 
-"""发现 Pico LCD，并通过 USB 串口可靠发送 JSON 系统快照。"""
+"""发现 Pico LCD，并通过 USB 或 WebSocket 可靠发送 JSON 系统快照。"""
 
 
 import json
@@ -27,6 +27,7 @@ import serial
 from serial.tools import list_ports
 
 from json_ack_timing_cache import ExpiringJsonAckTimingCache
+from net import WebSocketDevice
 from usbCdcFramework import UsbCdcFramework
 
 
@@ -122,9 +123,10 @@ def _is_restarting_fatal(frame):
 class PicoJsonClient:
     """封装 Pico LCD 自动发现、握手、数据发送和连接清理。"""
 
-    def __init__(self, configured_port=None, probe_interval=3.0, cancellation_event=None):
-        """保存可选固定串口名称并初始化断开状态。"""
+    def __init__(self, configured_port=None, probe_interval=3.0, cancellation_event=None, websocket_url=None):
+        """保存可选串口或 WebSocket 地址并初始化断开状态。"""
         self.configured_port = configured_port
+        self.websocket_url = str(websocket_url).strip() if websocket_url else None
         self.probe_interval = max(0.0, float(probe_interval))
         self.cancellation_event = cancellation_event
         self.serial = None
@@ -135,6 +137,7 @@ class PicoJsonClient:
         self.screen_width = None
         self.screen_height = None
         self.styles = []
+        self.net_status = None
         self._json_request_sequence = 0
         self._json_ack_pending = ExpiringJsonAckTimingCache()
         self._json_ack_lock = threading.Lock()
@@ -143,16 +146,19 @@ class PicoJsonClient:
 
     @property
     def is_connected(self):
-        """返回当前串口是否已经打开。"""
+        """返回当前 USB CDC 或 WebSocket 连接是否已经打开。"""
         return self.serial is not None and self.serial.is_open
 
     @property
     def port_name(self):
-        """返回当前连接的串口名称。"""
+        """返回当前连接的串口名称或 WebSocket 地址。"""
         return self.serial.port if self.serial is not None else None
 
     def connect(self):
-        """连接固定串口，或枚举所有串口并通过协议握手识别设备。"""
+        """优先连接指定 WebSocket，否则枚举串口并通过协议握手识别设备。"""
+        if self.websocket_url:
+            self._connect_websocket()
+            return
         if self.configured_port:
             candidates = [self.configured_port]
         else:
@@ -203,6 +209,22 @@ class PicoJsonClient:
                 errors.append(f"{port}: {error}")
         detail = "；".join(errors) if errors else "未发现可用串口"
         raise RuntimeError(f"未找到 Pico LCD：{detail}")
+
+    def _connect_websocket(self):
+        """建立 WebSocket 连接，完成 PV1 握手并启动统一读写框架。"""
+        device = None
+        try:
+            LOGGER.info("[WebSocket 连接] 正在连接 %s", self.websocket_url)
+            device = WebSocketDevice(self.websocket_url)
+            if not self._handshake(device):
+                raise RuntimeError("WebSocket 未返回有效设备标识")
+            self.serial = device
+            self._start_cdc_framework()
+            LOGGER.info("[WebSocket 连接] %s 握手成功", self.websocket_url)
+        except Exception:
+            if device is not None:
+                device.close()
+            raise
 
     def _connect_parallel(self, candidates):
         """并行探测候选串口，并在任一端口成功后中断其余探测。"""
@@ -265,10 +287,11 @@ class PicoJsonClient:
         self.screen_width = winner.screen_width
         self.screen_height = winner.screen_height
         self.styles = winner.styles
+        self.net_status = winner.net_status
         winner.close()
 
     def _start_cdc_framework(self):
-        """在握手完成后启动底层 USB CDC 读写线程。"""
+        """在握手完成后启动适用于 USB CDC 和 WebSocket 的读写线程。"""
         if self.serial is None:
             return
         self.transport = UsbCdcFramework(
@@ -379,10 +402,12 @@ class PicoJsonClient:
         styles = information.get("styles")
         if isinstance(styles, list):
             self.styles = [item for item in styles if isinstance(item, dict)]
+        net_status = information.get("net")
+        self.net_status = net_status if isinstance(net_status, dict) else None
 
     def device_information(self):
         """返回当前已连接 Pico 的硬件配置与固件版本。"""
-        return {
+        information = {
             "board_model": self.board_model,
             "lcd_device_type": self.lcd_device_type,
             "screen_color_profile": self.screen_color_profile,
@@ -390,6 +415,27 @@ class PicoJsonClient:
             "screen_width": self.screen_width,
             "screen_height": self.screen_height,
         }
+        if isinstance(self.net_status, dict):
+            information["net"] = dict(self.net_status)
+        return information
+
+    def request_wifi_list(self, timeout=20.0):
+        """请求设备扫描附近 Wi-Fi 并返回网络列表和当前状态。"""
+        request_id = "wifi-list-{}".format(int(time.monotonic() * 1000))
+        packet = self.build_command_packet("wifi.list", request_id=request_id)
+        self._write_packet(packet, "Wi-Fi 搜索")
+        return self._wait_command_result(request_id, timeout, "Wi-Fi 搜索", "Wi-Fi 搜索失败")
+
+    def set_wifi(self, ssid, password="", timeout=20.0):
+        """请求设备连接指定 Wi-Fi，并返回明确的成功或失败结果。"""
+        request_id = "wifi-set-{}".format(int(time.monotonic() * 1000))
+        packet = self.build_command_packet(
+            "wifi.set",
+            params={"ssid": ssid, "password": password, "timeout_ms": int(timeout * 1000)},
+            request_id=request_id,
+        )
+        self._write_packet(packet, "Wi-Fi 连接")
+        return self._wait_command_result(request_id, timeout + 2.0, "Wi-Fi 连接", "Wi-Fi 连接失败")
 
     @staticmethod
     def _wire_snapshot(snapshot):
@@ -1115,7 +1161,7 @@ class PicoJsonClient:
         )
 
     def close(self):
-        """安全关闭串口，并恢复为未连接状态。"""
+        """安全关闭当前传输并恢复为未连接状态。"""
         transport, self.transport = self.transport, None
         if transport is not None:
             transport.close(wait=True)

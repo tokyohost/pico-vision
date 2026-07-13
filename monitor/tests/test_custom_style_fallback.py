@@ -120,6 +120,7 @@ class FailingRenderer:
         self._style_type = style_type
         self.selected_style = None
         self.rendered_snapshot = None
+        self.aborted = None
 
     def update_pending(self, max_regions=8):
         """模拟渲染阶段的脏矩形容量错误。"""
@@ -143,6 +144,10 @@ class FailingRenderer:
     def request_render(self, snapshot, force=False):
         """记录回退后重新提交的快照。"""
         self.rendered_snapshot = (snapshot, force)
+
+    def abort_render(self, release_snapshot=False):
+        """记录内存恢复流程是否要求释放当前快照。"""
+        self.aborted = release_snapshot
 
 
 class BootSwitchRenderer:
@@ -253,6 +258,24 @@ class CustomStyleFallbackTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "脏矩形超过画布容量"):
             application._update_renderer_with_fallback({})
+
+    def test_memory_error_falls_back_to_boot_without_restarting(self):
+        """确认渲染内存不足会中止复杂帧并降级到启动页。"""
+        application = self._application("builtin")
+        application._renderer.update_pending = mock.Mock(
+            side_effect=MemoryError("连续内存不足")
+        )
+        application._boot_logs = []
+        application._rendering_version = 7
+
+        completed = application._update_renderer_with_fallback({"cpu": {}})
+
+        self.assertFalse(completed)
+        self.assertTrue(application._renderer.aborted)
+        self.assertEqual(application._renderer.selected_style, "boot")
+        self.assertEqual(application._rendering_version, -1)
+        self.assertTrue(any("MEMORY:RENDER_RECOVERY:broken" in message
+                            for message in application._protocol.messages))
 
     def test_style_switch_renders_system_boot_before_target_style(self):
         """确认切换指定样式前先进入系统启动页并完成刷新。"""

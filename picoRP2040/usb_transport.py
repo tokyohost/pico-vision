@@ -1,4 +1,4 @@
-"""Configure a dedicated USB CDC interface for PV1 application traffic."""
+"""配置专用于 PV1 应用数据传输的独立 USB CDC 接口。"""
 
 import gc
 import time

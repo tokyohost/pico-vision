@@ -25,12 +25,22 @@ def format_pico_information(information):
             if information.get("screen_width") and information.get("screen_height")
             else "未知（旧版固件未提供）"
         ),
+        "Pico 当前传输：{}".format(
+            (information.get("net") or {}).get("mode", "未知（旧版固件未提供）")
+        ),
+        "Pico Wi-Fi 地址：{}".format(
+            (information.get("net") or {}).get("ip") or "未连接"
+        ),
     ))
 
 
-def show_pico_information(port=None):
-    """连接指定或自动发现的 Pico，输出设备信息后安全断开。"""
-    client = PicoJsonClient(port)
+def show_pico_information(port=None, websocket_url=None):
+    """通过 USB 或 WebSocket 连接设备，输出信息后安全断开。"""
+    client = (
+        PicoJsonClient(port, websocket_url=websocket_url)
+        if websocket_url
+        else PicoJsonClient(port)
+    )
     try:
         client.connect()
         _write_version_to_console(
@@ -40,4 +50,3 @@ def show_pico_information(port=None):
 
     finally:
         client.close()
-

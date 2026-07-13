@@ -347,12 +347,13 @@ class Game2Style:
     def _draw_gpu(cls, canvas, snapshot):
         """绘制左下角 GPU 占用率、温度、显存和历史趋势。"""
         gpu = snapshot.get("gpu") or {}
-        percent = int(cls._number(gpu.get("percent")))
+        raw_percent = gpu.get("percent")
+        percent = int(cls._number(raw_percent))
         color = cls._usage_color(percent)
         temperature = gpu.get("temperature_c") or gpu.get("temperature")
         cls._frame(canvas, 2, 121, 154, 87, PURPLE)
         canvas.text(8, 128, "GPU", PURPLE, 1)
-        percent_text = "{}%".format(percent)
+        percent_text = "N/A" if raw_percent is None else "{}%".format(percent)
         cls._right_text(canvas, 150, 126, percent_text, color, 2)
         temp_text = "--℃" if temperature is None else "{}℃".format(int(cls._number(temperature)))
         canvas.text(8, 148, temp_text, cls._temperature_color(temperature), 1)

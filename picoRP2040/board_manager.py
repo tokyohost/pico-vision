@@ -3,7 +3,7 @@
 #  Licensed under the Custom Non-Commercial Copyleft License.
 #  Commercial use is prohibited without prior written permission.
 
-"""集中管理不同 RP2040 开发板的硬件差异与扩展注册。"""
+"""集中管理 RP2040 与 ESP32-S3 开发板的硬件差异。"""
 
 
 class BoardProfile:
@@ -23,6 +23,7 @@ class BoardProfile:
 _BOARD_PROFILES = {
     "rp2040_usb": BoardProfile("rp2040_usb", "ws2812", 22, 1),
     "rp2040_typec": BoardProfile("rp2040_typec", "gpio", 25, 1),
+    "esp32-s3": BoardProfile("esp32-s3", "ws2812", 48, 1),
 }
 
 

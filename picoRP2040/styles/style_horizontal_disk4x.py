@@ -606,9 +606,9 @@ class HorizontalDisk4xStyle:
         )
         gpu = snapshot.get("gpu") or {}
         gpu_percent = gpu.get("percent")
+        canvas.text(216, 157, "GPU", PURPLE, 1)
         if gpu_percent is not None:
             gpu_text = "{}%".format(int(self._number(gpu_percent)))
-            canvas.text(216, 157, "GPU", PURPLE, 1)
             canvas.text(
                 312 - canvas.text_width(gpu_text), 158,
                 gpu_text, self._usage_color(gpu_percent), 1,
@@ -617,6 +617,12 @@ class HorizontalDisk4xStyle:
                 canvas, 216, 170, 96, 34,
                 gpu.get("history", ()), self._usage_color(gpu_percent),
                 percentage=True, filled=True, color_by_value=True,
+            )
+        else:
+            gpu_text = "N/A"
+            canvas.text(
+                312 - canvas.text_width(gpu_text), 158,
+                gpu_text, GRAY, 1,
             )
 
     def _draw_footer(self, canvas, snapshot):

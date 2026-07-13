@@ -162,7 +162,8 @@ class SimpleStyle(HorizontalDiskStyle):
 
     def _draw_metric_card(self, canvas, y, title, data, color):
         """绘制 CPU、内存或 GPU 的百分比与渐变历史卡片。"""
-        percent = int(self._number(data.get("percent")))
+        raw_percent = data.get("percent")
+        percent = int(self._number(raw_percent))
         usage_color = self._usage_color(percent)
         height = 50 if y == 2 else 43
         self._frame(canvas, 2, y, 100, height, color)
@@ -180,7 +181,8 @@ class SimpleStyle(HorizontalDiskStyle):
             )
             history_y = y + 18
             history_height = height - 24
-        canvas.text(7, y + 18, "{}%".format(percent), usage_color, 2)
+        value_text = "N/A" if title == "GPU" and raw_percent is None else "{}%".format(percent)
+        canvas.text(7, y + 18, value_text, usage_color, 2)
         self._gradient_history(
             canvas, 58, history_y, 38, history_height,
             data.get("history", ()), color, percentage=True,

@@ -18,6 +18,7 @@ def create_argument_parser(config=None):
     )
     parser.add_argument("--config", default=None, help="YAML 配置文件路径，Linux 服务默认使用 /etc/pico-monitor.conf")
     parser.add_argument("--port", default=config_value(config, "PICO_MONITOR_PORT") or None, help="固定串口名称，留空时自动发现")
+    parser.add_argument("--websocket-url", default=config_value(config, "PICO_MONITOR_WEBSOCKET_URL") or None, help="固定 WebSocket 地址，例如 ws://192.168.1.20:8765/pv1；设置后使用 Wi-Fi 模式")
     parser.add_argument("--ping-target", default=config_value(config, "PICO_MONITOR_PING_TARGET", "www.baidu.com"), help="网络延迟检测目标")
     parser.add_argument("--interval", type=float, default=float(config_value(config, "PICO_MONITOR_INTERVAL", "0.5")), help="采集和发送间隔，单位为秒")
     adaptive_group = parser.add_mutually_exclusive_group()

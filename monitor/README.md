@@ -1,6 +1,6 @@
 # Pico LCD 系统硬件监控程序
 
-本目录提供独立电脑端监控程序，使用 PV1 协议经 Pico 的独立 USB CDC 数据接口传输系统快照。内置 USB CDC 仅保留给 MicroPython REPL，不承载监控数据。
+本目录提供独立电脑端监控程序，使用 PV1 协议经独立 USB CDC 或 Wi-Fi WebSocket 双工传输系统快照。内置 USB CDC 仅保留给 MicroPython REPL，不承载监控数据。设备会锁定首个建立的传输模式，只有该连接断开后才重新选择；Monitor 在两种模式下均支持断线重连和 WebSocket 心跳。
 
 Windows 可选用 PresentMon/ETW 采集前台程序 FPS，JSON 顶层 `fps` 包含 `value`、24 点 `history`、`source`、`process_id` 和 `process_name`。PresentMon 不可用时保持字段结构并返回空值；AMD ADLX 可作为可选回退。部署说明见 [win/fps/README.md](win/fps/README.md)。
 
@@ -19,6 +19,7 @@ CPU 数据通过顶层 `cpu` 对象发送，其中 `frequency_ghz` 是当前 GHz
 ## 主要功能
 
 - 自动发现并握手识别 Pico LCD，也可固定串口。
+- 支持通过 `ws://设备IP:8765/pv1` 连接 ESP32-S3，并在 PONG 中读取当前传输模式和 Wi-Fi 详情。
 - 连接后读取并记录 Pico 开发板型号、屏幕色彩方案和当前固件版本。
 - 下载当前 Monitor 版本对应的 Pico 升级包，经 SHA-256 校验后通过串口升级固件。
 - 磁盘汇总统计所有有效本地分区，并发送每个磁盘的设备、挂载点、容量、占用率和可用温度。
@@ -42,6 +43,8 @@ python pico_monitor.py
 ```text
 --port COM3                 固定 Windows 串口
 --port /dev/ttyACM1         固定 Linux 数据 CDC；建议留空自动发现
+--websocket-url ws://192.168.1.20:8765/pv1
+                            使用 Wi-Fi WebSocket；断线后按 reconnect-interval 自动重连
 --ping-target 1.1.1.1       指定延迟探测目标，默认 www.baidu.com
 --serial-probe-interval 3   串口探测 PING 间隔，默认 3 秒
 --interval 1.0              指定采集发送间隔
@@ -75,6 +78,8 @@ python pico_monitor.py
 开发模式也可通过环境变量 `PICO_MONITOR_DEV=1` 开启。LCD 背光亮度可通过 `PICO_MONITOR_LCD_BRIGHTNESS=1..100` 配置。首次串口扫描未找到 Pico 后，程序不再重试 COM 口，而是按照 `--interval` 周期持续采集，并以 `[DEV][Monitor -> Pico][JSON]` 标识打印完整 `JSON:` 协议行，方便在没有硬件时调试采集数据。
 
 qBittorrent 也可通过环境变量 `PICO_MONITOR_QBITTORRENT_ENABLED`、`PICO_MONITOR_QBITTORRENT_ADDRESS`、`PICO_MONITOR_QBITTORRENT_USERNAME`、`PICO_MONITOR_QBITTORRENT_PASSWORD` 和 `PICO_MONITOR_QBITTORRENT_INTERVAL` 配置。启用采集后地址、账号、密码必须全部配置。建议使用环境变量或 Linux 配置文件保存密码，避免密码出现在进程命令行中。
+
+WebSocket 地址也可通过 `PICO_MONITOR_WEBSOCKET_URL` 配置。首次配网时先使用 USB CDC 连接，通过 `PicoJsonClient.request_wifi_list()` 发送 `wifi.list` 搜索网络，再通过 `PicoJsonClient.set_wifi(ssid, password)` 发送 `wifi.set`。命令使用结构化 `COMMAND` 帧返回扫描结果、连接成功详情或具体失败原因；配网成功后关闭 USB 数据串口，再以设备返回的 IP 启动 WebSocket 模式。
 
 ## 构建 Windows 安装包
 
