@@ -7,7 +7,6 @@ import platform
 import queue
 import socket
 import threading
-import time
 from datetime import datetime
 
 import serial
@@ -247,7 +246,6 @@ class MonitorService(WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin
                 if self.has_pending_wifi_operation():
                     self.publish_wifi_operation()
                     continue
-                started = time.monotonic()
                 snapshot = self._snapshot_for_sending()
                 if self.arguments.dev:
                     self._print_development_snapshot(snapshot)
@@ -255,8 +253,7 @@ class MonitorService(WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin
                 if self.arguments.once:
                     self._wait_for_transmit_idle()
                     return 0
-                remaining = self._effective_transmit_interval() - (time.monotonic() - started)
-                self._wait_for_interval_or_transmit_error(max(0.0, remaining))
+                self._wait_for_next_transmission()
             except (OSError, RuntimeError, serial.SerialException) as error:
                 LOGGER.warning("监控通信异常：%s；准备重新连接", error)
                 self._stop_transmit_worker(wait=True)

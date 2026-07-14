@@ -204,7 +204,9 @@ class CustomStyleFallbackTest(unittest.TestCase):
             create_lcd_device=lambda: FakeLcdDevice(),
         )
         board_manager_module = types.SimpleNamespace(
-            get_board_profile=lambda name: types.SimpleNamespace(name=name),
+            get_board_profile=lambda name: types.SimpleNamespace(
+                name=name.lower()
+            ),
         )
         led_module = types.SimpleNamespace(
             create_led_controller=lambda profile: FakeLedController(),
@@ -224,9 +226,11 @@ class CustomStyleFallbackTest(unittest.TestCase):
         protocol = RecordingProtocol()
 
         with mock.patch.dict(sys.modules, modules), mock.patch("main.time", FakeClock):
-            Application(protocol)
+            application = Application(protocol)
 
         self.assertEqual(FakeDashboardRenderer.created_styles, ["boot"])
+        self.assertEqual(application._render_max_regions, 8)
+        self.assertEqual(application._render_time_budget_us, 50000)
 
     def _application(self, style_type):
         """构造不初始化硬件的最小应用实例。"""
@@ -276,6 +280,39 @@ class CustomStyleFallbackTest(unittest.TestCase):
         self.assertEqual(application._rendering_version, -1)
         self.assertTrue(any("MEMORY:RENDER_RECOVERY:broken" in message
                             for message in application._protocol.messages))
+
+    def test_esp32_uses_batch_render_budget_when_receiver_is_idle(self):
+        """确认 ESP32-S3 空闲时按区域数和时间预算批量推进渲染。"""
+        application = Application.__new__(Application)
+        application._renderer = mock.Mock()
+        application._renderer.update_pending.return_value = False
+        application._render_max_regions = 8
+        application._render_time_budget_us = 50000
+
+        completed = application._update_renderer_with_fallback({})
+
+        self.assertFalse(completed)
+        application._renderer.update_pending.assert_called_once_with(
+            max_regions=8,
+            time_budget_us=50000,
+        )
+
+    def test_busy_receiver_only_allows_one_render_region(self):
+        """确认协议半包期间仍推进渲染，但每轮最多处理一个区域。"""
+        application = Application.__new__(Application)
+        application._renderer = mock.Mock()
+        application._renderer.update_pending.return_value = False
+        application._render_max_regions = 8
+        application._render_time_budget_us = 50000
+
+        completed = application._update_renderer_with_fallback(
+            {}, receiver_busy=True
+        )
+
+        self.assertFalse(completed)
+        application._renderer.update_pending.assert_called_once_with(
+            max_regions=1
+        )
 
     def test_style_switch_renders_system_boot_before_target_style(self):
         """确认切换指定样式前先进入系统启动页并完成刷新。"""

@@ -27,6 +27,10 @@ LCD_DEVICE_TYPE = "st7789-2.4inch-8pin-b"
 LCD_STRIP_HEIGHT = 40
 # 未收到新 JSON 时仍使用缓存快照主动刷新的最大间隔，保证至少一帧每秒。
 RENDER_INTERVAL_MS = 1000
+# ESP32-S3 每轮最多刷新的区域数，防止单次主循环长期占用通信处理。
+ESP32_RENDER_MAX_REGIONS = 8
+# ESP32-S3 每轮渲染的软时间预算；单个区域完成后才检查，因此允许少量超时。
+ESP32_RENDER_TIME_BUDGET_US = 50 * 1000
 LCD_STYLE = "disk"
 # 每累计分配指定字节数后主动执行垃圾回收，降低长期运行时的堆碎片。
 GC_ALLOCATION_THRESHOLD = 16 * 1024

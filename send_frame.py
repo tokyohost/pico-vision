@@ -52,7 +52,6 @@ def main():
     client.connect()
     try:
         while True:
-            started = time.monotonic()
             snapshot = collector.collect()
             client.send(snapshot)
             print(
@@ -60,7 +59,7 @@ def main():
             )
             if arguments.once:
                 break
-            time.sleep(max(0.0, arguments.interval - (time.monotonic() - started)))
+            time.sleep(arguments.interval)
     except KeyboardInterrupt:
         print("已停止系统状态发送。")
     finally:

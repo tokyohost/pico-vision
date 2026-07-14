@@ -20,6 +20,8 @@ import time
 
 from config import (
     BOARD_MODEL,
+    ESP32_RENDER_MAX_REGIONS,
+    ESP32_RENDER_TIME_BUDGET_US,
     GC_ALLOCATION_THRESHOLD,
     LCD_BOOT_PRELOAD_STYLES,
     LCD_STYLE,
@@ -82,6 +84,13 @@ class Application:
                 "BOOT:GC_THRESHOLD:{}\n".format(gc_threshold).encode()
             )
         self._board_profile = get_board_profile(BOARD_MODEL)
+        if self._board_profile.name == "esp32-s3":
+            self._render_max_regions = ESP32_RENDER_MAX_REGIONS
+            self._render_time_budget_us = ESP32_RENDER_TIME_BUDGET_US
+        else:
+            # RP2040 继续保持单区域让步，避免其较小的 USB 接收缓冲溢出。
+            self._render_max_regions = 1
+            self._render_time_budget_us = None
         self._led = create_led_controller(self._board_profile)
         self._led.start()
         self._protocol.write(
@@ -308,10 +317,23 @@ class Application:
             elif action == "function":
                 self._protocol.write(b"BUTTON:FUNCTION:RESERVED\n")
 
-    def _update_renderer_with_fallback(self, snapshot):
-        """刷新一个区域，并在可恢复的渲染内存不足时降级到启动页。"""
+    def _update_renderer_with_fallback(self, snapshot, receiver_busy=False):
+        """按板型预算刷新区域，并在可恢复的渲染异常时降级。"""
         try:
-            return self._renderer.update_pending(max_regions=1)
+            # 半包接收期间仍允许推进一个区域，避免残留半包长期饿死渲染；
+            # 正常空闲时 ESP32-S3 使用软时间预算批量刷新以缩短整帧墙钟时间。
+            max_regions = 1 if receiver_busy else getattr(
+                self, "_render_max_regions", 1
+            )
+            time_budget_us = None if receiver_busy else getattr(
+                self, "_render_time_budget_us", None
+            )
+            if time_budget_us is None:
+                return self._renderer.update_pending(max_regions=max_regions)
+            return self._renderer.update_pending(
+                max_regions=max_regions,
+                time_budget_us=time_budget_us,
+            )
         except MemoryError as error:
             failed_style = self._renderer.style_name()
             self._protocol.write(
@@ -349,6 +371,44 @@ class Application:
                 ).encode("utf-8")
             )
             return False
+
+    def _write_render_profile_if_needed(self, render_completed):
+        """在开发模式帧完成后发送一次渲染性能事件。"""
+        # system_boot 等待页使用尚未打开的应用 CDC；此时若发送帧完成
+        # ACK，CDC 写缓冲会持续返回零并阻塞主循环。仅在 Monitor 已
+        # 恢复连接后发送渲染性能信息，等待动画本身仍可正常推进。
+        if (
+            not render_completed
+            or not self._monitor_connected
+            or not self._dev_mode
+        ):
+            return
+        canvas_us, lcd_us, region_count = self._renderer.last_profile()
+        profile = self._renderer.last_detailed_profile()
+        memory_used, memory_total = memory_usage()
+        response = (
+            "ACK:LCD_FRAME:{}:TOTAL={}MS:CANVAS={}US:LCD={}US:"
+            "VIEW={}US:BUFFER={}US:GC={}US:SCHEDULE={}US:"
+            "SLOWEST_REGION={}US:"
+            "REGIONS={}:MEMORY_USED={}:MEMORY_TOTAL={}:"
+            "CANVAS_BACKEND={}:PROTOCOL_BACKEND={}\n"
+        ).format(
+            self._rendering_version,
+            self._renderer.last_render_ms(),
+            canvas_us,
+            lcd_us,
+            profile["view_us"],
+            profile["buffer_us"],
+            profile["gc_us"],
+            profile["schedule_us"],
+            profile["slowest_region_us"],
+            region_count,
+            memory_used,
+            memory_total,
+            self._renderer.canvas_backend().upper(),
+            self._protocol.protocol_backend(),
+        )
+        self._protocol.write(response.encode())
 
     def _monitor_timed_out(self, now):
         """判断 Monitor 是否已连续超过配置周期没有发送有效消息。"""
@@ -415,6 +475,13 @@ class Application:
                 self._return_to_waiting_page()
                 continue
             if self._receiver.is_busy():
+                # 接收优先但不再完全饿死已有渲染任务；每次最多推进一个区域，
+                # 下一轮会立即继续消费协议缓冲区。
+                if self._renderer.is_rendering():
+                    render_completed = self._update_renderer_with_fallback(
+                        snapshot or {}, receiver_busy=True
+                    )
+                    self._write_render_profile_if_needed(render_completed)
                 time.sleep_ms(0)
                 continue
             has_new_snapshot = version != self._rendering_version
@@ -520,39 +587,10 @@ class Application:
                 self._next_render = time.ticks_add(
                     now, RENDER_INTERVAL_MS
                 )
-            # 每绘制一个区域就返回主循环轮询 USB，避免连续绘制多个区域期间
-            # 主机串口写入因 Pico 不消费数据而阻塞数百毫秒。
+            # RP2040 每轮仍只刷新一个区域；ESP32-S3 在软时间预算内批量刷新，
+            # 兼顾通信轮询及时性和整帧完成时间。
             render_completed = self._update_renderer_with_fallback(snapshot or {})
-            # system_boot 等待页使用尚未打开的应用 CDC；此时若发送帧完成
-            # ACK，CDC 写缓冲会持续返回零并阻塞主循环。仅在 Monitor 已
-            # 恢复连接后发送渲染性能信息，等待动画本身仍可正常推进。
-            if render_completed and self._monitor_connected and self._dev_mode:
-                canvas_us, lcd_us, region_count = self._renderer.last_profile()
-                profile = self._renderer.last_detailed_profile()
-                memory_used, memory_total = memory_usage()
-                response = (
-                    "ACK:LCD_FRAME:{}:TOTAL={}MS:CANVAS={}US:LCD={}US:"
-                    "VIEW={}US:BUFFER={}US:GC={}US:SCHEDULE={}US:"
-                    "SLOWEST_REGION={}US:"
-                    "REGIONS={}:MEMORY_USED={}:MEMORY_TOTAL={}:"
-                    "CANVAS_BACKEND={}:PROTOCOL_BACKEND={}\n"
-                ).format(
-                    self._rendering_version,
-                    self._renderer.last_render_ms(),
-                    canvas_us,
-                    lcd_us,
-                    profile["view_us"],
-                    profile["buffer_us"],
-                    profile["gc_us"],
-                    profile["schedule_us"],
-                    profile["slowest_region_us"],
-                    region_count,
-                    memory_used,
-                    memory_total,
-                    self._renderer.canvas_backend().upper(),
-                    self._protocol.protocol_backend(),
-                )
-                self._protocol.write(response.encode())
+            self._write_render_profile_if_needed(render_completed)
             time.sleep_ms(1)
 
 

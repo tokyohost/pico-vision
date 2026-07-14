@@ -377,15 +377,20 @@ class RuntimeOperationsMixin:
                 return
 
     def _wait_for_transmit_idle(self):
-        """等待当前快照完成发送，供 once 模式保持原有发送后退出语义。"""
+        """等待全部已提交快照完成发送，避免取出队列瞬间被误判为空闲。"""
         self._ensure_transmit_state()
         while not self.stopping.is_set():
             self._raise_transmit_error_if_any()
-            with self._transmit_lock:
-                sending = self._transmit_sending
-            if not sending and self._transmit_queue.empty():
+            with self._transmit_queue.all_tasks_done:
+                unfinished_tasks = self._transmit_queue.unfinished_tasks
+            if unfinished_tasks == 0:
                 return
             self.stopping.wait(0.05)
+
+    def _wait_for_next_transmission(self):
+        """等待当前快照发送完成，再从完成时刻开始计算完整发送间隔。"""
+        self._wait_for_transmit_idle()
+        self._wait_for_interval_or_transmit_error(self._effective_transmit_interval())
 
     def _snapshot_for_sending(self):
         """返回发送视图，并在发送前叠加不属于采集任务的配置字段。"""

@@ -263,8 +263,8 @@ class DashboardRenderer:
             self._gc_us = time.ticks_diff(time.ticks_us(), gc_started)
         return completed
 
-    def update_pending(self, max_regions=8):
-        """在单轮循环内批量刷新多个区域，减少区域间的调度延迟。"""
+    def update_pending(self, max_regions=8, time_budget_us=None):
+        """在区域数和软时间预算内批量刷新，减少区域间的调度延迟。"""
         if not self.is_rendering() and self._completion_pending:
             self._last_render_ms = time.ticks_diff(
                 time.ticks_ms(), self._render_started
@@ -272,11 +272,21 @@ class DashboardRenderer:
             self._render_started = None
             self._completion_pending = False
             return True
+        maximum_regions = max(1, int(max_regions))
+        budget_us = None
+        if time_budget_us is not None:
+            budget_us = max(1, int(time_budget_us))
+        batch_started = time.ticks_us() if budget_us is not None else None
         updated = 0
-        while updated < max_regions and self.is_rendering():
+        while updated < maximum_regions and self.is_rendering():
             updated += 1
             if self.update():
                 return True
+            if (
+                budget_us is not None
+                and time.ticks_diff(time.ticks_us(), batch_started) >= budget_us
+            ):
+                break
         return False
 
     def _show_view(self, x, y, width, height):
