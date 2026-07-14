@@ -34,7 +34,8 @@ class WifiCommandMixin:
 
     def has_pending_wifi_operation(self):
         """返回是否存在等待执行的 Wi-Fi 管理任务。"""
-        return not self.wifi_operations.empty()
+        operations = getattr(self, "wifi_operations", None)
+        return operations is not None and not operations.empty()
 
     def publish_wifi_operation(self):
         """执行一个 Wi-Fi 操作，并向托盘输出不含密钥的结构化结果。"""

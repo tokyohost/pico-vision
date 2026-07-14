@@ -103,6 +103,12 @@ class DeviceWindowMixin:
             state=tk.DISABLED,
         )
         firmware_button.pack(side=tk.LEFT, padx=(8, 0))
+        wifi_button = ttk.Button(
+            action_frame,
+            text="Wi-Fi 设置",
+            state=tk.DISABLED,
+            command=lambda: self._show_wifi_settings(root),
+        )
         reboot_button = ttk.Button(action_frame, text="重启设备", state=tk.DISABLED)
         reboot_button.pack(side=tk.RIGHT)
 
@@ -124,6 +130,18 @@ class DeviceWindowMixin:
         firmware_state = {"current_version": None}
         initial_connection = self._get_device_connection()
 
+        def update_wifi_button(connection=None):
+            """仅在已连接设备明确支持 Wi-Fi 时显示设置入口。"""
+            supported = bool(connection and connection.get("connected") and connection.get("wifi_supported"))
+            if supported:
+                if not wifi_button.winfo_manager():
+                    wifi_button.pack(side=tk.LEFT, padx=(8, 0))
+                wifi_button.configure(state=tk.NORMAL)
+                return
+            wifi_button.configure(state=tk.DISABLED)
+            if wifi_button.winfo_manager():
+                wifi_button.pack_forget()
+
         def clear_connected_device():
             """清空已连接设备信息，并禁用依赖有效串口的重启操作。"""
             device_values["board_model"].set("未连接")
@@ -134,6 +152,7 @@ class DeviceWindowMixin:
             reboot_button.configure(state=tk.DISABLED)
             firmware_button.configure(state=tk.DISABLED)
             firmware_state["current_version"] = None
+            update_wifi_button()
 
         def refresh_connection_state():
             """消费后台串口状态事件，实时同步设备面板和操作按钮。"""
@@ -162,6 +181,7 @@ class DeviceWindowMixin:
                     reboot_button.configure(state=tk.NORMAL)
                     firmware_button.configure(state=tk.NORMAL)
                     firmware_state["current_version"] = connection.get("firmware_version")
+                    update_wifi_button(connection)
                     status.set("设备已连接")
             except queue.Empty:
                 pass
@@ -388,6 +408,7 @@ class DeviceWindowMixin:
             reboot_button.configure(state=tk.NORMAL)
             firmware_button.configure(state=tk.NORMAL)
             firmware_state["current_version"] = connection.get("firmware_version")
+            update_wifi_button(connection)
             progress.stop()
             progress.configure(mode="determinate", maximum=100, value=100)
             status.set("设备已连接")

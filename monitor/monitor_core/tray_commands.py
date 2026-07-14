@@ -23,6 +23,12 @@ def _dispatch_tray_command(service, command):
         service.request_custom_style_catalog()
     elif command == "SCREENSHOT":
         service.request_screenshot()
+    elif command == "WIFI_LIST":
+        service.request_wifi_list()
+    elif command.startswith("WIFI_CONNECT:"):
+        service.request_wifi_connect(
+            json.loads(command[len("WIFI_CONNECT:"):])
+        )
     elif command.startswith("CUSTOM_STYLE_UPLOAD:"):
         service.request_custom_style_upload(
             json.loads(command[len("CUSTOM_STYLE_UPLOAD:"):])

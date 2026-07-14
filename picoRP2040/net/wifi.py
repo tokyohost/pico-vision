@@ -111,6 +111,9 @@ class WifiManager:
         if not ssid:
             raise ValueError("WIFI_SSID_REQUIRED")
         password = str(password or "")
+        if ssid == self._ssid and not password and self._password is not None:
+            # 已保存网络允许不重复输入密钥；新网络仍按界面输入值连接。
+            password = self._password
         self._wlan.active(True)
         if self._wlan.isconnected():
             self._wlan.disconnect()

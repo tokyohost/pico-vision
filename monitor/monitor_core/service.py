@@ -21,11 +21,12 @@ from system_monitor import SystemInformationCollector
 
 from .runtime_operations import RuntimeOperationsMixin
 from .style_commands import BUILTIN_LCD_STYLES, StyleCommandMixin
+from .wifi_commands import WifiCommandMixin
 
 LOGGER = logging.getLogger("pico-monitor")
 
 
-class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
+class MonitorService(WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin):
     """管理系统指标采集、Pico 连接以及异常重连。"""
 
     def __init__(self, arguments):
@@ -64,6 +65,7 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
         self.custom_style_uploads = queue.Queue()
         self.custom_style_deletes = queue.Queue()
         self.screenshot_requested = threading.Event()
+        self.initialize_wifi_commands()
         self.available_styles = set(BUILTIN_LCD_STYLES)
         self._snapshot_store = LockFreeSnapshotStore(self._create_initial_snapshot(arguments))
         self._latest_collected_snapshot = self._snapshot_store.snapshot()
@@ -227,6 +229,7 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
                     or self.screenshot_requested.is_set()
                     or not self.custom_style_uploads.empty()
                     or not self.custom_style_deletes.empty()
+                    or self.has_pending_wifi_operation()
                 )
                 if has_control_operation:
                     self._wait_for_transmit_idle()
@@ -238,6 +241,9 @@ class MonitorService(StyleCommandMixin, RuntimeOperationsMixin):
                     self._publish_custom_style_upload()
                 if not self.custom_style_deletes.empty():
                     self._publish_custom_style_delete()
+                    continue
+                if self.has_pending_wifi_operation():
+                    self.publish_wifi_operation()
                     continue
                 started = time.monotonic()
                 snapshot = self._snapshot_for_sending()

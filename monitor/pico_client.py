@@ -191,7 +191,7 @@ class PicoJsonClient:
                 if self._handshake(device):
                     self.serial = device
                     LOGGER.info(
-                        "[串口连接] %s 握手成功：开发板=%s，LCD=%s，屏幕方案=%s，固件版本=%s，分辨率=%sx%s",
+                        "[串口连接] %s 握手成功：开发板=%s，LCD=%s，屏幕方案=%s，固件版本=%s，分辨率=%sx%s，Wi-Fi支持=%s",
                         port,
                         self.board_model or "未知",
                         self.lcd_device_type or "未知",
@@ -199,6 +199,7 @@ class PicoJsonClient:
                         self.firmware_version or "未知",
                         self.screen_width or "未知",
                         self.screen_height or "未知",
+                        "是" if (self.net_status or {}).get("wifi_enabled") else "否",
                     )
                     self._start_cdc_framework()
                     return
@@ -221,7 +222,7 @@ class PicoJsonClient:
             self.serial = device
             self._start_cdc_framework()
             LOGGER.info(
-                "[WebSocket 连接] %s 握手成功：开发板=%s，LCD=%s，屏幕方案=%s，固件版本=%s，分辨率=%sx%s",
+                "[WebSocket 连接] %s 握手成功：开发板=%s，LCD=%s，屏幕方案=%s，固件版本=%s，分辨率=%sx%s，Wi-Fi支持=%s",
                 self.websocket_url,
                 self.board_model or "未知",
                 self.lcd_device_type or "未知",
@@ -229,6 +230,7 @@ class PicoJsonClient:
                 self.firmware_version or "未知",
                 self.screen_width or "未知",
                 self.screen_height or "未知",
+                "是" if (self.net_status or {}).get("wifi_enabled") else "否",
             )
         except Exception:
             if device is not None:
