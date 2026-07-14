@@ -89,12 +89,14 @@ class MonitorService(WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin
             self._complete_collection_fragment,
             extra_collection_tasks,
             arguments.collection_task_intervals,
+            arguments.collection_task_logs,
         )
         self._custom_data_coordinator = CustomDataCollectionCoordinator(
             self.custom_data_manager,
             self._snapshot_store,
             self._complete_collection_fragment,
             arguments.collection_task_intervals,
+            arguments.collection_task_logs,
         )
 
     def activate_custom_data_plugin(self, name):

@@ -31,8 +31,8 @@ class PicoPackageTargetsTest(unittest.TestCase):
         )
         return output
 
-    def test_esp32_package_enables_wireless_and_contains_font(self):
-        """ESP32-S3 包应启用 Wi-Fi，并包含 WebSocket 与中文字库。"""
+    def test_esp32_package_enables_wireless_without_external_font(self):
+        """ESP32-S3 包应启用无线功能且不再携带 SDK 已内置的字库。"""
         with tempfile.TemporaryDirectory() as directory:
             with zipfile.ZipFile(self._build(directory, "esp32-s3")) as archive:
                 names = set(archive.namelist())
@@ -41,8 +41,8 @@ class PicoPackageTargetsTest(unittest.TestCase):
         self.assertIn("WIFI_ENABLED = True", config)
         self.assertIn("net/wifi.py", names)
         self.assertIn("net/websocket.py", names)
-        self.assertIn("fonts/fusion_pixel_8px_zh_hans.fpf", names)
         self.assertIn("styles/style_fusion_pixel_test.py", names)
+        self.assertFalse(any(name.startswith("fonts/") for name in names))
 
     def test_rp2040_package_disables_wireless_and_omits_esp32_resources(self):
         """RP2040 包应关闭无线功能并排除 ESP32 专属资源。"""
@@ -54,7 +54,6 @@ class PicoPackageTargetsTest(unittest.TestCase):
         self.assertIn("WIFI_ENABLED = False", config)
         self.assertNotIn("net/wifi.py", names)
         self.assertNotIn("net/websocket.py", names)
-        self.assertNotIn("font_fusion_pixel.py", names)
         self.assertIn("styles/style_fusion_pixel_test.py", names)
         self.assertFalse(any(name.startswith("fonts/") for name in names))
 

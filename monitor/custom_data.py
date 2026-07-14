@@ -406,11 +406,19 @@ class CustomDataCollectionTask(CollectionTask):
 class CustomDataCollectionCoordinator:
     """使用独立线程池调度全部自定义数据采集任务。"""
 
-    def __init__(self, manager, result_store, result_transform=None, task_intervals=None):
+    def __init__(
+        self,
+        manager,
+        result_store,
+        result_transform=None,
+        task_intervals=None,
+        task_logs_enabled=True,
+    ):
         """创建核心 1、最大 5、队列 100 的自定义数据采集协调器。"""
         self.manager = manager
         self.result_store = result_store
         self.result_transform = result_transform
+        self.task_logs_enabled = bool(task_logs_enabled)
         self.task_intervals = dict(task_intervals or {})
         self.tasks = ()
         self.executor = BoundedElasticThreadPool(
@@ -421,8 +429,9 @@ class CustomDataCollectionCoordinator:
         self._sync_tasks()
         self.manager.prepare_environments_async()
         LOGGER = logging.getLogger("pico-monitor.custom-data")
-        LOGGER.info("自定义数据采集线程池已初始化：%s", self._pool_state_text())
-        LOGGER.info("自定义数据采集任务频率：%s", self._task_interval_text() or "无")
+        if self.task_logs_enabled:
+            LOGGER.info("自定义数据采集线程池已初始化：%s", self._pool_state_text())
+            LOGGER.info("自定义数据采集任务频率：%s", self._task_interval_text() or "无")
 
     def schedule(self):
         """提交当前到期且未在执行的自定义数据任务，队列饱和时丢弃。"""
@@ -436,12 +445,13 @@ class CustomDataCollectionCoordinator:
             task.mark_scheduled(now)
             try:
                 self.executor.submit(self._execute_and_publish, task)
-                logger.debug(
-                    "自定义数据任务已提交：任务=%s，频率=%.3f秒，%s",
-                    self._task_label(task),
-                    task.interval,
-                    self._pool_state_text(),
-                )
+                if self.task_logs_enabled:
+                    logger.debug(
+                        "自定义数据任务已提交：任务=%s，频率=%.3f秒，%s",
+                        self._task_label(task),
+                        task.interval,
+                        self._pool_state_text(),
+                    )
             except TaskRejectedError:
                 task.mark_finished()
                 logger.warning("自定义数据任务被丢弃：任务=%s，%s", self._task_label(task), self._pool_state_text())
@@ -466,9 +476,11 @@ class CustomDataCollectionCoordinator:
 
     def close(self, wait=True):
         """关闭自定义数据采集线程池。"""
-        logging.getLogger("pico-monitor.custom-data").info("自定义数据采集线程池准备关闭：%s", self._pool_state_text())
+        if self.task_logs_enabled:
+            logging.getLogger("pico-monitor.custom-data").info("自定义数据采集线程池准备关闭：%s", self._pool_state_text())
         self.executor.shutdown(wait=wait)
-        logging.getLogger("pico-monitor.custom-data").info("自定义数据采集线程池已关闭：%s", self._pool_state_text())
+        if self.task_logs_enabled:
+            logging.getLogger("pico-monitor.custom-data").info("自定义数据采集线程池已关闭：%s", self._pool_state_text())
 
     def _sync_tasks(self):
         """根据插件目录最新定义同步采集任务列表。"""
@@ -498,21 +510,24 @@ class CustomDataCollectionCoordinator:
         started = time.monotonic()
         task_label = self._task_label(task)
         logger = logging.getLogger("pico-monitor.custom-data")
-        logger.debug("自定义数据任务开始：任务=%s，%s", task_label, self._pool_state_text())
+        if self.task_logs_enabled:
+            logger.debug("自定义数据任务开始：任务=%s，%s", task_label, self._pool_state_text())
         try:
             fragment = task.collect()
             if self.result_transform is not None:
                 fragment = self.result_transform(fragment)
             self.result_store.publish(fragment)
             elapsed = time.monotonic() - started
-            log_method = logger.warning if elapsed >= CUSTOM_DATA_SLOW_TASK_WARNING_SECONDS else logger.debug
-            log_method(
-                "自定义数据任务完成：任务=%s，耗时=%.3f秒，更新字段=%s，%s",
-                task_label,
-                elapsed,
-                "、".join(fragment.keys()) or "无",
-                self._pool_state_text(),
-            )
+            is_slow_task = elapsed >= CUSTOM_DATA_SLOW_TASK_WARNING_SECONDS
+            if self.task_logs_enabled or is_slow_task:
+                log_method = logger.warning if is_slow_task else logger.debug
+                log_method(
+                    "自定义数据任务完成：任务=%s，耗时=%.3f秒，更新字段=%s，%s",
+                    task_label,
+                    elapsed,
+                    "、".join(fragment.keys()) or "无",
+                    self._pool_state_text(),
+                )
         except Exception as error:
             logger.exception(
                 "自定义数据任务失败：任务=%s，耗时=%.3f秒，错误=%s，%s",

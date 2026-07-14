@@ -9,8 +9,7 @@ Board of Trustees, All rights reserved.
 许可证：GNU GPL v2，附字体嵌入例外；完整条款见 GPL-2.0-WQY-ZENHEI.txt。
 
 本项目从该字体的 Sharp 字体面提取 ASCII 与 GB2312 的 16px 单色点阵，并转换为
-MicroPython ``fn_canvas`` 使用的逐行十六位只读字形。转换脚本位于
-``pico-project/tools/build_builtin_fonts.py``。
+MicroPython ``fn_canvas`` 使用的逐行十六位只读字形。字形数据已经编译进 SDK 固件。
 
 字体嵌入例外原文：
 

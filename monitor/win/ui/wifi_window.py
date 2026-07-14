@@ -74,7 +74,7 @@ class WifiWindowMixin:
         parent._wifi_settings_window = window
         window.withdraw()
         window.title("Wi-Fi 设置")
-        window.geometry("680x500")
+        window.geometry("680x580")
         window.minsize(560, 400)
         window.transient(parent)
         window.attributes("-topmost", True)

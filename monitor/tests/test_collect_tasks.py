@@ -252,6 +252,7 @@ class CollectionCoordinatorTest(unittest.TestCase):
         coordinator = CollectionCoordinator.__new__(CollectionCoordinator)
         coordinator.result_store = store
         coordinator.result_transform = None
+        coordinator.task_logs_enabled = True
         task = mock.Mock()
         task.name = "cpu_memory"
         task.zh_name = "CPU与内存采集"
@@ -265,6 +266,26 @@ class CollectionCoordinatorTest(unittest.TestCase):
         self.assertIn("采集任务开始：任务=CPU与内存采集(cpu_memory)", logs.output[0])
         self.assertIn("采集任务完成：任务=CPU与内存采集(cpu_memory)", logs.output[1])
         self.assertIn("线程池[核心=3，最大=8", logs.output[1])
+
+    def test_disabled_task_logs_keep_collection_errors(self):
+        """确认关闭常规任务日志后仍记录采集失败，避免隐藏真实故障。"""
+        coordinator = CollectionCoordinator.__new__(CollectionCoordinator)
+        coordinator.result_store = mock.Mock()
+        coordinator.result_transform = None
+        coordinator.task_logs_enabled = False
+        coordinator.executor = BoundedElasticThreadPool()
+        task = mock.Mock()
+        task.name = "cpu_memory"
+        task.zh_name = "CPU与内存采集"
+        task.collect.side_effect = RuntimeError("测试失败")
+        task.scheduled = True
+
+        with self.assertLogs("pico-monitor.collector", level="ERROR") as logs:
+            coordinator._execute_and_publish(task)
+
+        text = "\n".join(logs.output)
+        self.assertIn("采集任务失败：任务=CPU与内存采集(cpu_memory)", text)
+        self.assertNotIn("采集任务开始", text)
 
 
 if __name__ == "__main__":

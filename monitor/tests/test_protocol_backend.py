@@ -14,15 +14,6 @@ import protocolC  # noqa: E402
 from data_receiver import SnapshotCache  # noqa: E402
 
 
-class FindForbiddenBytearray(bytearray):
-    """模拟旧版 MicroPython 中没有可用 find 方法的字节缓冲区。"""
-
-    def find(self, *arguments, **keywords):
-        """若协议错误调用新版 find 方法则立即使测试失败。"""
-        del arguments, keywords
-        raise AssertionError("旧版 bytearray 不支持 find")
-
-
 class PartialWriteStream:
     """模拟 USB CDC 缓冲区每次只能接收部分数据的输出流。"""
 
@@ -61,37 +52,6 @@ class BackpressureStream(PartialWriteStream):
 
 class ProtocolBackendTest(unittest.TestCase):
     """验证原生协议后端只在接口完整兼容时启用。"""
-
-    def test_manual_subsequence_search_supports_legacy_bytearray(self):
-        """手动字节查找应兼容没有 find 方法的旧固件缓冲区。"""
-        data = FindForbiddenBytearray(b"noisePV1:PING\n")
-
-        self.assertEqual(5, protocol._find_subsequence(data, b"PV1:"))
-        self.assertEqual(13, protocol._find_subsequence(data, b"\n"))
-        self.assertEqual(-1, protocol._find_subsequence(data, b"missing"))
-
-    def test_line_parser_does_not_call_bytearray_find(self):
-        """完整行解析不应调用旧固件缺失的 bytearray.find。"""
-        instance = protocol.JsonProtocol.__new__(protocol.JsonProtocol)
-        instance._buffer = FindForbiddenBytearray(b"serial-noise\n")
-        instance._last_byte_ms = 1
-        instance._frame_started_ms = 1
-        instance._frame_read_calls = 1
-
-        self.assertIsNone(instance._parse_lines())
-        self.assertEqual(bytearray(), instance._buffer)
-
-    def test_magic_synchronization_does_not_call_bytearray_find(self):
-        """协议魔数同步不应调用旧固件缺失的 bytearray.find。"""
-        instance = protocol.JsonProtocol.__new__(protocol.JsonProtocol)
-        instance._buffer = FindForbiddenBytearray(b"noisePV1:partial")
-        instance._frame_started_ms = None
-        instance._frame_read_calls = 0
-
-        instance._synchronize_magic()
-
-        self.assertEqual(b"PV1:partial", bytes(instance._buffer))
-        self.assertEqual(1, instance._frame_read_calls)
 
     def test_snapshot_cache_reuses_missing_fragment_fields(self):
         """确认分片快照缺省字段会复用上一份内存快照。"""
@@ -156,6 +116,73 @@ class ProtocolBackendTest(unittest.TestCase):
         with mock.patch.object(protocolC, "_native_protocol", native_module):
             self.assertEqual(("PING", b""), protocol.JsonProtocol._parse_frame(frame))
         native_module.parse_frame.assert_not_called()
+
+    def test_bad_frame_length_error_contains_receive_diagnostics(self):
+        """确认截短帧错误包含声明长度、实收长度和读取次数。"""
+        instance = protocol.JsonProtocol.__new__(protocol.JsonProtocol)
+        instance._buffer = bytearray(b"PV1:JSONZ:5:0000:ab\n")
+        instance._last_byte_ms = 1
+        instance._frame_started_ms = 1
+        instance._frame_read_calls = 3
+        instance._write_frame = mock.Mock()
+
+        with mock.patch.object(protocolC, "_native_protocol", None):
+            self.assertIsNone(instance._parse_lines())
+
+        error_payload = instance._write_frame.call_args.args[1].decode("ascii")
+        self.assertIn("BAD_FRAME_LENGTH", error_payload)
+        self.assertIn("DECLARED=5", error_payload)
+        self.assertIn("REMAINDER=2", error_payload)
+        self.assertIn("SHORTAGE=3", error_payload)
+        self.assertIn("MAX={}".format(protocol.MAX_JSON_SIZE), error_payload)
+        self.assertIn(
+            "LINE_BYTES={}".format(len(b"PV1:JSONZ:5:0000:ab")),
+            error_payload,
+        )
+        self.assertIn("READS=3", error_payload)
+        self.assertIn("BACKEND=PYTHON", error_payload)
+
+    def test_oversized_frame_error_contains_limit_diagnostics(self):
+        """确认超出协议上限的帧错误包含超限字节数。"""
+        declared_length = protocol.MAX_JSON_SIZE + 9
+        line = "PV1:JSONZ:{}:0000:".format(declared_length).encode("ascii")
+
+        with mock.patch.object(protocolC, "_native_protocol", None):
+            payload = protocol.JsonProtocol._frame_error_payload(
+                ValueError("BAD_FRAME_LENGTH"),
+                line,
+            ).decode("ascii")
+
+        self.assertIn("DECLARED={}".format(declared_length), payload)
+        self.assertIn("REMAINDER=0", payload)
+        self.assertIn("OVER_LIMIT=9", payload)
+        self.assertIn("BACKEND=PYTHON", payload)
+
+    def test_native_length_error_uses_the_same_diagnostics(self):
+        """确认原生解析器的长度错误也经过统一诊断出口。"""
+        native_module = mock.Mock()
+        native_module.api_version.return_value = protocolC.NATIVE_PROTOCOL_API_VERSION
+        native_module.parse_frame.side_effect = ValueError("BAD_FRAME_LENGTH")
+        line = b"PV1:JSONZ:5:0000:ab"
+        instance = protocol.JsonProtocol.__new__(protocol.JsonProtocol)
+        instance._buffer = bytearray(line + b"\n")
+        instance._last_byte_ms = 1
+        instance._frame_started_ms = 1
+        instance._frame_read_calls = 2
+        instance._write_frame = mock.Mock()
+
+        with mock.patch.object(protocolC, "_native_protocol", native_module):
+            self.assertIsNone(instance._parse_lines())
+
+        payload = instance._write_frame.call_args.args[1].decode("ascii")
+        self.assertIn("DECLARED=5", payload)
+        self.assertIn("REMAINDER=2", payload)
+        self.assertIn("READS=2", payload)
+        self.assertIn("BACKEND=C", payload)
+        native_module.parse_frame.assert_called_once_with(
+            line,
+            protocol.MAX_JSON_SIZE,
+        )
 
     def test_write_raw_retries_partial_usb_writes(self):
         """确认较长 PONG 帧在 USB 部分写入时仍能完整发送。"""

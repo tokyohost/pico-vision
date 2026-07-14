@@ -1,10 +1,10 @@
-"""实现多传输策略竞选、锁定以及断线释放。"""
+"""实现 USB 优先的多传输选择、抢占以及断线恢复。"""
 
 from net.usb_cdc import UsbCdcTransport
 
 
 class TransportManager:
-    """在 USB CDC 与 Wi-Fi WebSocket 中锁定首个可用连接。"""
+    """统一管理 USB CDC 与 Wi-Fi WebSocket，并始终优先使用 USB。"""
 
     def __init__(
         self,
@@ -16,10 +16,12 @@ class TransportManager:
         """根据开关创建 USB 和可选 Wi-Fi 候选传输策略。"""
         self.wifi_enabled = bool(wifi_enabled)
         self.wifi = None
+        self._usb_transport = None
         self._wifi_transport = None
         self._strategies = []
         if usb_stream is not None:
-            self._strategies.append(UsbCdcTransport(usb_stream))
+            self._usb_transport = UsbCdcTransport(usb_stream)
+            self._strategies.append(self._usb_transport)
         if self.wifi_enabled:
             from net.websocket import WebSocketTransport
             from net.wifi import WifiManager
@@ -34,11 +36,25 @@ class TransportManager:
         self._active = None
 
     def _update_selection(self):
-        """推进全部候选，并在活动连接断开后重新选择首个连接。"""
-        for strategy in self._strategies:
-            strategy.update()
+        """优先选择 USB；USB 断开后才推进并选择 WebSocket。"""
+        if self._usb_transport is not None:
+            self._usb_transport.update()
+            if self._usb_transport.is_connected():
+                if self._active is not self._usb_transport:
+                    # USB 建立连接后立即关闭 WebSocket 会话，避免两个通道
+                    # 同时收发 PV1 数据；USB 断开后会重新启动监听。
+                    if self._wifi_transport is not None:
+                        self._wifi_transport.close()
+                    self._active = self._usb_transport
+                return
+
         if self._active is not None and not self._active.is_connected():
             self._active = None
+
+        # USB 未连接时才推进 Wi-Fi WebSocket，确保 USB 会话期间完全忽略它。
+        if self._wifi_transport is not None:
+            self._wifi_transport.update()
+
         if self._active is None:
             for strategy in self._strategies:
                 if strategy.is_connected():

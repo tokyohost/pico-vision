@@ -44,6 +44,7 @@ DEFAULT_SETTINGS = {
     "lan_probe_timeout": 0.3,
     "lan_probe_max_workers": 256,
     "collection_task_intervals": dict(DEFAULT_COLLECTION_TASK_INTERVALS),
+    "collection_task_logs": True,
     "screen_rotation": 0,
     "lcd_brightness": 100,
     "network_unit": "MB",
@@ -154,6 +155,7 @@ class TraySettingsStore:
         if not 1 <= settings["lcd_brightness"] <= 100:
             settings["lcd_brightness"] = DEFAULT_SETTINGS["lcd_brightness"]
         settings["adaptive_transmit"] = bool(settings.get("adaptive_transmit", True))
+        settings["collection_task_logs"] = bool(settings.get("collection_task_logs", True))
         try:
             settings["lan_probe_port"] = int(settings["lan_probe_port"])
             if not 1 <= settings["lan_probe_port"] <= 65535:
@@ -200,6 +202,7 @@ def apply_worker_arguments(arguments, settings):
         if argument in (
                 "--dev", "--no-dev", "--qbittorrent-enabled", "--no-qbittorrent",
                 "--adaptive-transmit", "--no-adaptive-transmit",
+                "--collection-task-logs", "--no-collection-task-logs",
         ):
             index += 1
             continue
@@ -217,6 +220,7 @@ def apply_worker_arguments(arguments, settings):
         retained.extend((option, str(value)))
     retained.append("--qbittorrent-enabled" if settings["qbittorrent_enabled"] else "--no-qbittorrent")
     retained.append("--adaptive-transmit" if settings["adaptive_transmit"] else "--no-adaptive-transmit")
+    retained.append("--collection-task-logs" if settings["collection_task_logs"] else "--no-collection-task-logs")
     if settings["dev"]:
         retained.append("--dev")
     return retained
@@ -250,6 +254,10 @@ def settings_from_arguments(arguments, base=None):
             settings["adaptive_transmit"] = True
         elif argument == "--no-adaptive-transmit":
             settings["adaptive_transmit"] = False
+        elif argument == "--collection-task-logs":
+            settings["collection_task_logs"] = True
+        elif argument == "--no-collection-task-logs":
+            settings["collection_task_logs"] = False
         elif argument == "--dev":
             settings["dev"] = True
         elif argument == "--no-dev":

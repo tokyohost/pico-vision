@@ -17,6 +17,7 @@ CONFIG_ENV_MAP = {
     "PICO_MONITOR_INTERVAL": ("monitor", "interval"),
     "PICO_MONITOR_ADAPTIVE_TRANSMIT": ("monitor", "adaptive_transmit"),
     "PICO_MONITOR_COLLECTION_TASK_INTERVALS": ("collection_tasks", "intervals"),
+    "PICO_MONITOR_COLLECTION_TASK_LOGS": ("collection_tasks", "logs_enabled"),
     "PICO_MONITOR_RECONNECT_INTERVAL": ("monitor", "reconnect_interval"),
     "PICO_MONITOR_SERIAL_PROBE_INTERVAL": ("serial", "probe_interval"),
     "PICO_MONITOR_SCREEN_ROTATION": ("screen", "rotation"),

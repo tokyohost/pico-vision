@@ -90,26 +90,6 @@ CRC16_BYTE_TABLE = _build_crc16_byte_table()
 JSONZ_GC_FREE_THRESHOLD = 72 * 1024
 
 
-def _find_subsequence(data, marker):
-    """手动查找字节序列，兼容没有 bytearray.find 的旧版 MicroPython。"""
-    marker_length = len(marker)
-    if marker_length == 0:
-        return 0
-    last_start = len(data) - marker_length
-    first_byte = marker[0]
-    for start in range(last_start + 1):
-        if data[start] != first_byte:
-            continue
-        matched = True
-        for offset in range(1, marker_length):
-            if data[start + offset] != marker[offset]:
-                matched = False
-                break
-        if matched:
-            return start
-    return -1
-
-
 def _collect_jsonz_garbage_if_needed():
     """仅在 JSONZ 可用堆低于安全线时回收临时对象。"""
     try:
@@ -324,7 +304,14 @@ class JsonProtocol:
                     parse_started_ms,
                 )
             except ValueError as error:
-                self._write_frame("ERR", str(error).encode("ascii", "replace"))
+                self._write_frame(
+                    "ERR",
+                    self._frame_error_payload(
+                        error,
+                        line,
+                        frame_read_calls=frame_read_calls,
+                    ),
+                )
                 continue
 
             if message_type == "PING":
@@ -585,6 +572,55 @@ class JsonProtocol:
         if protocolC.native_protocol_supported():
             return protocolC.parse_frame_native(line, MAX_JSON_SIZE)
         return cls._parse_frame_python(line)
+
+    @classmethod
+    def _frame_error_payload(cls, error, line, frame_read_calls=None):
+        """生成包含长度现场的帧错误载荷，且不回显业务数据。"""
+        error_code = str(error)
+        if error_code != "BAD_FRAME_LENGTH":
+            return error_code.encode("ascii", "replace")
+
+        line = bytes(line)
+        declared_length = None
+        remainder_length = None
+        separators = []
+        search_start = 0
+        for _ in range(4):
+            separator = line.find(b":", search_start)
+            if separator < 0:
+                break
+            separators.append(separator)
+            search_start = separator + 1
+        if len(separators) == 4:
+            try:
+                declared_length = int(
+                    line[separators[1] + 1:separators[2]]
+                )
+            except (TypeError, ValueError):
+                declared_length = None
+            remainder_length = len(line) - separators[3] - 1
+
+        diagnostics = ["BAD_FRAME_LENGTH"]
+        if declared_length is not None:
+            diagnostics.append("DECLARED={}".format(declared_length))
+        if remainder_length is not None:
+            diagnostics.append("REMAINDER={}".format(remainder_length))
+        if declared_length is not None and remainder_length is not None:
+            shortage = declared_length - remainder_length
+            if shortage > 0:
+                diagnostics.append("SHORTAGE={}".format(shortage))
+        if declared_length is not None and declared_length > MAX_JSON_SIZE:
+            diagnostics.append(
+                "OVER_LIMIT={}".format(declared_length - MAX_JSON_SIZE)
+            )
+        diagnostics.extend((
+            "MAX={}".format(MAX_JSON_SIZE),
+            "LINE_BYTES={}".format(len(line)),
+        ))
+        if frame_read_calls is not None:
+            diagnostics.append("READS={}".format(frame_read_calls))
+        diagnostics.append("BACKEND={}".format(cls.protocol_backend()))
+        return ":".join(diagnostics).encode("ascii", "replace")
 
     @classmethod
     def _parse_frame_python(cls, line):

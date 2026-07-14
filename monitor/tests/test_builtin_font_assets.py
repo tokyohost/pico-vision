@@ -1,23 +1,28 @@
 """验证编译进 MicroPython 固件的双语点阵字体资源。"""
 
 import re
-import sys
 import unittest
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORKSPACE_ROOT = PROJECT_ROOT.parent
-PICO_ROOT = PROJECT_ROOT / "picoRP2040"
-TOOLS_ROOT = PROJECT_ROOT / "tools"
 FONT_SOURCE = (
     WORKSPACE_ROOT / "micropython" / "ports" / "rp2" / "modules"
     / "fn_canvas" / "font_builtin_data.c"
 )
-sys.path.insert(0, str(PICO_ROOT))
-sys.path.insert(0, str(TOOLS_ROOT))
 
-from build_builtin_fonts import _supported_characters  # noqa: E402
+
+def _supported_characters():
+    """返回 SDK 内置字体应覆盖的 ASCII 与 GB2312 字符表。"""
+    characters = {chr(codepoint) for codepoint in range(0x20, 0x7F)}
+    for lead in range(0xA1, 0xF8):
+        for trail in range(0xA1, 0xFF):
+            try:
+                characters.add(bytes((lead, trail)).decode("gb2312"))
+            except UnicodeDecodeError:
+                continue
+    return tuple(sorted(characters, key=ord))
 
 
 def _array_bytes(source, name):

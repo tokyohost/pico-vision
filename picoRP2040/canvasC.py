@@ -101,9 +101,6 @@ class CanvasC(PythonCanvas):
         """通过默认或指定字体绘制文字，并优先使用兼容的 C 后端。"""
         previous = self._select_text_font(font_name)
         try:
-            if self._font_name == "fusion_pixel_8px":
-                PythonCanvas._draw_text(self, x, y, value, color, scale)
-                return
             if self._font_name == "native" and scale == 1:
                 PythonCanvas._draw_text(self, x, y, value, color, scale)
                 return

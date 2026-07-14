@@ -121,6 +121,7 @@ class SettingsWindowMixin:
             "ping_target": tk.StringVar(master=root, value=self.settings["ping_target"]),
             "interval": tk.StringVar(master=root, value=self.settings["interval"]),
             "adaptive_transmit": tk.BooleanVar(master=root, value=bool(self.settings.get("adaptive_transmit", True))),
+            "collection_task_logs": tk.BooleanVar(master=root, value=bool(self.settings.get("collection_task_logs", True))),
             "reconnect_interval": tk.StringVar(master=root, value=self.settings["reconnect_interval"]),
             "serial_probe_interval": tk.StringVar(master=root, value=self.settings["serial_probe_interval"]),
             "screen_rotation": tk.StringVar(master=root, value=str(self.settings["screen_rotation"])),
@@ -249,7 +250,13 @@ class SettingsWindowMixin:
         field(monitor, 5, "串口探测 PING 间隔（秒）", ttk.Entry(monitor, textvariable=variables["serial_probe_interval"]))
 
         collection_tasks = card("系统采集任务")
-        for row, (task_name, variable) in enumerate(collection_task_variables.items()):
+        collection_task_logs_control = ttk.Checkbutton(
+            collection_tasks,
+            text="输出采集任务提交、开始、完成及线程池状态日志（错误和告警始终保留）",
+            variable=variables["collection_task_logs"],
+        )
+        field(collection_tasks, 0, "任务日志", collection_task_logs_control)
+        for row, (task_name, variable) in enumerate(collection_task_variables.items(), start=1):
             default_interval = DEFAULT_COLLECTION_TASK_INTERVALS[task_name]
             task_label = COLLECTION_TASK_ZH_NAMES.get(task_name, task_name)
             field(
@@ -358,6 +365,7 @@ class SettingsWindowMixin:
                     "reconnect_interval": float(variables["reconnect_interval"].get()),
                     "serial_probe_interval": float(variables["serial_probe_interval"].get()),
                     "collection_task_intervals": collection_task_intervals,
+                    "collection_task_logs": bool(variables["collection_task_logs"].get()),
                     "screen_rotation": int(variables["screen_rotation"].get()),
                     "lcd_brightness": int(variables["lcd_brightness"].get()),
                     "network_unit": variables["network_unit"].get(),

@@ -113,6 +113,7 @@ class CustomDataTaskTest(unittest.TestCase):
         )
         coordinator.result_transform = None
         coordinator.result_store = mock.Mock()
+        coordinator.task_logs_enabled = True
         coordinator.executor = mock.Mock()
         coordinator.executor.state.return_value = {
             "core_workers": 1,
@@ -142,6 +143,7 @@ class CustomDataTaskTest(unittest.TestCase):
         )
         coordinator.result_transform = None
         coordinator.result_store = mock.Mock()
+        coordinator.task_logs_enabled = True
         coordinator.executor = mock.Mock()
         coordinator.executor.state.return_value = {
             "core_workers": 1,

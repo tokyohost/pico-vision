@@ -184,7 +184,11 @@ class WebSocketTransport(TransportStrategy):
             mask = self._wire_buffer[offset:offset + mask_size]
             payload_start = offset + mask_size
             payload = bytearray(self._wire_buffer[payload_start:payload_start + length])
-            del self._wire_buffer[:payload_start + length]
+            # 部分 RP2040 MicroPython 固件不支持 bytearray 项删除，
+            # 通过重建剩余缓冲区消费完整帧，避免握手首帧触发 TypeError。
+            self._wire_buffer = bytearray(
+                self._wire_buffer[payload_start + length:]
+            )
             if masked:
                 for index in range(length):
                     payload[index] ^= mask[index & 3]
@@ -261,7 +265,8 @@ class WebSocketTransport(TransportStrategy):
         if count <= 0:
             return 0
         buffer[:count] = self._receive_buffer[:count]
-        del self._receive_buffer[:count]
+        # 与解帧缓冲保持相同的 MicroPython 兼容消费方式。
+        self._receive_buffer = bytearray(self._receive_buffer[count:])
         return count
 
     def write(self, data):

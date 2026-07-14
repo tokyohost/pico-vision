@@ -79,9 +79,6 @@ class Canvas:
                 "wqy_8x16": WQY_8X16,
                 "fusion_pixel_8x16": FUSION_PIXEL_8X16,
             })
-        if normalized_name == "fusion_pixel_8px":
-            from font_fusion_pixel import FUSION_PIXEL_8PX
-            fonts[normalized_name] = FUSION_PIXEL_8PX
         if normalized_name not in fonts:
             raise ValueError("未知点阵字体：{}".format(normalized_name))
         return normalized_name, fonts[normalized_name]

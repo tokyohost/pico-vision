@@ -20,18 +20,21 @@ class CollectionCoordinator:
         result_transform=None,
         extra_tasks=(),
         task_intervals=None,
+        task_logs_enabled=True,
     ):
         """创建默认 3 核心、8 最大、100 等待任务的采集协调器。"""
         self.result_store = result_store
         self.result_transform = result_transform
+        self.task_logs_enabled = bool(task_logs_enabled)
         self.tasks = create_system_tasks(collector) + tuple(
             self._create_callback_task(collector, item)
             for item in extra_tasks
         )
         self._apply_task_intervals(task_intervals or {})
         self.executor = BoundedElasticThreadPool(core_workers=3, max_workers=8, queue_capacity=100)
-        LOGGER.info("采集线程池已初始化：%s", self._pool_state_text())
-        LOGGER.info("采集任务频率：%s", self._task_interval_text())
+        if self.task_logs_enabled:
+            LOGGER.info("采集线程池已初始化：%s", self._pool_state_text())
+            LOGGER.info("采集任务频率：%s", self._task_interval_text())
 
     def schedule(self):
         """提交当前到期且空闲的子任务，未到期或正在执行的任务不会重复入队。"""
@@ -42,12 +45,13 @@ class CollectionCoordinator:
             task.mark_scheduled(now)
             try:
                 self.executor.submit(self._execute_and_publish, task)
-                LOGGER.debug(
-                    "采集任务已提交：任务=%s，频率=%.3f秒，%s",
-                    self._task_label(task),
-                    task.interval,
-                    self._pool_state_text(),
-                )
+                if self.task_logs_enabled:
+                    LOGGER.debug(
+                        "采集任务已提交：任务=%s，频率=%.3f秒，%s",
+                        self._task_label(task),
+                        task.interval,
+                        self._pool_state_text(),
+                    )
             except TaskRejectedError:
                 task.mark_finished()
                 LOGGER.warning("采集任务被丢弃：任务=%s，%s", self._task_label(task), self._pool_state_text())
@@ -66,9 +70,11 @@ class CollectionCoordinator:
 
     def close(self, wait=True):
         """关闭采集线程池，并按需等待已经接受的任务执行完毕。"""
-        LOGGER.info("采集线程池准备关闭：%s", self._pool_state_text())
+        if self.task_logs_enabled:
+            LOGGER.info("采集线程池准备关闭：%s", self._pool_state_text())
         self.executor.shutdown(wait=wait)
-        LOGGER.info("采集线程池已关闭：%s", self._pool_state_text())
+        if self.task_logs_enabled:
+            LOGGER.info("采集线程池已关闭：%s", self._pool_state_text())
 
     @staticmethod
     def _create_callback_task(collector, item):
@@ -121,19 +127,21 @@ class CollectionCoordinator:
         """执行单个子任务，并在完成时立即无锁发布对应采样结果。"""
         started = time.monotonic()
         task_label = self._task_label(task)
-        LOGGER.debug("采集任务开始：任务=%s，%s", task_label, self._pool_state_text())
+        if self.task_logs_enabled:
+            LOGGER.debug("采集任务开始：任务=%s，%s", task_label, self._pool_state_text())
         try:
             fragment = task.collect()
             if self.result_transform is not None:
                 fragment = self.result_transform(fragment)
             self.result_store.publish(fragment)
-            LOGGER.debug(
-                "采集任务完成：任务=%s，耗时=%.3f秒，更新字段=%s，%s",
-                task_label,
-                time.monotonic() - started,
-                "、".join(fragment.keys()) or "无",
-                self._pool_state_text(),
-            )
+            if self.task_logs_enabled:
+                LOGGER.debug(
+                    "采集任务完成：任务=%s，耗时=%.3f秒，更新字段=%s，%s",
+                    task_label,
+                    time.monotonic() - started,
+                    "、".join(fragment.keys()) or "无",
+                    self._pool_state_text(),
+                )
         except Exception as error:
             LOGGER.exception(
                 "采集任务失败：任务=%s，耗时=%.3f秒，错误=%s，%s",

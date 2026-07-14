@@ -36,7 +36,7 @@ LCD_BOOT_PRELOAD_STYLES = ("horizontal_disk4x_qb",)
 
 # JSON 数据包限制与单次读取预算。
 MAX_JSON_SIZE = 16 * 1024
-SERIAL_READ_BUDGET = 2048
+SERIAL_READ_BUDGET = 4096
 
 # 后盖三按键使用 GP1、GP2、GP3，避开全部八针/十针 LCD 与两种板载状态灯。
 # 按键默认一端接 GPIO、另一端共接 GND，并使用 RP2040 内部上拉。
@@ -61,7 +61,7 @@ USB_CDC_RX_BUFFER_SIZE = 4096
 USB_CDC_TX_BUFFER_SIZE = 1024
 USB_CDC_ENUMERATION_TIMEOUT_MS = 5000
 # 是否启用 Wi-Fi 与 WebSocket 传输；设为 False 时完全不初始化无线网卡。
-WIFI_ENABLED = False
+WIFI_ENABLED = True
 # Wi-Fi WebSocket 服务参数；Monitor 默认连接 ws://设备IP:8765/pv1。
 WEBSOCKET_PORT = 8765
 WEBSOCKET_PATH = "/pv1"

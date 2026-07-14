@@ -27,16 +27,15 @@ CONFIG_ASSIGNMENT_PATTERN = r"(?m)^{}\s*=\s*[\"'][^\"']*[\"']\s*$"
 CONFIG_BOOLEAN_ASSIGNMENT_PATTERN = r"(?m)^{}\s*=\s*(?:True|False)\s*$"
 CONFIG_VALUE_PATTERN = re.compile(r"^[a-z0-9_.-]+$")
 VERSION_VALUE_PATTERN = re.compile(r"^[0-9A-Za-z.+_-]+$")
-FIRMWARE_FILE_SUFFIXES = frozenset((".py", ".fpf", ".txt"))
+FIRMWARE_FILE_SUFFIXES = frozenset((".py", ".txt"))
 ESP32_BOARD_MODELS = frozenset(("esp32-s3",))
 ESP32_ONLY_FILES = frozenset((
     "command/wifi_list.py",
     "command/wifi_set.py",
-    "font_fusion_pixel.py",
     "net/websocket.py",
     "net/wifi.py",
 ))
-ESP32_ONLY_PREFIXES = ("fonts/",)
+DEVICE_EXCLUDED_PREFIXES = ("fonts/",)
 
 
 def load_lcd_profiles(source_directory):
@@ -127,11 +126,10 @@ def collect_files(
         if path.is_file() and path.suffix.lower() in FIRMWARE_FILE_SUFFIXES
     ):
         relative = path.relative_to(source_directory).as_posix()
+        if relative.startswith(DEVICE_EXCLUDED_PREFIXES):
+            continue
         is_esp32_target = str(board_model or "").lower() in ESP32_BOARD_MODELS
-        if not is_esp32_target and (
-            relative in ESP32_ONLY_FILES
-            or relative.startswith(ESP32_ONLY_PREFIXES)
-        ):
+        if not is_esp32_target and relative in ESP32_ONLY_FILES:
             continue
         data = path.read_bytes()
         if relative == "config.py":

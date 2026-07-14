@@ -1090,6 +1090,7 @@ class PicoClientTest(unittest.TestCase):
                     "screen:",
                     "  lcd_brightness: 80",
                     "collection_tasks:",
+                    "  logs_enabled: false",
                     "  intervals:",
                     "    cpu_memory: 2",
                     "qbittorrent:",
@@ -1112,6 +1113,7 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual(arguments.lcd_brightness, 80)
         self.assertFalse(arguments.dev)
         self.assertEqual(arguments.collection_task_intervals["cpu_memory"], 2)
+        self.assertFalse(arguments.collection_task_logs)
         self.assertTrue(arguments.qbittorrent_enabled)
         validate_arguments(arguments)
 

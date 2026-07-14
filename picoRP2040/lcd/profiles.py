@@ -134,7 +134,7 @@ def create_eight_pin_board_profiles():
         9,
         14,
         LcdBacklightProfile.pwm(13),
-        baudrate=10_000_000,
+        baudrate=40_000_000,
         connector_pins=(
             "GND", "VCC", "SCL", "SDA", "RES", "DC", "CS", "BL"
         ),

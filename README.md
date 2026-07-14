@@ -31,8 +31,7 @@
 - `config.py`：开发板、屏幕方案、周期和协议配置。
 - `color_manager.py`：按屏幕型号管理反色模式和 RGB/BGR 颜色顺序。
 - `board_manager.py`：注册开发板硬件档案并隔离不同板载 LED 类型。
-- `fonts/`：旧固件兼容使用的 Fusion Pixel 文件字库及其 OFL 授权；新版 RP2040
-  固件已内置文泉驿点阵正黑和 Fusion Pixel 双语字模。
+- `fonts/`：SDK 内置文泉驿点阵正黑和 Fusion Pixel 双语字模的授权说明。
 
 Pico 握手会向 Monitor 返回当前开发板型号、屏幕色彩方案、运行固件版本和 `net` 状态；USB 模式返回 `mode=usb`，Wi-Fi 模式还返回 SSID、IP、网关、RSSI、WebSocket 端口与路径。源码
 直接部署时版本为 `development`，发布升级包会自动写入对应的发布版本。
@@ -48,7 +47,7 @@ ESP32-S3 与 RP2040 都遵循样式声明的默认字体，例如现有紧凑样
 `font_name = "screen_2inch_compact"`。需要显示中文时，可通过 `canvas.text()` 的
 `font_name` 参数为单次文字绘制选择字体；调用结束后会恢复样式默认字体。
 
-四兆字节 RP2040 使用项目内置固件时，还可选择 `wqy_8x16` 或
+项目配套的 RP2040 与 ESP32-S3 固件还可选择 `wqy_8x16` 或
 `fusion_pixel_8x16`。两者均为英文半角 8×16、中文全角 16×16，直接由 `fn_canvas`
 从固件只读区绘制。`canvas.text()` 和 `canvas.text_width()` 都接受 `font_name`；不传入
 时保持当前样式字体，样式未指定时仍默认 `native`。
