@@ -65,7 +65,7 @@ def configure_garbage_collection():
 
 
 class Application:
-    """以单核协作式循环编排 LED、JSON 传输与 LCD 刷新。"""
+    """以通信主循环编排接收，并把 LCD 刷新委托给渲染服务。"""
 
     def __init__(self, protocol, transport=None):
         """按通信、LED、LCD 的顺序初始化各组件。"""
@@ -73,6 +73,7 @@ class Application:
         from dashboard import DashboardRenderer
         from data_receiver import DataReceiver, SnapshotCache
         from lcd import create_lcd_device
+        from render_service import RenderService
         from button_controller import ButtonController
         from led import create_led_controller
 
@@ -107,8 +108,16 @@ class Application:
         )
         self._protocol.write(b"BOOT:LCD_READY\n")
         self._failed_custom_style = None
-        self._renderer = DashboardRenderer(
-            self._lcd, style_name="boot"
+        self._renderer = RenderService(
+            self._lcd,
+            DashboardRenderer,
+            style_name="boot",
+        )
+        render_threaded = self._renderer.start()
+        self._protocol.write(
+            "BOOT:RENDER_SERVICE:{}\n".format(
+                "THREAD" if render_threaded else "SYNC_FALLBACK"
+            ).encode()
         )
         self._buttons = ButtonController()
         self._protocol.set_command_services({"renderer": self._renderer})
@@ -381,15 +390,19 @@ class Application:
             return
         canvas_us, lcd_us, region_count = self._renderer.last_profile()
         profile = self._renderer.last_detailed_profile()
+        completed_version = self._renderer.last_completed_version()
+        if completed_version is None:
+            completed_version = self._rendering_version
         memory_used, memory_total = memory_usage()
         response = (
             "ACK:LCD_FRAME:{}:TOTAL={}MS:CANVAS={}US:LCD={}US:"
             "VIEW={}US:BUFFER={}US:GC={}US:SCHEDULE={}US:"
             "SLOWEST_REGION={}US:"
             "REGIONS={}:MEMORY_USED={}:MEMORY_TOTAL={}:"
-            "CANVAS_BACKEND={}:PROTOCOL_BACKEND={}\n"
+            "CANVAS_BACKEND={}:PROTOCOL_BACKEND={}:"
+            "RENDER_MODE={}:DROPPED_FRAMES={}\n"
         ).format(
-            self._rendering_version,
+            completed_version,
             self._renderer.last_render_ms(),
             canvas_us,
             lcd_us,
@@ -403,12 +416,16 @@ class Application:
             memory_total,
             self._renderer.canvas_backend().upper(),
             self._protocol.protocol_backend(),
+            "THREAD" if self._renderer.threaded() else "SYNC",
+            self._renderer.dropped_frames(),
         )
         self._protocol.write(response.encode())
 
     def _collect_garbage_if_safe(self, now):
         """在达到最小间隔且远离时钟边界时执行主动垃圾回收。"""
         if time.ticks_diff(now, self._next_gc) < 0:
+            return False
+        if self._renderer.is_rendering():
             return False
         until_clock_ms = time.ticks_diff(self._next_clock_render, now)
         if until_clock_ms <= GC_CLOCK_GUARD_MS:
@@ -514,9 +531,11 @@ class Application:
                 )
                 self._boot_frame += 1
                 self._next_boot_animation = time.ticks_add(now, 250)
+            renderer_busy = self._renderer.is_rendering()
+            accepts_queued_frame = self._renderer.accepts_while_rendering()
             if (
                 snapshot is not None
-                and not self._renderer.is_rendering()
+                and (not renderer_busy or accepts_queued_frame)
                 and (has_new_snapshot or idle_refresh_due)
             ):
                 display = snapshot.get("display", {}) if snapshot else {}
@@ -550,10 +569,10 @@ class Application:
                     requested_brightness = int(requested_brightness)
                 except (TypeError, ValueError):
                     requested_brightness = 100
-                if self._lcd.set_backlight_brightness(requested_brightness):
+                if self._renderer.set_backlight_brightness(requested_brightness):
                     self._protocol.write(
                         "CONFIG:LCD_BRIGHTNESS:{}\n".format(
-                            self._lcd.backlight_brightness()
+                            self._renderer.backlight_brightness()
                         ).encode()
                     )
                 try:
@@ -592,13 +611,17 @@ class Application:
                 if self._renderer.set_rotation(requested_rotation):
                     self._protocol.write(
                         "CONFIG:SCREEN_ROTATION:{}\n".format(
-                            self._lcd.rotation()
+                            self._renderer.rotation()
                         ).encode()
                     )
                 # 样式加载可能持续较长时间，实际提交渲染前重新推进本地时间，
                 # 避免把配置阶段开始时已经过期的秒数画到屏幕上。
                 snapshot, version = self._cache.latest()
-                self._renderer.request_render(snapshot, force=False)
+                self._renderer.request_render(
+                    snapshot,
+                    force=False,
+                    frame_version=version,
+                )
                 self._rendering_version = version
                 refresh_now = time.ticks_ms()
                 self._next_clock_render = self._cache.next_refresh_ms(

@@ -36,6 +36,17 @@ GC_CLOCK_GUARD_MS = 100
 RENDER_MAX_REGIONS = 8
 # 每轮渲染的软时间预算；单个区域完成后才检查，因此允许少量超时。
 RENDER_TIME_BUDGET_US = 50 * 1000
+# 是否启用第二阶段 Python 渲染工作线程；失败时自动回退同步服务。
+RENDER_SERVICE_THREAD_ENABLED = True
+# 渲染线程每轮只推进一个区域，及时检查控制队列和最新快照。
+RENDER_WORKER_MAX_REGIONS = 1
+# 渲染线程栈需覆盖样式插件、字体和 Canvas 的较深调用链。
+RENDER_WORKER_STACK_SIZE = 32 * 1024
+# 样式切换、旋转和截图等不可丢弃控制命令的固定队列容量。
+RENDER_CONTROL_QUEUE_CAPACITY = 8
+# 渲染线程启动和同步控制命令的最长等待时间。
+RENDER_SERVICE_START_TIMEOUT_MS = 5000
+RENDER_CONTROL_TIMEOUT_MS = 15000
 LCD_STYLE = "disk"
 # 利用 ESP32-S3 的 PSRAM 设置较大的累计分配阈值，降低自动 GC 频率。
 GC_ALLOCATION_THRESHOLD = 256 * 1024
