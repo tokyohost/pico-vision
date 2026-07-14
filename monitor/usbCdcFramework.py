@@ -12,6 +12,7 @@ LOGGER = logging.getLogger("pico-monitor.serial")
 CDC_WRITE_CHUNK_SIZE = 511
 CDC_READ_IDLE_SECONDS = 0.05
 CDC_WRITE_RETRY_SECONDS = 0.002
+CDC_WRITE_CHUNK_PAUSE_SECONDS = 0.0
 
 
 class UsbCdcFrameworkClosed(RuntimeError):
@@ -81,6 +82,7 @@ class UsbCdcFramework:
             response_callback=None,
             error_callback=None,
             write_chunk_size=CDC_WRITE_CHUNK_SIZE,
+            write_chunk_pause_seconds=CDC_WRITE_CHUNK_PAUSE_SECONDS,
             incoming_limit=256,
             write_limit=4,
     ):
@@ -91,6 +93,7 @@ class UsbCdcFramework:
         self.response_callback = response_callback
         self.error_callback = error_callback
         self.write_chunk_size = int(write_chunk_size)
+        self.write_chunk_pause_seconds = max(0.0, float(write_chunk_pause_seconds))
         self._incoming_queue = queue.Queue(maxsize=max(1, int(incoming_limit)))
         self._write_queue = queue.Queue(maxsize=max(1, int(write_limit)))
         self._stopping = threading.Event()
@@ -274,6 +277,8 @@ class UsbCdcFramework:
                 continue
             position += written
             result.total_written += written
+            if self.write_chunk_pause_seconds and position < len(packet):
+                time.sleep(self.write_chunk_pause_seconds)
         flush_started = time.monotonic()
         self.device.flush()
         result.flush_elapsed_ms = (time.monotonic() - flush_started) * 1000

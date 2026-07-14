@@ -6,7 +6,7 @@ import unittest
 
 import serial
 
-from pico_client import build_frame, parse_frame
+from pico_client import PicoJsonClient, build_frame, parse_frame
 from usbCdcFramework import UsbCdcFramework
 
 
@@ -49,6 +49,17 @@ class ThreadedSerial:
     def close(self):
         """关闭模拟串口。"""
         self.is_open = False
+
+
+class JsonAckSerial(ThreadedSerial):
+    """模拟在完整快照写入后由独立读取通道返回 JSON ACK 的设备。"""
+
+    def write(self, data):
+        """记录写入内容，并在帧末尾到达时异步提供请求一的 ACK。"""
+        written = super().write(data)
+        if bytes(data[:written]).endswith(b"\n"):
+            self.responses.put(build_frame("ACK", b"JSON:1"))
+        return written
 
 
 class UsbCdcFrameworkTest(unittest.TestCase):
@@ -101,6 +112,26 @@ class UsbCdcFrameworkTest(unittest.TestCase):
                     framework.raise_error_if_any()
         finally:
             framework.close()
+
+    def test_client_waiter_is_woken_by_cdc_reader_ack(self):
+        """确认后台 CDC 读线程收到 ACK 后能够唤醒快照发送线程。"""
+        serial_port = JsonAckSerial()
+        client = PicoJsonClient()
+        client.serial = serial_port
+        framework = UsbCdcFramework(
+            serial_port,
+            parse_frame,
+            response_callback=client._handle_cdc_response,
+            error_callback=client._handle_cdc_error,
+        )
+        client.transport = framework
+        framework.start()
+        try:
+            client.send({"version": 1}, wait_ack=True, ack_timeout=1.0)
+        finally:
+            framework.close()
+
+        self.assertIn(b"PV1:JSONZ:", bytes(serial_port.written))
 
 
 if __name__ == "__main__":

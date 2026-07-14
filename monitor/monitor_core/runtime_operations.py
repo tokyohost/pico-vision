@@ -12,7 +12,7 @@ from collections import deque
 import psutil
 
 from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
-from pico_client import PicoJsonClient
+from pico_client import JsonAckTimeoutError, PicoJsonClient
 from pico_upgrade import PicoFirmwareUpgrader, PicoUpgradeDownloader, PicoUpgradePackage
 
 LOGGER = logging.getLogger("pico-monitor")
@@ -74,6 +74,8 @@ class RuntimeOperationsMixin:
             self._adaptive_ack_seconds = deque(maxlen=ADAPTIVE_ACK_HISTORY_SIZE)
         if not hasattr(self, "_adaptive_interval_seconds"):
             self._adaptive_interval_seconds = None
+        if not hasattr(self, "_json_ack_suspended"):
+            self._json_ack_suspended = False
         if not hasattr(self, "_thread_diagnostics_thread"):
             self._thread_diagnostics_thread = None
         if not hasattr(self, "_thread_diagnostics_active"):
@@ -212,14 +214,25 @@ class RuntimeOperationsMixin:
                 with self._transmit_lock:
                     self._transmit_sending = True
                 adaptive_transmit = bool(getattr(self.arguments, "adaptive_transmit", True))
+                wait_ack = adaptive_transmit and not self._json_ack_suspended
                 ack_timeout = max(15.0, self._effective_transmit_interval() * 3.0)
                 send_started = time.monotonic()
-                self.client.send(
-                    snapshot,
-                    wait_ack=adaptive_transmit,
-                    ack_timeout=ack_timeout,
-                )
-                if adaptive_transmit:
+                try:
+                    self.client.send(
+                        snapshot,
+                        wait_ack=wait_ack,
+                        ack_timeout=ack_timeout,
+                    )
+                except JsonAckTimeoutError as error:
+                    # 快照写入已经完成，缺少 ACK 只能说明设备端未确认该能力，
+                    # 不能据此关闭仍然可用的串口并进入无限重连循环。
+                    self._json_ack_suspended = True
+                    LOGGER.warning(
+                        "%s；当前连接已自动关闭 JSON ACK 等待并保持异步发送，串口不会重连",
+                        error,
+                    )
+                    continue
+                if wait_ack:
                     self._record_json_ack_duration(time.monotonic() - send_started)
             except (OSError, RuntimeError) as error:
                 with self._transmit_lock:

@@ -100,6 +100,8 @@ def parse_frame(line):
 
 PING_COMMAND = build_frame("PING")
 SERIAL_WRITE_CHUNK_SIZE = 511
+ESP32_S3_SERIAL_WRITE_CHUNK_SIZE = 255
+ESP32_S3_SERIAL_WRITE_CHUNK_PAUSE_SECONDS = 0.002
 LOGGER = logging.getLogger("pico-monitor.serial")
 RESTARTING_FATAL_PREFIXES = (
     b"FATAL:MemoryError:",
@@ -109,6 +111,10 @@ RESTARTING_FATAL_PREFIXES = (
 
 class PicoRestartingError(RuntimeError):
     """表示 Pico 报告不可恢复错误并正在自动重启。"""
+
+
+class JsonAckTimeoutError(RuntimeError):
+    """表示快照已经发送完成，但未在期限内收到对应 JSON ACK。"""
 
 
 def _is_restarting_fatal(frame):
@@ -153,6 +159,22 @@ class PicoJsonClient:
     def port_name(self):
         """返回当前连接的串口名称或 WebSocket 地址。"""
         return self.serial.port if self.serial is not None else None
+
+    def _is_usb_esp32_s3(self):
+        """判断当前连接是否为 ESP32-S3 的 USB 控制台传输。"""
+        if self.websocket_url or isinstance(self.serial, WebSocketDevice):
+            return False
+        normalized = str(self.board_model or "").strip().lower().replace("_", "-")
+        return normalized in ("esp32-s3", "esp32s3")
+
+    def _serial_write_profile(self):
+        """返回当前设备适用的主机写入块大小和块间让步时间。"""
+        if self._is_usb_esp32_s3():
+            return (
+                ESP32_S3_SERIAL_WRITE_CHUNK_SIZE,
+                ESP32_S3_SERIAL_WRITE_CHUNK_PAUSE_SECONDS,
+            )
+        return SERIAL_WRITE_CHUNK_SIZE, 0.0
 
     def connect(self):
         """优先连接指定 WebSocket，否则枚举串口并通过协议握手识别设备。"""
@@ -305,12 +327,15 @@ class PicoJsonClient:
         """在握手完成后启动适用于 USB CDC 和 WebSocket 的读写线程。"""
         if self.serial is None:
             return
+        write_chunk_size, write_chunk_pause_seconds = self._serial_write_profile()
         self.transport = UsbCdcFramework(
             self.serial,
             parse_frame,
             port_name=self.port_name,
             response_callback=self._handle_cdc_response,
             error_callback=self._handle_cdc_error,
+            write_chunk_size=write_chunk_size,
+            write_chunk_pause_seconds=write_chunk_pause_seconds,
         )
         self.transport.start()
 
@@ -680,7 +705,9 @@ class PicoJsonClient:
             if event.wait(min(0.1, max(0.0, deadline - time.monotonic()))):
                 return
             self.transport.raise_error_if_any()
-        raise RuntimeError("等待 JSON ACK 超时：request_id={}".format(request_id))
+        raise JsonAckTimeoutError(
+            "等待 JSON ACK 超时：request_id={}".format(request_id)
+        )
 
     def _drain_json_responses(self):
         """非阻塞消费已经到达的 JSON 响应，避免 ACK 反向缓存持续积压。"""
@@ -791,7 +818,8 @@ class PicoJsonClient:
                 )
             return timing
         packet = memoryview(packet)
-        total_chunks = (len(packet) + SERIAL_WRITE_CHUNK_SIZE - 1) // SERIAL_WRITE_CHUNK_SIZE
+        write_chunk_size, write_chunk_pause_seconds = self._serial_write_profile()
+        total_chunks = (len(packet) + write_chunk_size - 1) // write_chunk_size
         LOGGER.debug(
             "[Monitor -> Pico][%s][%s][发送帧 %d 字节，共 %d 块]",
             self.port_name,
@@ -804,8 +832,8 @@ class PicoJsonClient:
         write_elapsed_ms = 0.0
         slowest_write_ms = 0.0
         total_written = 0
-        for position in range(0, len(packet), SERIAL_WRITE_CHUNK_SIZE):
-            chunk = packet[position:position + SERIAL_WRITE_CHUNK_SIZE]
+        for position in range(0, len(packet), write_chunk_size):
+            chunk = packet[position:position + write_chunk_size]
             write_started = time.monotonic()
             written = self.serial.write(chunk)
             chunk_elapsed_ms = (time.monotonic() - write_started) * 1000
@@ -836,6 +864,8 @@ class PicoJsonClient:
                         len(chunk),
                     )
                 )
+            if write_chunk_pause_seconds and position + len(chunk) < len(packet):
+                time.sleep(write_chunk_pause_seconds)
         flush_started = time.monotonic()
         self.serial.flush()
         flush_elapsed_ms = (time.monotonic() - flush_started) * 1000

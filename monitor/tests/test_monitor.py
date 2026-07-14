@@ -28,7 +28,17 @@ import serial
 from unittest import mock
 from types import SimpleNamespace
 
-from pico_client import PING_COMMAND, REBOOT_COMMAND, PicoJsonClient, build_frame, parse_frame
+from pico_client import (
+    ESP32_S3_SERIAL_WRITE_CHUNK_PAUSE_SECONDS,
+    ESP32_S3_SERIAL_WRITE_CHUNK_SIZE,
+    PING_COMMAND,
+    REBOOT_COMMAND,
+    SERIAL_WRITE_CHUNK_SIZE,
+    JsonAckTimeoutError,
+    PicoJsonClient,
+    build_frame,
+    parse_frame,
+)
 from pico_monitor import (
     MonitorService,
     create_argument_parser,
@@ -164,6 +174,20 @@ class BlockingTransmitClient:
             self.release.wait(1.0)
 
 
+class AckTimeoutTransmitClient:
+    """模拟设备首帧缺少 JSON ACK、后续仍可正常接收快照。"""
+
+    def __init__(self):
+        """初始化发送参数记录。"""
+        self.calls = []
+
+    def send(self, snapshot, wait_ack=False, ack_timeout=8.0):
+        """首帧报告 ACK 超时，后续记录降级后的发送模式。"""
+        self.calls.append((snapshot["version"], wait_ack, ack_timeout))
+        if len(self.calls) == 1:
+            raise JsonAckTimeoutError("等待 JSON ACK 超时：request_id=1")
+
+
 class RuntimeOperationsHarness(RuntimeOperationsMixin):
     """提供运行时发送队列测试所需的最小服务对象。"""
 
@@ -297,6 +321,32 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertLessEqual(client.serial.write_calls, 6)
 
+    def test_esp32_s3_usb_uses_guarded_serial_write_profile(self):
+        """确认 ESP32-S3 USB 控制台使用较小写块并在块间短暂让步。"""
+        client = PicoJsonClient()
+        client.serial = FakeSerial()
+        client.board_model = "ESP32-S3"
+
+        chunk_size, pause_seconds = client._serial_write_profile()
+
+        self.assertEqual(ESP32_S3_SERIAL_WRITE_CHUNK_SIZE, chunk_size)
+        self.assertEqual(ESP32_S3_SERIAL_WRITE_CHUNK_PAUSE_SECONDS, pause_seconds)
+        with mock.patch("pico_client.time.sleep") as sleep:
+            client._write_packet(b"x" * 600, "ESP32-S3 测试")
+        self.assertEqual(3, client.serial.write_calls)
+        self.assertEqual(2, sleep.call_count)
+
+    def test_esp32_s3_websocket_keeps_default_write_profile(self):
+        """确认 ESP32-S3 通过 WebSocket 连接时不启用 USB 控制台节流。"""
+        client = PicoJsonClient(websocket_url="ws://127.0.0.1:8765/pv1")
+        client.serial = FakeSerial()
+        client.board_model = "ESP32-S3"
+
+        chunk_size, pause_seconds = client._serial_write_profile()
+
+        self.assertEqual(SERIAL_WRITE_CHUNK_SIZE, chunk_size)
+        self.assertEqual(0.0, pause_seconds)
+
     def test_large_snapshot_is_split_into_jsonz_packets(self):
         """确认超过四千字节的快照会按字段拆成多条 JSONZ。"""
         snapshot = {"display": {"style": "default"}}
@@ -397,6 +447,14 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertEqual([], client.serial.responses)
 
+    def test_json_ack_timeout_uses_specific_nonfatal_error(self):
+        """确认 ACK 超时可与真实串口通信异常区分，供运行层安全降级。"""
+        client = PicoJsonClient()
+        client.serial = QueuedResponseSerial([])
+
+        with self.assertRaisesRegex(JsonAckTimeoutError, "request_id=1"):
+            client.send({"version": 1}, wait_ack=True, ack_timeout=0.1)
+
     def test_adaptive_transmit_keeps_latest_snapshot(self):
         """确认 ACK 背压期间待发队列只保留最新快照。"""
         service = RuntimeOperationsHarness(adaptive_transmit=True)
@@ -415,6 +473,24 @@ class PicoClientTest(unittest.TestCase):
             [(1, True, 15.0), (3, True, 15.0)],
             service.client.sent_versions,
         )
+
+    def test_json_ack_timeout_falls_back_without_disconnect(self):
+        """确认设备未确认 ACK 时后续快照降级发送且不会触发重连异常。"""
+        service = RuntimeOperationsHarness(adaptive_transmit=True)
+        service.client = AckTimeoutTransmitClient()
+        try:
+            with self.assertLogs("pico-monitor", level="WARNING") as logs:
+                self.assertTrue(service._submit_snapshot_for_transmission({"version": 1}))
+                service._wait_for_transmit_idle()
+            self.assertTrue(service._submit_snapshot_for_transmission({"version": 2}))
+            service._wait_for_transmit_idle()
+            service._raise_transmit_error_if_any()
+        finally:
+            service.stopping.set()
+            service._stop_transmit_worker(wait=True)
+
+        self.assertEqual([(1, True, 15.0), (2, False, 15.0)], service.client.calls)
+        self.assertTrue(any("保持异步发送" in message for message in logs.output))
 
     def test_adaptive_interval_uses_json_ack_history_in_display_snapshot(self):
         """确认自适应发送间隔根据历史 ACK 耗时计算并同步到 Pico 配置。"""
