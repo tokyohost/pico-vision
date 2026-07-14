@@ -86,6 +86,69 @@ class DiskStyle:
             ("footer", 8, 286, 224, 25),
         ]
 
+    @classmethod
+    def select_dirty_regions(cls, previous, current):
+        """根据相邻快照差异只返回内容实际变化的动态区域。"""
+        previous = previous or {}
+        current = current or {}
+        region_map = {
+            region[0]: region for region in cls.create_dirty_regions()
+        }
+        selected = []
+        if previous.get("disk") != current.get("disk"):
+            selected.append(region_map["disk_summary"])
+        previous_cpu = previous.get("cpu") or {}
+        current_cpu = current.get("cpu") or {}
+        if (
+            previous_cpu.get("percent"),
+            previous_cpu.get("temperature_c"),
+        ) != (
+            current_cpu.get("percent"),
+            current_cpu.get("temperature_c"),
+        ):
+            selected.append(region_map["cpu"])
+        if previous.get("memory") != current.get("memory"):
+            selected.append(region_map["memory"])
+        previous_network = previous.get("network") or {}
+        current_network = current.get("network") or {}
+        previous_unit = (previous.get("display") or {}).get("network_unit")
+        current_unit = (current.get("display") or {}).get("network_unit")
+        if (
+            previous_network.get("upload_bps"),
+            previous_network.get("upload_history"),
+            previous_unit,
+        ) != (
+            current_network.get("upload_bps"),
+            current_network.get("upload_history"),
+            current_unit,
+        ):
+            selected.append(region_map["network_up"])
+        if (
+            previous_network.get("download_bps"),
+            previous_network.get("download_history"),
+            previous_unit,
+        ) != (
+            current_network.get("download_bps"),
+            current_network.get("download_history"),
+            current_unit,
+        ):
+            selected.append(region_map["network_down"])
+        if (
+            previous.get("timestamp"),
+            previous.get("uptime_seconds"),
+            previous.get("host"),
+            previous_network.get("ping_ms"),
+            previous_network.get("online"),
+        ) != (
+            current.get("timestamp"),
+            current.get("uptime_seconds"),
+            current.get("host"),
+            current_network.get("ping_ms"),
+            current_network.get("online"),
+        ):
+            selected.append(region_map["footer"])
+        return selected
+
     @staticmethod
     def _number(value, default=0):
         """安全地将快照中的数值转换为浮点数。"""

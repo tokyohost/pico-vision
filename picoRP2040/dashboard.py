@@ -257,11 +257,11 @@ class DashboardRenderer:
             self._last_render_ms = time.ticks_diff(time.ticks_ms(), self._render_started)
             self._render_started = None
             self._completion_pending = False
-            # 一帧绘制会产生较多短命对象，及时整理堆以便接收下一包 JSON。
-            gc_started = time.ticks_us()
-            gc.collect()
-            self._gc_us = time.ticks_diff(time.ticks_us(), gc_started)
         return completed
+
+    def record_gc_us(self, elapsed_us):
+        """记录应用在当前帧完成后安全执行垃圾回收的耗时。"""
+        self._gc_us = max(0, int(elapsed_us))
 
     def update_pending(self, max_regions=8, time_budget_us=None):
         """在区域数和软时间预算内批量刷新，减少区域间的调度延迟。"""

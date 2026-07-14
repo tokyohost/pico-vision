@@ -59,6 +59,10 @@ class SnapshotCache:
         """返回最新快照和版本号。"""
         return self._time_increase.increase(self.snapshot), self.version
 
+    def next_refresh_ms(self, interval_ms=1000, now_ms=None):
+        """返回与本地时间校准基准对齐的下一次刷新时刻。"""
+        return self._time_increase.next_refresh_ms(interval_ms, now_ms)
+
     def clear(self):
         """清除失效快照并递增版本号。"""
         self.snapshot = None

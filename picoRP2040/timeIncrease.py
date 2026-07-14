@@ -71,6 +71,17 @@ class TimeIncrease:
         self._last_elapsed_seconds = elapsed_seconds
         return snapshot
 
+    def next_refresh_ms(self, interval_ms=1000, now_ms=None):
+        """返回相对校准基准对齐的下一次绝对刷新时刻。"""
+        interval_ms = max(1, int(interval_ms))
+        if now_ms is None:
+            now_ms = time.ticks_ms()
+        if self._base_ticks is None:
+            return time.ticks_add(now_ms, interval_ms)
+        elapsed_ms = max(0, time.ticks_diff(now_ms, self._base_ticks))
+        next_elapsed_ms = (elapsed_ms // interval_ms + 1) * interval_ms
+        return time.ticks_add(self._base_ticks, next_elapsed_ms)
+
     def _uptime_error_exceeded(self, snapshot):
         """判断主机运行时间与 Pico 单调时钟推进结果是否相差超过阈值。"""
         try:

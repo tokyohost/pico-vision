@@ -20,13 +20,16 @@ import time
 
 from config import (
     BOARD_MODEL,
+    CLOCK_REFRESH_INTERVAL_MS,
+    ESP32_GC_ALLOCATION_THRESHOLD,
     ESP32_RENDER_MAX_REGIONS,
     ESP32_RENDER_TIME_BUDGET_US,
     GC_ALLOCATION_THRESHOLD,
+    GC_CLOCK_GUARD_MS,
+    GC_MIN_INTERVAL_MS,
     LCD_BOOT_PRELOAD_STYLES,
     LCD_STYLE,
     MONITOR_TIMEOUT_INTERVALS,
-    RENDER_INTERVAL_MS,
 )
 from protocol import JsonProtocol
 from fatal_policy import CANVAS_CAPACITY_ERROR, should_restart_after_fatal
@@ -58,8 +61,14 @@ def configure_garbage_collection():
     gc.collect()
     threshold = getattr(gc, "threshold", None)
     if callable(threshold):
-        threshold(GC_ALLOCATION_THRESHOLD)
-        return GC_ALLOCATION_THRESHOLD
+        board_name = str(BOARD_MODEL).strip().lower().replace("_", "-")
+        allocation_threshold = (
+            ESP32_GC_ALLOCATION_THRESHOLD
+            if board_name == "esp32-s3"
+            else GC_ALLOCATION_THRESHOLD
+        )
+        threshold(allocation_threshold)
+        return allocation_threshold
     return None
 
 
@@ -128,9 +137,11 @@ class Application:
         self._receiver = DataReceiver(self._protocol, self._cache, self._led)
         self._show_boot(94, "BOOT:RECEIVER_READY", "loading...", flush=True)
         self._rendering_version = -1
-        self._next_render = time.ticks_add(
-            time.ticks_ms(), RENDER_INTERVAL_MS
+        now = time.ticks_ms()
+        self._next_clock_render = time.ticks_add(
+            now, CLOCK_REFRESH_INTERVAL_MS
         )
+        self._next_gc = time.ticks_add(now, GC_MIN_INTERVAL_MS)
         self._monitor_interval_ms = 500
         self._monitor_connected = False
         self._dev_mode = False
@@ -410,6 +421,24 @@ class Application:
         )
         self._protocol.write(response.encode())
 
+    def _collect_garbage_if_safe(self, now):
+        """在达到最小间隔且远离时钟边界时执行主动垃圾回收。"""
+        if time.ticks_diff(now, self._next_gc) < 0:
+            return False
+        until_clock_ms = time.ticks_diff(self._next_clock_render, now)
+        if until_clock_ms <= GC_CLOCK_GUARD_MS:
+            return False
+        gc_started = time.ticks_us()
+        gc.collect()
+        gc_us = time.ticks_diff(time.ticks_us(), gc_started)
+        record_gc_us = getattr(self._renderer, "record_gc_us", None)
+        if callable(record_gc_us):
+            record_gc_us(gc_us)
+        self._next_gc = time.ticks_add(
+            time.ticks_ms(), GC_MIN_INTERVAL_MS
+        )
+        return True
+
     def _monitor_timed_out(self, now):
         """判断 Monitor 是否已连续超过配置周期没有发送有效消息。"""
         if not self._monitor_connected:
@@ -485,7 +514,9 @@ class Application:
                 time.sleep_ms(0)
                 continue
             has_new_snapshot = version != self._rendering_version
-            idle_refresh_due = time.ticks_diff(now, self._next_render) >= 0
+            idle_refresh_due = (
+                time.ticks_diff(now, self._next_clock_render) >= 0
+            )
             if (
                 snapshot is None
                 and not self._renderer.is_rendering()
@@ -580,16 +611,20 @@ class Application:
                             self._lcd.rotation()
                         ).encode()
                     )
-                self._renderer.request_render(
-                    snapshot, force=not has_new_snapshot
-                )
+                # 样式加载可能持续较长时间，实际提交渲染前重新推进本地时间，
+                # 避免把配置阶段开始时已经过期的秒数画到屏幕上。
+                snapshot, version = self._cache.latest()
+                self._renderer.request_render(snapshot, force=False)
                 self._rendering_version = version
-                self._next_render = time.ticks_add(
-                    now, RENDER_INTERVAL_MS
+                refresh_now = time.ticks_ms()
+                self._next_clock_render = self._cache.next_refresh_ms(
+                    CLOCK_REFRESH_INTERVAL_MS, refresh_now
                 )
             # RP2040 每轮仍只刷新一个区域；ESP32-S3 在软时间预算内批量刷新，
             # 兼顾通信轮询及时性和整帧完成时间。
             render_completed = self._update_renderer_with_fallback(snapshot or {})
+            if render_completed:
+                self._collect_garbage_if_safe(time.ticks_ms())
             self._write_render_profile_if_needed(render_completed)
             time.sleep_ms(1)
 

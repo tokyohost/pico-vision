@@ -27,6 +27,12 @@ LCD_DEVICE_TYPE = "st7789-2.4inch-8pin-b"
 LCD_STRIP_HEIGHT = 40
 # 未收到新 JSON 时仍使用缓存快照主动刷新的最大间隔，保证至少一帧每秒。
 RENDER_INTERVAL_MS = 1000
+# 本地时间显示的固定刷新周期，独立于监控数据采集周期。
+CLOCK_REFRESH_INTERVAL_MS = 1000
+# 主动垃圾回收的最小间隔，避免每帧回收造成周期性停顿。
+GC_MIN_INTERVAL_MS = 5000
+# 距离下一次时钟刷新小于该窗口时延后主动垃圾回收。
+GC_CLOCK_GUARD_MS = 100
 # ESP32-S3 每轮最多刷新的区域数，防止单次主循环长期占用通信处理。
 ESP32_RENDER_MAX_REGIONS = 8
 # ESP32-S3 每轮渲染的软时间预算；单个区域完成后才检查，因此允许少量超时。
@@ -34,6 +40,8 @@ ESP32_RENDER_TIME_BUDGET_US = 50 * 1000
 LCD_STYLE = "disk"
 # 每累计分配指定字节数后主动执行垃圾回收，降低长期运行时的堆碎片。
 GC_ALLOCATION_THRESHOLD = 16 * 1024
+# ESP32-S3 使用较大的累计分配阈值，以 PSRAM 空间降低自动 GC 频率。
+ESP32_GC_ALLOCATION_THRESHOLD = 256 * 1024
 # 在系统启动页阶段预编译大型内置样式，避免连接后在碎片化堆上首次导入。
 LCD_BOOT_PRELOAD_STYLES = ("horizontal_disk4x_qb",)
 
@@ -120,6 +128,12 @@ def _load_runtime_configuration():
 
 
 _load_runtime_configuration()
+
+# 空闲刷新允许配置得更快，但为保证秒钟连续显示，最长不得超过一秒。
+CLOCK_REFRESH_INTERVAL_MS = min(
+    CLOCK_REFRESH_INTERVAL_MS,
+    max(1, int(RENDER_INTERVAL_MS)),
+)
 
 # 无线传输仅允许 ESP32-S3 启用，防止 RP2040 的旧运行配置误开 Wi-Fi 后
 # 导入不存在的 network 模块或占用紧张的堆内存。
