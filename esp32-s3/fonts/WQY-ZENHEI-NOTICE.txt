@@ -1,0 +1,23 @@
+文泉驿点阵正黑字形来源说明
+============================
+
+字体名称：WenQuanYi Zen Hei Sharp / 文泉驿点阵正黑
+版本：0.9.45（Fighting-State RC1）
+版权所有：Copyright © 2007-2010 Qianqian Fang and The WenQuanYi Project
+Board of Trustees, All rights reserved.
+上游地址：https://sourceforge.net/projects/wqy/files/wqy-zenhei/0.9.45/
+许可证：GNU GPL v2，附字体嵌入例外；完整条款见 GPL-2.0-WQY-ZENHEI.txt。
+
+本项目从该字体的 Sharp 字体面提取 ASCII 与 GB2312 的 16px 单色点阵，并转换为
+MicroPython ``fn_canvas`` 使用的逐行十六位只读字形。字形数据已经编译进 SDK 固件。
+
+字体嵌入例外原文：
+
+As a special exception, if you create a document which uses this font, and
+embed this font or unaltered portions of this font into the document, this font
+does not by itself cause the resulting document to be covered by the GNU
+General Public License. This exception does not however invalidate any other
+reasons why the document might be covered by the GNU General Public License.
+If you modify this font, you may extend this exception to your version of the
+font, but you are not obligated to do so. If you do not wish to do so, delete
+this exception statement from your version.

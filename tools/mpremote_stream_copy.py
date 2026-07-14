@@ -11,7 +11,7 @@ import time
 from pathlib import Path, PurePosixPath
 
 
-DEFAULT_SOURCE = Path(r"E:\WorkSpace\fn-vision\pico-project\picoRP2040")
+DEFAULT_SOURCE = Path(r"E:\WorkSpace\fn-vision\pico-project\esp32-s3")
 REMOTE_MANIFEST_PREFIX = "MPREMOTE_FILE:"
 REMOTE_MANIFEST_BATCH_SIZE = 40
 

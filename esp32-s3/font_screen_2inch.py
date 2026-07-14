@@ -1,0 +1,52 @@
+#  Copyright (c) 2026 xuehui_li
+#
+#  Licensed under the Custom Non-Commercial Copyleft License.
+#  Commercial use is prohibited without prior written permission.
+#
+#  Any project, software, or derivative work that uses, modifies, links to,
+#  or incorporates this software must make its complete source code publicly
+#  available under the same license.
+#
+#  This software is provided "as is", without warranty of any kind.
+
+
+
+"""提供适合二寸低分辨率屏幕的高辨识度 5×7 点阵字体。"""
+
+
+from font_5x7 import FONT_5X7
+
+
+# 继承完整 ASCII 字符集，并强化容易混淆的数字和状态字符。
+FONT_SCREEN_2INCH = dict(FONT_5X7)
+FONT_SCREEN_2INCH.update({
+    "0": (62, 65, 73, 65, 62),
+    "1": (68, 66, 127, 64, 64),
+    "2": (98, 81, 73, 73, 70),
+    "3": (34, 65, 73, 73, 54),
+    "4": (24, 20, 18, 127, 16),
+    "5": (47, 73, 73, 73, 49),
+    "6": (62, 73, 73, 73, 50),
+    "7": (1, 97, 25, 5, 3),
+    "8": (54, 73, 73, 73, 54),
+    "9": (38, 73, 73, 73, 62),
+    "I": (65, 65, 127, 65, 65),
+    "L": (127, 64, 64, 64, 64),
+    "O": (62, 65, 65, 65, 62),
+    "S": (38, 73, 73, 73, 50),
+    "Z": (97, 81, 73, 69, 67),
+})
+
+
+# 参考嵌入式比例点阵字体的窄字形设计，仅收紧视觉上天然较窄的字符。
+FONT_SCREEN_2INCH_COMPACT = dict(FONT_SCREEN_2INCH)
+FONT_SCREEN_2INCH_COMPACT.update({
+    " ": (0, 0),
+    "!": (95,),
+    ".": (96, 96),
+    ":": (54, 54),
+    "1": (66, 127, 64),
+    "I": (65, 127, 65),
+    "i": (68, 125, 64),
+    "l": (65, 127, 64),
+})
