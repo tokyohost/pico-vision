@@ -172,9 +172,12 @@ class WorkerControllerMixin:
         with self.log_path.open("r+b") as log_file:
             log_file.seek(0, os.SEEK_END)
             for line in process.stdout:
-                log_file.write(line.encode("utf-8"))
-                log_file.flush()
-                self._truncate_log_file(log_file)
+                with self.log_file_lock:
+                    # 清空日志可能改变文件长度，每次写入前重新定位到真实文件末尾。
+                    log_file.seek(0, os.SEEK_END)
+                    log_file.write(line.encode("utf-8"))
+                    log_file.flush()
+                    self._truncate_log_file(log_file)
                 if self.custom_style_upload_active.is_set():
                     self.custom_style_upload_logs.put(line.rstrip("\r\n"))
                 if "STYLE_CATALOG_UPDATED" in line:
@@ -186,6 +189,11 @@ class WorkerControllerMixin:
                         line, "DEVICE_REBOOT_RESULT:", "设备返回了无效响应",
                     )
                     self.device_management_messages.put(result)
+                if line.startswith("WIFI_RESULT:"):
+                    result = self._parse_worker_result(
+                        line, "WIFI_RESULT:", "设备返回了无效 Wi-Fi 响应",
+                    )
+                    self.wifi_messages.put(result)
                 if line.startswith("CUSTOM_STYLE_LIST_RESULT:"):
                     result = self._parse_worker_result(
                         line, "CUSTOM_STYLE_LIST_RESULT:", "设备返回了无效响应",
@@ -216,7 +224,7 @@ class WorkerControllerMixin:
                         "message": detail,
                     })
                 connection = re.search(
-                    r"\[(串口|WebSocket)连接\]\s+(.+?)\s+握手成功：开发板=(.*)，LCD=(.*)，屏幕方案=(.*)，固件版本=(.*)，分辨率=(.*)$",
+                    r"\[(串口|WebSocket)连接\]\s+(.+?)\s+握手成功：开发板=(.*)，LCD=(.*)，屏幕方案=(.*)，固件版本=(.*)，分辨率=(.*?)(?:，Wi-Fi支持=(是|否))?$",
                     line.strip(),
                 )
                 if connection:
@@ -229,6 +237,7 @@ class WorkerControllerMixin:
                         "screen_color_profile": connection.group(5),
                         "firmware_version": connection.group(6),
                         "screen_resolution": connection.group(7),
+                        "wifi_supported": connection.group(8) == "是",
                     })
         return_code = process.wait()
         if not self.stopping.is_set() and process is self.worker_process and self.icon is not None:
@@ -306,3 +315,28 @@ class WorkerControllerMixin:
         """返回当前设备连接状态的独立快照。"""
         with self.device_connection_lock:
             return dict(self.current_device_connection)
+
+    def _request_wifi_list(self):
+        """通知后台 Monitor 扫描设备附近的无线网络。"""
+        return self._write_worker_command("WIFI_LIST\n")
+
+    def _request_wifi_connect(self, ssid, password):
+        """通知后台 Monitor 使用指定名称和密钥连接无线网络。"""
+        payload = json.dumps(
+            {"ssid": ssid, "password": password},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return self._write_worker_command("WIFI_CONNECT:{}\n".format(payload))
+
+    def _write_worker_command(self, command):
+        """向运行中的 Monitor 写入一条完整控制命令。"""
+        process = self.worker_process
+        if process is None or process.poll() is not None or process.stdin is None:
+            return False
+        try:
+            process.stdin.write(command)
+            process.stdin.flush()
+            return True
+        except (BrokenPipeError, OSError):
+            return False

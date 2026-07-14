@@ -69,7 +69,7 @@ class LcdBacklightProfile:
 
 
 class LcdPinProfile:
-    """描述 LCD 模组与 RP2040 之间的信号脚位和排针定义。"""
+    """描述 LCD 模组与开发板之间的信号脚位和排针定义。"""
 
     def __init__(
         self,
@@ -83,6 +83,7 @@ class LcdPinProfile:
         baudrate=40_000_000,
         connector_pins=(),
         signal_labels=None,
+        miso=None,
     ):
         """使用信号 GPIO、背光极性和物理排针顺序创建脚位档案。"""
         self.spi_id = int(spi_id)
@@ -98,6 +99,7 @@ class LcdPinProfile:
             self.backlight = LcdBacklightProfile.pwm(backlight)
         self.bl = self.backlight.control_pin
         self.baudrate = int(baudrate)
+        self.miso = None if miso is None else int(miso)
         self.connector_pins = tuple(connector_pins)
         self.signal_labels = dict(signal_labels or {})
 
@@ -105,6 +107,44 @@ class LcdPinProfile:
         """返回屏幕丝印使用的信号名称，未声明时返回内部规范名称。"""
         normalized_name = str(signal_name or "").strip().lower()
         return self.signal_labels.get(normalized_name, normalized_name.upper())
+
+
+def create_eight_pin_board_profiles():
+    """创建 RP2040 与 ESP32-S3 共用八针屏的板型脚位档案。"""
+    rp2040_profile = LcdPinProfile(
+        0,
+        6,
+        7,
+        8,
+        14,
+        15,
+        LcdBacklightProfile.pwm(26),
+        connector_pins=(
+            "GND", "VCC", "SCL", "SDA", "RES", "DC", "CS", "BL"
+        ),
+    )
+    # ESP32-S3 的旧版 MicroPython 会给 SPI(2) 自动分配 GPIO13 作为 MISO，
+    # 因此显式将未接屏幕的 MISO 放到 GPIO15，避免与 GPIO13 背光 PWM 冲突。
+    # 杜邦线连接在 40 MHz 下容易产生信号完整性问题，默认降到稳定的 10 MHz。
+    esp32_s3_profile = LcdPinProfile(
+        2,
+        12,
+        11,
+        10,
+        9,
+        14,
+        LcdBacklightProfile.pwm(13),
+        baudrate=10_000_000,
+        connector_pins=(
+            "GND", "VCC", "SCL", "SDA", "RES", "DC", "CS", "BL"
+        ),
+        miso=15,
+    )
+    return {
+        "rp2040_usb": rp2040_profile,
+        "rp2040_typec": rp2040_profile,
+        "esp32-s3": esp32_s3_profile,
+    }
 
 
 class LcdPanelProfile:

@@ -64,23 +64,48 @@ class Canvas:
         self._polygon_buffers = {}
         self._select_framebuffer()
 
-    def set_font(self, font_name):
-        """选择当前样式使用的点阵字体。"""
+    @staticmethod
+    def _font_definition(font_name):
+        """解析字体名称并返回规范名称及对应字形数据。"""
         normalized_name = str(font_name or "native").strip().lower()
         fonts = {
             "native": FONT_5X7,
             "screen_2inch": FONT_SCREEN_2INCH,
             "screen_2inch_compact": FONT_SCREEN_2INCH_COMPACT,
         }
+        if normalized_name in ("wqy_8x16", "fusion_pixel_8x16"):
+            from font_builtin import FUSION_PIXEL_8X16, WQY_8X16
+            fonts.update({
+                "wqy_8x16": WQY_8X16,
+                "fusion_pixel_8x16": FUSION_PIXEL_8X16,
+            })
         if normalized_name == "fusion_pixel_8px":
             from font_fusion_pixel import FUSION_PIXEL_8PX
             fonts[normalized_name] = FUSION_PIXEL_8PX
         if normalized_name not in fonts:
             raise ValueError("未知点阵字体：{}".format(normalized_name))
+        return normalized_name, fonts[normalized_name]
+
+    def set_font(self, font_name):
+        """选择未单独指定字体时使用的画布默认点阵字体。"""
+        normalized_name, font = self._font_definition(font_name)
         if normalized_name != self._font_name:
             self.clear_glyph_cache()
         self._font_name = normalized_name
-        self._font = fonts[normalized_name]
+        self._font = font
+
+    def _select_text_font(self, font_name):
+        """临时选择本次文字调用的字体并返回原字体状态。"""
+        if font_name is None:
+            return None
+        previous = (self._font_name, self._font)
+        self._font_name, self._font = self._font_definition(font_name)
+        return previous
+
+    def _restore_text_font(self, previous):
+        """恢复单次文字调用之前的画布字体状态。"""
+        if previous is not None:
+            self._font_name, self._font = previous
 
     def clear_glyph_cache(self):
         """清空动态字形缓存，释放样式切换遗留的帧缓冲区。"""
@@ -443,8 +468,16 @@ class Canvas:
             bottom - run_top + 1, color,
         )
 
-    def text(self, x, y, value, color, scale=1):
-        """使用内置点阵字体绘制文本，并按实际字形宽度推进光标。"""
+    def text(self, x, y, value, color, scale=1, font_name=None):
+        """使用默认或指定点阵字体绘制文本，调用后恢复默认字体。"""
+        previous = self._select_text_font(font_name)
+        try:
+            self._draw_text(x, y, value, color, scale)
+        finally:
+            self._restore_text_font(previous)
+
+    def _draw_text(self, x, y, value, color, scale):
+        """使用当前已选字体绘制文本并按实际字形宽度推进光标。"""
         value = str(value)
         if (
             self._framebuffer is not None
@@ -551,9 +584,16 @@ class Canvas:
             self._native_color(BLACK), self._get_text_palette(color),
         )
 
-    def text_width(self, value, scale=1):
-        """根据当前字体的实际字形宽度计算文本占用像素宽度。"""
-        return sum(self._character_advance(character, scale) for character in str(value))
+    def text_width(self, value, scale=1, font_name=None):
+        """根据默认或指定字体计算文本占用像素宽度。"""
+        previous = self._select_text_font(font_name)
+        try:
+            return sum(
+                self._character_advance(character, scale)
+                for character in str(value)
+            )
+        finally:
+            self._restore_text_font(previous)
 
     def _character_advance(self, character, scale=1):
         """返回单个字符的水平步进，宽字形会自动扩展间距。"""

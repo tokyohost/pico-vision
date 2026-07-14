@@ -90,6 +90,26 @@ CRC16_BYTE_TABLE = _build_crc16_byte_table()
 JSONZ_GC_FREE_THRESHOLD = 72 * 1024
 
 
+def _find_subsequence(data, marker):
+    """手动查找字节序列，兼容没有 bytearray.find 的旧版 MicroPython。"""
+    marker_length = len(marker)
+    if marker_length == 0:
+        return 0
+    last_start = len(data) - marker_length
+    first_byte = marker[0]
+    for start in range(last_start + 1):
+        if data[start] != first_byte:
+            continue
+        matched = True
+        for offset in range(1, marker_length):
+            if data[start + offset] != marker[offset]:
+                matched = False
+                break
+        if matched:
+            return start
+    return -1
+
+
 def _collect_jsonz_garbage_if_needed():
     """仅在 JSONZ 可用堆低于安全线时回收临时对象。"""
     try:

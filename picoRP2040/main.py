@@ -564,10 +564,10 @@ def main():
 
         from config import WIFI_ENABLED, WEBSOCKET_PATH, WEBSOCKET_PORT
         from net import TransportManager
-        from usb_transport import create_data_cdc
+        from usb_transport import create_usb_stream
 
         transport = TransportManager(
-            usb_stream=create_data_cdc(wait_for_open=False),
+            usb_stream=create_usb_stream(wait_for_open=False),
             wifi_enabled=WIFI_ENABLED,
             websocket_port=WEBSOCKET_PORT,
             websocket_path=WEBSOCKET_PATH,

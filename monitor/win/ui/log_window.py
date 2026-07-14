@@ -111,9 +111,33 @@ class LogWindowMixin:
                 return
             status.set("日志已导出：{}".format(export_path.name))
 
+        def clear_log():
+            """确认用户意图后清空运行日志，并立即刷新文本区域。"""
+            confirmed = messagebox.askyesno(
+                "清空日志",
+                "确定要清空全部系统监控日志吗？此操作无法撤销。",
+                parent=root,
+            )
+            if not confirmed:
+                return
+            try:
+                self._clear_log()
+            except OSError as error:
+                messagebox.showerror("清空日志", str(error), parent=root)
+                return
+            state["content"] = ""
+            log_text.configure(state=tk.NORMAL)
+            log_text.delete("1.0", tk.END)
+            log_text.configure(state=tk.DISABLED)
+            status.set("日志已清空")
+
         action_frame = ttk.Frame(root)
         action_frame.pack(fill=tk.X, padx=16, pady=(0, 16))
         ttk.Button(action_frame, text="复制全部", command=copy_all).pack(side=tk.LEFT)
+        ttk.Button(action_frame, text="清空日志", command=clear_log).pack(
+            side=tk.LEFT,
+            padx=(8, 0),
+        )
         ttk.Button(action_frame, text="导出日志", command=export_log).pack(side=tk.RIGHT)
         refresh_log()
         self._show_centered_tk_window(root)

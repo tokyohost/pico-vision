@@ -14,6 +14,15 @@ import protocolC  # noqa: E402
 from data_receiver import SnapshotCache  # noqa: E402
 
 
+class FindForbiddenBytearray(bytearray):
+    """模拟旧版 MicroPython 中没有可用 find 方法的字节缓冲区。"""
+
+    def find(self, *arguments, **keywords):
+        """若协议错误调用新版 find 方法则立即使测试失败。"""
+        del arguments, keywords
+        raise AssertionError("旧版 bytearray 不支持 find")
+
+
 class PartialWriteStream:
     """模拟 USB CDC 缓冲区每次只能接收部分数据的输出流。"""
 
@@ -52,6 +61,37 @@ class BackpressureStream(PartialWriteStream):
 
 class ProtocolBackendTest(unittest.TestCase):
     """验证原生协议后端只在接口完整兼容时启用。"""
+
+    def test_manual_subsequence_search_supports_legacy_bytearray(self):
+        """手动字节查找应兼容没有 find 方法的旧固件缓冲区。"""
+        data = FindForbiddenBytearray(b"noisePV1:PING\n")
+
+        self.assertEqual(5, protocol._find_subsequence(data, b"PV1:"))
+        self.assertEqual(13, protocol._find_subsequence(data, b"\n"))
+        self.assertEqual(-1, protocol._find_subsequence(data, b"missing"))
+
+    def test_line_parser_does_not_call_bytearray_find(self):
+        """完整行解析不应调用旧固件缺失的 bytearray.find。"""
+        instance = protocol.JsonProtocol.__new__(protocol.JsonProtocol)
+        instance._buffer = FindForbiddenBytearray(b"serial-noise\n")
+        instance._last_byte_ms = 1
+        instance._frame_started_ms = 1
+        instance._frame_read_calls = 1
+
+        self.assertIsNone(instance._parse_lines())
+        self.assertEqual(bytearray(), instance._buffer)
+
+    def test_magic_synchronization_does_not_call_bytearray_find(self):
+        """协议魔数同步不应调用旧固件缺失的 bytearray.find。"""
+        instance = protocol.JsonProtocol.__new__(protocol.JsonProtocol)
+        instance._buffer = FindForbiddenBytearray(b"noisePV1:partial")
+        instance._frame_started_ms = None
+        instance._frame_read_calls = 0
+
+        instance._synchronize_magic()
+
+        self.assertEqual(b"PV1:partial", bytes(instance._buffer))
+        self.assertEqual(1, instance._frame_read_calls)
 
     def test_snapshot_cache_reuses_missing_fragment_fields(self):
         """确认分片快照缺省字段会复用上一份内存快照。"""

@@ -15,7 +15,7 @@
 
 
 from .base import LcdDevice
-from .profiles import LcdBacklightProfile, LcdPanelProfile, LcdPinProfile
+from .profiles import LcdPanelProfile, create_eight_pin_board_profiles
 
 
 class St7789TwoInch8PinADevice(LcdDevice):
@@ -33,18 +33,9 @@ class St7789TwoInch8PinADevice(LcdDevice):
         0,
         "st7789vw_2inch",
     )
-    pin_profile = LcdPinProfile(
-        0,
-        6,
-        7,
-        8,
-        14,
-        15,
-        LcdBacklightProfile.pwm(26),
-        connector_pins=(
-            "GND", "VCC", "SCL", "SDA", "RES", "DC", "CS", "BL"
-        ),
-    )
+    pin_profiles = create_eight_pin_board_profiles()
+    # 保留默认档案，兼容直接实例化屏幕类的旧调用方式。
+    pin_profile = pin_profiles["rp2040_usb"]
 
 
 # 工厂扫描模块时读取以下公开声明，无需维护集中式型号表。

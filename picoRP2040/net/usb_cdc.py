@@ -17,7 +17,9 @@ class UsbCdcTransport(TransportStrategy):
         """保存 CDC 数据流并创建非阻塞可读性轮询器。"""
         self._stream = stream
         self._poller = select.poll()
-        self._poller.register(stream, select.POLLIN)
+        poll_target = getattr(stream, "poll_target", None)
+        poll_target = poll_target() if callable(poll_target) else stream
+        self._poller.register(poll_target, select.POLLIN)
 
     def update(self):
         """USB CDC 由固件中断驱动，本轮无需额外推进。"""

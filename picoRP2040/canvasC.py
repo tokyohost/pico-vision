@@ -8,30 +8,50 @@ except ImportError:
     _native_canvas = None
 
 
-NATIVE_CANVAS_API_VERSION = 7
+NATIVE_CANVAS_API_VERSION = 8
+COMPATIBLE_NATIVE_CANVAS_API_VERSIONS = (7, NATIVE_CANVAS_API_VERSION)
 NATIVE_CANVAS_METHODS = (
     "clear", "pixel", "fill_rect", "line", "fill_polygon", "draw_columns",
     "draw_rect", "draw_grid", "draw_polyline", "draw_line_chart",
     "draw_text", "draw_commands",
 )
+BUILTIN_FONT_METHODS = ("text_width", "font_glyph")
 
 _FONT_KINDS = {
     "native": 0,
     "screen_2inch": 1,
     "screen_2inch_compact": 2,
+    "wqy_8x16": 3,
+    "fusion_pixel_8x16": 4,
 }
 
 
 def native_canvas_supported():
-    """检查当前 UF2 是否完整提供兼容版本的 Canvas C 接口。"""
+    """检查当前 UF2 是否完整提供 API 7 或 API 8 的 Canvas C 接口。"""
     if _native_canvas is None:
         return False
     try:
         return (
-            _native_canvas.api_version() == NATIVE_CANVAS_API_VERSION
+            _native_canvas.api_version() in COMPATIBLE_NATIVE_CANVAS_API_VERSIONS
             and all(
                 callable(getattr(_native_canvas, method_name, None))
                 for method_name in NATIVE_CANVAS_METHODS
+            )
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def builtin_fonts_supported():
+    """检查当前 Canvas C 后端是否包含固件内置字体扩展。"""
+    if not native_canvas_supported():
+        return False
+    try:
+        return (
+            _native_canvas.api_version() >= NATIVE_CANVAS_API_VERSION
+            and all(
+                callable(getattr(_native_canvas, method_name, None))
+                for method_name in BUILTIN_FONT_METHODS
             )
         )
     except (AttributeError, TypeError, ValueError):
@@ -77,20 +97,40 @@ class CanvasC(PythonCanvas):
             self.origin_x, self.origin_y, x0, y0, x1, y1, color,
         )
 
-    def text(self, x, y, value, color, scale=1):
-        """通过单次 C 调用绘制放大文字或自定义字体文字。"""
-        if self._font_name == "fusion_pixel_8px":
-            PythonCanvas.text(self, x, y, value, color, scale)
-            return
-        if self._font_name == "native" and scale == 1:
-            super().text(x, y, value, color, scale)
-            return
-        _native_canvas.draw_text(
-            self.buffer, self.width, self.height,
-            self.origin_x, self.origin_y,
-            self._font, _FONT_KINDS.get(self._font_name, 0),
-            x, y, str(value), color, scale,
-        )
+    def text(self, x, y, value, color, scale=1, font_name=None):
+        """通过默认或指定字体绘制文字，并优先使用兼容的 C 后端。"""
+        previous = self._select_text_font(font_name)
+        try:
+            if self._font_name == "fusion_pixel_8px":
+                PythonCanvas._draw_text(self, x, y, value, color, scale)
+                return
+            if self._font_name == "native" and scale == 1:
+                PythonCanvas._draw_text(self, x, y, value, color, scale)
+                return
+            font_kind = _FONT_KINDS.get(self._font_name, 0)
+            if font_kind >= 3 and not builtin_fonts_supported():
+                raise RuntimeError("当前 UF2 未编译固件内置字体")
+            _native_canvas.draw_text(
+                self.buffer, self.width, self.height,
+                self.origin_x, self.origin_y,
+                self._font, font_kind,
+                x, y, str(value), color, scale,
+            )
+        finally:
+            self._restore_text_font(previous)
+
+    def text_width(self, value, scale=1, font_name=None):
+        """使用固件接口计算内置字体宽度，其他字体沿用 Python 逻辑。"""
+        previous = self._select_text_font(font_name)
+        try:
+            font_kind = _FONT_KINDS.get(self._font_name, 0)
+            if font_kind >= 3:
+                if not builtin_fonts_supported():
+                    raise RuntimeError("当前 UF2 未编译固件内置字体")
+                return _native_canvas.text_width(font_kind, str(value), scale)
+            return PythonCanvas.text_width(self, value, scale)
+        finally:
+            self._restore_text_font(previous)
 
     def draw_commands(self, commands):
         """通过单次 C 调用执行矩形填充、线段和边框命令。"""

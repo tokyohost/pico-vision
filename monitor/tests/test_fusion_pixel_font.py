@@ -13,8 +13,30 @@ import canvas as canvas_module  # noqa: E402
 from font_fusion_pixel import FusionPixelFont  # noqa: E402
 
 
+class CountingSource:
+    """代理字库文件并记录随机定位次数。"""
+
+    def __init__(self, source):
+        """保存底层字库文件并初始化定位计数。"""
+        self.source = source
+        self.seek_count = 0
+
+    def seek(self, offset):
+        """记录一次定位并转发到底层文件。"""
+        self.seek_count += 1
+        return self.source.seek(offset)
+
+    def read(self, size=-1):
+        """从底层字库读取指定字节。"""
+        return self.source.read(size)
+
+    def close(self):
+        """关闭底层字库文件。"""
+        return self.source.close()
+
+
 class FusionPixelFontTest(unittest.TestCase):
-    """验证中文字形查询、缺字回退和比例字宽。"""
+    """验证中文字形查询、缺字回退、缓存和比例字宽。"""
 
     def setUp(self):
         """使用项目内生成的 Fusion Pixel 简体中文字库。"""
@@ -35,6 +57,19 @@ class FusionPixelFontTest(unittest.TestCase):
     def test_missing_glyph_falls_back_to_question_mark(self):
         """字库未覆盖的保留码点应回退为问号。"""
         self.assertEqual(self.font.glyph("\U0010ffff"), self.font.glyph("?"))
+
+    def test_record_cache_avoids_repeated_flash_seeks(self):
+        """同一字符的宽度和字形查询不应重复随机读取闪存。"""
+        source = self.font._open()
+        self.font._source = CountingSource(source)
+
+        self.font.advance("中")
+        first_seek_count = self.font._source.seek_count
+        self.font.glyph("中")
+        self.font.advance("中")
+
+        self.assertGreater(first_seek_count, 0)
+        self.assertEqual(first_seek_count, self.font._source.seek_count)
 
     def test_canvas_uses_font_height_and_proportional_advance(self):
         """画布应采用十二像素字形高度和原始比例步进。"""

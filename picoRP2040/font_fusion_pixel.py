@@ -9,6 +9,7 @@
 FONT_HEIGHT = 12
 RECORD_SIZE = 17
 HEADER_SIZE = 12
+RECORD_CACHE_SIZE = 128
 FONT_FILE_PATHS = (
     "fonts/fusion_pixel_8px_zh_hans.fpf",
     "/fonts/fusion_pixel_8px_zh_hans.fpf",
@@ -26,6 +27,7 @@ class FusionPixelFont:
         self._source = None
         self._glyph_count = 0
         self._question_mark = None
+        self._record_cache = {}
 
     def _open(self):
         """打开并校验 FPF 字库文件头。"""
@@ -56,8 +58,17 @@ class FusionPixelFont:
         """从三字节小端字段解析 Unicode 码点。"""
         return record[0] | (record[1] << 8) | (record[2] << 16)
 
+    def _remember_record(self, character, record):
+        """使用有界缓存保存字符记录，降低旧固件的闪存随机读取次数。"""
+        if len(self._record_cache) >= RECORD_CACHE_SIZE:
+            self._record_cache.clear()
+        self._record_cache[character] = record
+        return record
+
     def _find_record(self, character):
-        """通过二分查找返回指定字符的定长字形记录。"""
+        """通过缓存或二分查找返回指定字符的定长字形记录。"""
+        if character in self._record_cache:
+            return self._record_cache[character]
         source = self._open()
         target = ord(character)
         left = 0
@@ -68,12 +79,12 @@ class FusionPixelFont:
             record = source.read(RECORD_SIZE)
             current = self._codepoint(record)
             if current == target:
-                return record
+                return self._remember_record(character, record)
             if current < target:
                 left = middle + 1
             else:
                 right = middle - 1
-        return None
+        return self._remember_record(character, None)
 
     @staticmethod
     def _columns(record):

@@ -1,4 +1,4 @@
-# Raspberry Pi Pico 与 ST7789 LCD 完整接线说明
+# RP2040、ESP32-S3 与 ST7789 LCD 完整接线说明
 
 本文档分别说明八针 ST7789 屏、十针 ST7789 屏以及三枚公共按键的接线。
 屏幕使用 SPI0 单向传输，不读取屏幕数据，因此无需连接 MISO。接线前必须先断开
@@ -87,8 +87,46 @@ GP2，实体针脚 4        ---- 下一样式按钮 ---- GND
 GP3，实体针脚 5        ---- 预留功能按钮 ---- GND
 ```
 
-八针屏背光档案使用 `LcdBacklightProfile.pwm(26)`，公共驱动会在 GP26 输出
-1 kHz PWM，并将 Monitor 设置的一至一百亮度转换为占空比。
+八针屏背光档案会按照 `BOARD_MODEL` 自动选择。RP2040 在 GP26 输出 1 kHz PWM，
+ESP32-S3 在 GPIO13 输出 1 kHz PWM，并将 Monitor 设置的一至一百亮度转换为占空比。
+
+### ESP32-S3 八针屏接线
+
+当 `BOARD_MODEL = "ESP32-S3"` 时，两种八针屏自动切换到 MicroPython `SPI(2)` 脚位：
+
+| 屏幕针脚 | ESP32-S3 接口 | 档案字段 | 说明 |
+| --- | --- | --- | --- |
+| `GND` | GND | — | 必须与开发板共地 |
+| `VCC` | 3V3 | — | 默认按 3.3V 屏幕连接 |
+| `SCL`/`SCK`/`CLK` | GPIO12 | `spi_id=2, sck=12` | SPI 时钟 |
+| `SDA`/`MOSI`/`DIN` | GPIO11 | `mosi=11` | SPI 数据输出，不是 I²C SDA |
+| `RES`/`RST` | GPIO14 | `rst=14` | 硬件复位 |
+| `DC`/`A0` | GPIO9 | `dc=9` | 数据/命令选择 |
+| `CS` | GPIO10 | `cs=10` | SPI 片选 |
+| `BL`/`BLK` | GPIO13 | `bl=13` | 高电平有效 PWM 背光 |
+| 不连接屏幕 | GPIO15 | `miso=15` | 仅用于隔离旧版固件的默认 MISO，不接 LCD |
+
+```text
+ESP32-S3 DevKit                         八针 ST7789
+
+GND                 ----------------> GND
+3V3                 ----------------> VCC
+GPIO12              ----------------> SCL / SCK / CLK
+GPIO11              ----------------> SDA / MOSI / DIN
+GPIO14              ----------------> RES / RST
+GPIO9               ----------------> DC / A0
+GPIO10              ----------------> CS
+GPIO13              ----------------> BL / BLK
+GPIO15              - - - - - - - - > 不连接屏幕，仅保留给 SPI MISO
+```
+
+ESP32-S3 档案默认使用 10 MHz SPI，以适配旧版 MicroPython 和杜邦线接线。GPIO15
+必须保持悬空，不要与屏幕或其他外设连接。
+
+这组映射避开 GPIO19/20 原生 USB、GPIO48 板载 WS2812，以及项目默认使用的
+GPIO1/2/3 按键。若开发板未引出这些 GPIO，应在
+`picoRP2040/lcd/profiles.py` 的 `create_eight_pin_board_profiles()` 中按实际板卡修改，
+不能直接套用本表。
 
 ## 十针屏接线
 

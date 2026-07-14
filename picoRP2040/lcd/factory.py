@@ -16,7 +16,7 @@
 
 import os
 
-from config import LCD_DEVICE_TYPE
+from config import BOARD_MODEL, LCD_DEVICE_TYPE
 
 
 _LCD_DEVICE_CLASSES = {}
@@ -92,15 +92,16 @@ def discover_lcd_profiles(force=False):
     _DISCOVERED = True
 
 
-def create_lcd_device(device_type=None):
-    """根据配置或传入的屏幕方案创建对应设备实例。"""
+def create_lcd_device(device_type=None, board_model=None):
+    """根据屏幕方案与开发板型号创建使用对应脚位的设备实例。"""
     discover_lcd_profiles()
     selected_type = LCD_DEVICE_TYPE if device_type is None else device_type
+    selected_board = BOARD_MODEL if board_model is None else board_model
     normalized = _normalize_lcd_device_type(selected_type)
     device_class = _LCD_DEVICE_CLASSES.get(normalized)
     if device_class is None:
         raise ValueError("未知 LCD 屏幕方案：{}".format(selected_type))
-    return device_class()
+    return device_class(selected_board)
 
 
 def get_lcd_panel_profile(device_type=None):

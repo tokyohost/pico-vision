@@ -35,7 +35,8 @@ class TemplateStyle:
     width = 240
     height = 320
     landscape = False
-    font_name = "native"  # 还可使用 screen_2inch / screen_2inch_compact。
+    # 本属性只定义该样式的默认字体，单次 text() 仍可通过 font_name 临时覆盖。
+    font_name = "native"
 
     def __init__(self):
         """初始化有明确上限、可跨帧复用的缓存。 / Initialize bounded caches reusable across frames."""

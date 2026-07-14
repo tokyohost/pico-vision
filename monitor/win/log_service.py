@@ -28,14 +28,22 @@ class LogServiceMixin:
 
     def _read_recent_log(self, maximum_size=LOG_EXPORT_SIZE):
         """读取日志末尾指定字节数，并修正可能被截断的 UTF-8 字符。"""
-        if not self.log_path.exists():
-            return b""
-        with self.log_path.open("rb") as log_file:
-            log_file.seek(0, os.SEEK_END)
-            file_size = log_file.tell()
-            log_file.seek(max(0, file_size - maximum_size))
-            content = log_file.read(maximum_size)
+        with self.log_file_lock:
+            if not self.log_path.exists():
+                return b""
+            with self.log_path.open("rb") as log_file:
+                log_file.seek(0, os.SEEK_END)
+                file_size = log_file.tell()
+                log_file.seek(max(0, file_size - maximum_size))
+                content = log_file.read(maximum_size)
         return self._remove_incomplete_utf8_prefix(content)
+
+    def _clear_log(self):
+        """安全清空运行日志，避免与后台日志收集线程同时修改文件。"""
+        with self.log_file_lock:
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.log_path.open("wb"):
+                pass
 
     @classmethod
     def _mask_sensitive_settings(cls, value, field_name=""):

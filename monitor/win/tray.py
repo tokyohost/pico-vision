@@ -30,6 +30,7 @@ from .ui import (
     CustomDataWindowMixin,
     CustomStyleWindowMixin,
     DeviceWindowMixin,
+    WifiWindowMixin,
     LogWindowMixin,
     SettingsWindowMixin,
     TkSupportMixin,
@@ -58,6 +59,7 @@ class WindowsTrayApplication(
     AutostartMixin,
     SettingsWindowMixin,
     DeviceWindowMixin,
+    WifiWindowMixin,
     LogWindowMixin,
     AboutWindowMixin,
     CustomDataWindowMixin,
@@ -94,6 +96,7 @@ class WindowsTrayApplication(
         """初始化托盘状态、窗口互斥量、配置存储和后台进程参数。"""
         self.worker_arguments = list(worker_arguments)
         self.worker_process = None
+        self.log_file_lock = threading.Lock()
         self.log_window_lock = threading.Lock()
         self.log_window_open = False
         self.stopping = threading.Event()
@@ -109,6 +112,7 @@ class WindowsTrayApplication(
         self.device_probe_window_open = False
         self.device_management_messages = queue.Queue()
         self.device_connection_messages = queue.Queue()
+        self.wifi_messages = queue.Queue()
         self.device_connection_lock = threading.Lock()
         self.current_device_connection = {"connected": None}
         self.custom_style_messages = queue.Queue()

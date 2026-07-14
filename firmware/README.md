@@ -9,14 +9,21 @@
 接口版本；匹配时使用 C 完成帧头、长度、填充及 CRC 校验，不匹配或不存在时自动
 回退到原有 Python 解析器。JSON 仍由固件自带的 `ujson` 解析。
 
-在 `micropython/ports/rp2` 目录构建 Raspberry Pi Pico UF2：
+两套双语点阵字体已经作为 `fn_canvas` 只读数据编译进固件：
+
+- `wqy_8x16`：文泉驿点阵正黑，ASCII 8×16、中文 16×16。
+- `fusion_pixel_8x16`：Fusion Pixel 整数像素放大版，ASCII 8×16、中文 16×16。
+
+字库覆盖 ASCII 和 GB2312，缺字回退为 `?`。标准 2 MiB Pico 无法同时容纳两套字库、
+MicroPython 和项目文件系统，因此项目提供 `FN_VISION_RP2040_4M` 板配置。在
+`micropython/ports/rp2` 目录构建四兆字节 RP2040 UF2：
 
 ```sh
-make BOARD=RPI_PICO \
+make BOARD=FN_VISION_RP2040_4M \
   USER_C_MODULES=modules/micropython.cmake
 ```
 
-生成文件位于 `micropython/ports/rp2/build-RPI_PICO/firmware.uf2`。
+生成文件位于 `micropython/ports/rp2/build-FN_VISION_RP2040_4M/firmware.uf2`。
 
 设备侧可执行以下检查：
 

@@ -42,6 +42,7 @@ class PicoPackageTargetsTest(unittest.TestCase):
         self.assertIn("net/wifi.py", names)
         self.assertIn("net/websocket.py", names)
         self.assertIn("fonts/fusion_pixel_8px_zh_hans.fpf", names)
+        self.assertIn("styles/style_fusion_pixel_test.py", names)
 
     def test_rp2040_package_disables_wireless_and_omits_esp32_resources(self):
         """RP2040 包应关闭无线功能并排除 ESP32 专属资源。"""
@@ -54,6 +55,7 @@ class PicoPackageTargetsTest(unittest.TestCase):
         self.assertNotIn("net/wifi.py", names)
         self.assertNotIn("net/websocket.py", names)
         self.assertNotIn("font_fusion_pixel.py", names)
+        self.assertIn("styles/style_fusion_pixel_test.py", names)
         self.assertFalse(any(name.startswith("fonts/") for name in names))
 
 

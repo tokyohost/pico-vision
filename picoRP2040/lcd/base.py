@@ -26,9 +26,11 @@ class LcdDevice:
 
     panel_profile = None
     pin_profile = None
+    pin_profiles = None
 
-    def __init__(self):
-        """初始化 LCD 所需的 GPIO、SPI 外设和屏幕档案。"""
+    def __init__(self, board_model=None):
+        """按开发板型号初始化 LCD 所需的 GPIO、SPI 外设和屏幕档案。"""
+        self.pin_profile = self.pin_profile_for_board(board_model)
         if self.panel_profile is None or self.pin_profile is None:
             raise ValueError("LCD 子类缺少屏幕档案或脚位档案")
         self.cs = Pin(self.pin_profile.cs, Pin.OUT, value=1)
@@ -43,19 +45,41 @@ class LcdDevice:
         self.bl.duty_u16(backlight.duty_for_brightness(0))
         self._backlight_brightness = 100
         self._backlight_applied = False
-        self.spi = SPI(
-            self.pin_profile.spi_id,
-            baudrate=self.pin_profile.baudrate,
-            polarity=0,
-            phase=0,
-            sck=Pin(self.pin_profile.sck),
-            mosi=Pin(self.pin_profile.mosi),
-        )
+        spi_parameters = {
+            "baudrate": self.pin_profile.baudrate,
+            "polarity": 0,
+            "phase": 0,
+            "sck": Pin(self.pin_profile.sck),
+            "mosi": Pin(self.pin_profile.mosi),
+        }
+        # 旧版 ESP32-S3 MicroPython 会自动占用默认 MISO，显式指定可避免背光脚冲突。
+        if self.pin_profile.miso is not None:
+            spi_parameters["miso"] = Pin(self.pin_profile.miso)
+        self.spi = SPI(self.pin_profile.spi_id, **spi_parameters)
         self._rotation = 0
         self._landscape = False
         self._color_profile = get_color_profile(
             self.panel_profile.color_profile_name
         )
+
+    @classmethod
+    def pin_profile_for_board(cls, board_model=None):
+        """返回开发板专属脚位档案，未提供板型时兼容旧的单档案设备。"""
+        if board_model is None:
+            return cls.pin_profile
+        normalized_model = str(board_model or "").strip().lower()
+        if cls.pin_profiles is None and normalized_model.startswith("rp2040_"):
+            return cls.pin_profile
+        profiles = cls.pin_profiles or {}
+        profile = profiles.get(normalized_model)
+        if profile is None:
+            raise ValueError(
+                "LCD 屏幕方案 {} 不支持开发板 {}".format(
+                    cls.panel_profile.device_type,
+                    board_model,
+                )
+            )
+        return profile
 
     def write_command(self, command):
         """向 LCD 写入一个控制命令。"""

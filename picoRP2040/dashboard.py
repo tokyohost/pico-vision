@@ -20,8 +20,6 @@ import time
 from canvas_backend import Canvas, canvas_backend_name
 from config import (
     BLACK,
-    BOARD_MODEL,
-    ESP32_FONT_NAME,
     LCD_STRIP_HEIGHT,
     LCD_STYLE,
 )
@@ -140,10 +138,7 @@ class DashboardRenderer:
                 del current_canvas
                 gc.collect()
             self.canvas = Canvas(self._width, LCD_STRIP_HEIGHT)
-        style_font_name = getattr(self._style, "font_name", "native")
-        if str(BOARD_MODEL).strip().lower().replace("_", "-") == "esp32-s3":
-            style_font_name = ESP32_FONT_NAME
-        self.canvas.set_font(style_font_name)
+        self.canvas.set_font(getattr(self._style, "font_name", "native"))
         self.lcd.set_landscape(bool(getattr(self._style, "landscape", False)))
 
     def set_rotation(self, rotation):

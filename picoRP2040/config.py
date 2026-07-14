@@ -16,13 +16,11 @@
 
 # 开发板型号：可配置为 rp2040_usb、rp2040_typec 或 ESP32-S3。
 # ESP32-S3 档案默认使用 GPIO48 的板载 WS2812；具体引脚由开发板档案管理。
-BOARD_MODEL = "rp2040_usb"
-# ESP32-S3 拥有更充足的闪存，默认启用支持中文的 Fusion Pixel 字体。
-ESP32_FONT_NAME = "fusion_pixel_8px"
+BOARD_MODEL = "ESP32-S3"
 # 开发源码使用 development；正式升级包由打包工具写入发布版本。
 FIRMWARE_VERSION = "development"
 # LCD 屏幕方案：具体分辨率、色彩、显存偏移和 GPIO 均由 lcd 目录中的档案定义。
-LCD_DEVICE_TYPE = "st7789-2inch-8pin-a"
+LCD_DEVICE_TYPE = "st7789-2.4inch-8pin-b"
 
 
 # LCD 通用刷新参数。
@@ -99,7 +97,6 @@ def _load_runtime_configuration():
         return
     allowed = {
         "BOARD_MODEL": str,
-        "ESP32_FONT_NAME": str,
         "WIFI_ENABLED": bool,
         "LCD_STYLE": str,
         "RENDER_INTERVAL_MS": int,

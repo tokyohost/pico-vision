@@ -22,6 +22,7 @@ from windows_tray import (
 from monitor_core.tray_commands import _dispatch_tray_command
 from win.tray import APPLICATION_NAME
 from win.worker_controller import MAXIMUM_LOG_SIZE, WorkerControllerMixin
+from win.ui.wifi_window import merge_wifi_networks
 from style_validator import ValidatedStyle
 
 
@@ -39,6 +40,7 @@ class WindowsTraySettingsTest(unittest.TestCase):
         application = WindowsTrayApplication.__new__(WindowsTrayApplication)
         application.data_directory = data_directory
         application.log_path = data_directory / "pico-monitor.log"
+        application.log_file_lock = threading.Lock()
         application.settings = dict(
             DEFAULT_SETTINGS,
             lcd_brightness=66,
@@ -60,6 +62,16 @@ class WindowsTraySettingsTest(unittest.TestCase):
         application.log_path.write_bytes("甲乙丙".encode("utf-8"))
 
         self.assertEqual("乙丙".encode("utf-8"), application._read_recent_log(7))
+
+    def test_clear_log_empties_runtime_log_file(self):
+        """确认清空日志会保留日志文件并删除其中全部内容。"""
+        application = self._create_log_application()
+        application.log_path.write_text("待清空的系统监控日志", encoding="utf-8")
+
+        application._clear_log()
+
+        self.assertTrue(application.log_path.exists())
+        self.assertEqual(b"", application.log_path.read_bytes())
 
     def test_runtime_log_keeps_only_latest_fifteen_megabytes(self):
         """确认运行日志超过十五兆字节后仅保留最新内容。"""
@@ -106,6 +118,70 @@ class WindowsTraySettingsTest(unittest.TestCase):
 
         self.assertFalse(should_stop)
         service.activate_custom_data_plugin.assert_called_once_with("weather")
+
+    def test_tray_command_dispatch_requests_wifi_scan(self):
+        """确认后台进程能解析 Wi-Fi 扫描命令。"""
+        service = mock.Mock()
+
+        should_stop = _dispatch_tray_command(service, "WIFI_LIST")
+
+        self.assertFalse(should_stop)
+        service.request_wifi_list.assert_called_once_with()
+
+    def test_tray_command_dispatch_requests_wifi_connection(self):
+        """确认 Wi-Fi 名称和密钥会作为结构化参数交给监控服务。"""
+        service = mock.Mock()
+
+        should_stop = _dispatch_tray_command(
+            service,
+            'WIFI_CONNECT:{"ssid":"测试网络","password":"测试密钥"}',
+        )
+
+        self.assertFalse(should_stop)
+        service.request_wifi_connect.assert_called_once_with({
+            "ssid": "测试网络",
+            "password": "测试密钥",
+        })
+
+    def test_wifi_list_keeps_saved_network_outside_scan_range(self):
+        """确认未被本次扫描发现的已保存网络仍会显示。"""
+        networks = merge_wifi_networks(
+            [{"ssid": "附近网络", "rssi": -40, "security": 3}],
+            {"ssid": "已保存网络", "connected": False},
+        )
+
+        self.assertEqual(["已保存网络", "附近网络"], [item["ssid"] for item in networks])
+        self.assertTrue(networks[0]["saved"])
+        self.assertFalse(networks[0]["connected"])
+
+    def test_wifi_list_marks_connected_network_and_removes_duplicates(self):
+        """确认当前网络置顶显示为已连接，并按名称去除重复热点。"""
+        networks = merge_wifi_networks([
+            {"ssid": "当前网络", "rssi": -70, "security": 3},
+            {"ssid": "当前网络", "rssi": -35, "security": 3},
+            {"ssid": "其他网络", "rssi": -20, "security": 0},
+        ], {
+            "ssid": "当前网络",
+            "connected": True,
+            "rssi": -35,
+        })
+
+        self.assertEqual(["当前网络", "其他网络"], [item["ssid"] for item in networks])
+        self.assertTrue(networks[0]["connected"])
+        self.assertEqual(-35, networks[0]["rssi"])
+
+    def test_wifi_connect_writes_worker_command_without_exposing_other_settings(self):
+        """确认 Wi-Fi 连接命令仅携带用户输入的名称与密钥。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.worker_process = mock.Mock()
+        application.worker_process.poll.return_value = None
+
+        self.assertTrue(application._request_wifi_connect("测试网络", "测试密钥"))
+
+        command = application.worker_process.stdin.write.call_args.args[0]
+        payload = json.loads(command.removeprefix("WIFI_CONNECT:"))
+        self.assertEqual({"ssid": "测试网络", "password": "测试密钥"}, payload)
+        application.worker_process.stdin.flush.assert_called_once_with()
 
     def test_worker_result_parser_ignores_trailing_log_text(self):
         """确认后台结构化结果后粘连普通日志时仍按第一段 JSON 解析。"""
