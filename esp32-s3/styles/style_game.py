@@ -20,6 +20,7 @@ class GameStyle:
     name = "game"
     zh_name = "游戏监控简约"
     type = "builtin"
+    idle = False
     width = 320
     height = 240
     landscape = True

@@ -22,6 +22,7 @@ class DiskV3Style:
     name = "diskv3"
     zh_name = "十五盘 IP 版"
     type = "builtin"
+    idle = False
     width = 320
     height = 240
     landscape = True

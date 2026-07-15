@@ -418,6 +418,8 @@ class RuntimeOperationsMixin:
             "adaptive_transmit": bool(getattr(self.arguments, "adaptive_transmit", True)),
             "network_unit": self.arguments.network_unit,
             "style": self.arguments.lcd_style,
+            "idle_style": getattr(self.arguments, "idle_style", "idle"),
+            "idle_timeout": getattr(self.arguments, "idle_timeout", 30),
             "dev": bool(getattr(self.arguments, "dev", False)),
         }
 

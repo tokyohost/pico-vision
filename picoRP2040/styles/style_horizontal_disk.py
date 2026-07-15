@@ -31,6 +31,7 @@ class HorizontalDiskStyle:
     name = "horizontal_disk"
     zh_name = "九盘横屏版"
     type = "builtin"
+    idle = False
     width = 320
     height = 240
     landscape = True

@@ -19,6 +19,7 @@ class SimpleStyle(HorizontalDiskStyle):
     name = "simple"
     zh_name = "三盘简洁版"
     type = "builtin"
+    idle = False
     font_name = "screen_2inch_compact"
 
     @staticmethod

@@ -31,6 +31,7 @@ class HorizontalDisk4xStyle:
     name = "horizontal_disk4x"
     zh_name = "四盘清晰版"
     type = "builtin"
+    idle = False
     width = 320
     height = 240
     landscape = True

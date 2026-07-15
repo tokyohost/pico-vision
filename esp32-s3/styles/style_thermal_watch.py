@@ -19,6 +19,7 @@ class ThermalWatchStyle:
     name = "thermal_watch"
     zh_name = "热力监控"
     type = "builtin"
+    idle = False
     width = 320
     height = 240
     landscape = True

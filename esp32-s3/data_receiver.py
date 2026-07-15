@@ -13,12 +13,21 @@
 
 """协调非阻塞 JSON 接收与最新快照缓存。"""
 
+import time
 
 from config import (
     TIME_CALIBRATION_SNAPSHOTS,
     TIME_CALIBRATION_TOLERANCE_SECONDS,
 )
 from timeIncrease import TimeIncrease
+
+
+def _monotonic_ms():
+    """返回兼容 MicroPython 与桌面测试环境的单调毫秒数。"""
+    ticks_ms = getattr(time, "ticks_ms", None)
+    if callable(ticks_ms):
+        return ticks_ms()
+    return int(time.monotonic() * 1000)
 
 
 def _merge_snapshot(previous, incoming):
@@ -43,6 +52,7 @@ class SnapshotCache:
         """创建空快照缓存。"""
         self.snapshot = None
         self.version = 0
+        self._last_update_ms = None
         self._time_increase = TimeIncrease(
             TIME_CALIBRATION_SNAPSHOTS,
             TIME_CALIBRATION_TOLERANCE_SECONDS,
@@ -54,6 +64,7 @@ class SnapshotCache:
             _merge_snapshot(self.snapshot, snapshot)
         )
         self.version += 1
+        self._last_update_ms = _monotonic_ms()
 
     def latest(self):
         """返回最新快照和版本号。"""
@@ -63,9 +74,14 @@ class SnapshotCache:
         """返回与本地时间校准基准对齐的下一次刷新时刻。"""
         return self._time_increase.next_refresh_ms(interval_ms, now_ms)
 
+    def last_update_ms(self):
+        """返回最近一次有效 JSON 快照的单调时钟时刻。"""
+        return self._last_update_ms
+
     def clear(self):
         """清除失效快照并递增版本号。"""
         self.snapshot = None
+        self._last_update_ms = None
         self._time_increase.reset()
         self.version += 1
 

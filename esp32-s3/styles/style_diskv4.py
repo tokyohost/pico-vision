@@ -22,6 +22,7 @@ class DiskV4Style:
     name = "diskv4"
     zh_name = "十五盘趋势版"
     type = "builtin"
+    idle = False
     width = 320
     height = 240
     landscape = True

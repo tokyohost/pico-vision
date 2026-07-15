@@ -148,6 +148,10 @@ class Application:
         self._next_gc = time.ticks_add(now, GC_MIN_INTERVAL_MS)
         self._monitor_interval_ms = 500
         self._monitor_connected = False
+        self._idle_style = "idle"
+        self._idle_timeout_ms = 30000
+        self._idle_active = False
+        self._idle_wait_started_ms = now
         self._dev_mode = False
         self._button_style_override = None
         self._last_display_style = LCD_STYLE
@@ -265,7 +269,7 @@ class Application:
             names = [
                 item.get("name")
                 for item in style_catalog()
-                if isinstance(item, dict) and item.get("name")
+                if isinstance(item, dict) and item.get("name") and not item.get("idle", False)
             ]
         except Exception:
             names = []
@@ -465,6 +469,24 @@ class Application:
             >= self._monitor_interval_ms * MONITOR_TIMEOUT_INTERVALS
         )
 
+    def _idle_due(self, now):
+        """判断最近一次 JSON 或启动等待是否达到待机阈值。"""
+        last_update_ms = self._cache.last_update_ms()
+        baseline_ms = last_update_ms if last_update_ms is not None else self._idle_wait_started_ms
+        return time.ticks_diff(now, baseline_ms) >= self._idle_timeout_ms
+
+    def _enter_idle(self, snapshot):
+        """切换到配置的待机样式，并保留最后一次时间快照。"""
+        self._renderer.set_style(self._idle_style)
+        self._idle_active = True
+        self._rendering_version = -1
+        self._renderer.request_render(snapshot or {}, force=True)
+        self._protocol.write(
+            "CONFIG:LCD_IDLE:{}:{}MS\n".format(
+                self._idle_style, self._idle_timeout_ms
+            ).encode("utf-8")
+        )
+
     def _return_to_waiting_page(self):
         """切换到系统启动等待页，并保留现有 USB CDC 等待主机重连。"""
         self._monitor_connected = False
@@ -505,17 +527,41 @@ class Application:
             flush=True,
         )
         while True:
-            self._receiver.update()
+            received_json = self._receiver.update()
+            if received_json:
+                self._idle_active = False
             self._led.update()
             now = time.ticks_ms()
             snapshot, version = self._cache.latest()
+            idle_refresh_due = (
+                time.ticks_diff(now, self._next_clock_render) >= 0
+            )
             self._handle_button_actions(self._buttons.update(now), snapshot)
-            # Monitor 被强制结束后，USB CDC 可能持续报告端点可读或遗留半包，
-            # 此时接收器会一直处于忙状态。超时判断必须先于忙状态短路，
-            # 否则主循环永远无法切换回 SYSTEM BOOT 等待页。
-            if self._monitor_timed_out(now):
-                self._return_to_waiting_page()
-                continue
+            # 遗留半包可能使接收器持续忙碌，因此待机判断必须先于忙状态短路。
+            if (
+                not self._idle_active
+                and not self._renderer.is_rendering()
+                and self._idle_due(now)
+            ):
+                try:
+                    self._enter_idle(snapshot)
+                except (ImportError, MemoryError, TypeError, ValueError) as error:
+                    self._protocol.write(
+                        "CONFIG:LCD_IDLE_ERROR:{}:{}\n".format(
+                            self._idle_style, error
+                        ).encode("utf-8")
+                    )
+            if (
+                self._idle_active
+                and snapshot is not None
+                and not self._renderer.is_rendering()
+                and idle_refresh_due
+            ):
+                self._renderer.request_render(snapshot, force=False)
+                self._rendering_version = version
+                self._next_clock_render = self._cache.next_refresh_ms(
+                    CLOCK_REFRESH_INTERVAL_MS, now
+                )
             if self._receiver.is_busy():
                 # 接收优先但不再完全饿死已有渲染任务；每次最多推进一个区域，
                 # 下一轮会立即继续消费协议缓冲区。
@@ -527,11 +573,9 @@ class Application:
                 time.sleep_ms(0)
                 continue
             has_new_snapshot = version != self._rendering_version
-            idle_refresh_due = (
-                time.ticks_diff(now, self._next_clock_render) >= 0
-            )
             if (
                 snapshot is None
+                and not self._idle_active
                 and not self._renderer.is_rendering()
                 and time.ticks_diff(now, self._next_boot_animation) >= 0
             ):
@@ -563,6 +607,12 @@ class Application:
                 # 周期压缩到 300ms 以下并造成不必要的会话抖动。
                 self._monitor_interval_ms = max(300, requested_interval_ms)
                 self._monitor_connected = True
+                self._idle_style = str(display.get("idle_style", self._idle_style) or "idle")
+                try:
+                    idle_timeout = int(display.get("idle_timeout", self._idle_timeout_ms // 1000))
+                except (TypeError, ValueError):
+                    idle_timeout = 30
+                self._idle_timeout_ms = max(1, idle_timeout) * 1000
                 requested_rotation = display.get("rotation", 0)
                 try:
                     requested_rotation = int(requested_rotation)
@@ -572,7 +622,11 @@ class Application:
                 if display_style != self._last_display_style:
                     self._button_style_override = None
                     self._last_display_style = display_style
-                requested_style = self._button_style_override or display_style
+                requested_style = (
+                    self._idle_style
+                    if self._idle_active
+                    else self._button_style_override or display_style
+                )
                 # if requested_style == self._failed_custom_style:
                 #     requested_style = "default"
                 # elif self._failed_custom_style is not None:

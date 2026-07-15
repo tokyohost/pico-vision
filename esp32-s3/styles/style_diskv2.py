@@ -22,6 +22,7 @@ class DiskV2Style:
     name = "diskv2"
     zh_name = "十五盘紧凑版"
     type = "builtin"
+    idle = False
     width = 320
     height = 240
     landscape = True

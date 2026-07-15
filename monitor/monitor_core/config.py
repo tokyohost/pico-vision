@@ -26,6 +26,8 @@ CONFIG_ENV_MAP = {
     "PICO_MONITOR_LCD_BRIGHTNESS": ("screen", "lcd_brightness"),
     "PICO_MONITOR_NETWORK_UNIT": ("network", "unit"),
     "PICO_MONITOR_LCD_STYLE": ("screen", "lcd_style"),
+    "PICO_MONITOR_IDLE_STYLE": ("screen", "idle_style"),
+    "PICO_MONITOR_IDLE_TIMEOUT": ("screen", "idle_timeout"),
     "PICO_MONITOR_DEV": ("monitor", "dev"),
     "PICO_MONITOR_LOG_LEVEL": ("logging", "level"),
     "PICO_MONITOR_THREAD_DIAGNOSTICS": ("diagnostics", "threads"),

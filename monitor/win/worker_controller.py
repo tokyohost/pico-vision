@@ -144,6 +144,8 @@ class WorkerControllerMixin:
             return False
         payload = {
             "lcd_style": self.settings["lcd_style"],
+            "idle_style": self.settings["idle_style"],
+            "idle_timeout": self.settings["idle_timeout"],
             "screen_rotation": self.settings["screen_rotation"],
             "lcd_brightness": self.settings["lcd_brightness"],
             "network_unit": self.settings["network_unit"],

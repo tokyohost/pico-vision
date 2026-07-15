@@ -22,6 +22,7 @@ class Game2Style:
     name = "game2"
     zh_name = "游戏监控2"
     type = "builtin"
+    idle = False
     width = 320
     height = 240
     landscape = True

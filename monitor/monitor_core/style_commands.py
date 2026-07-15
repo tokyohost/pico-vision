@@ -15,6 +15,7 @@ BUILTIN_LCD_STYLES = (
     "default", "disk", "diskv2", "diskv3", "diskv4", "horizontal_disk",
     "horizontal_diskv2", "horizontal_disk4x", "horizontal_disk4x_qb",
     "horizontal_disk6x", "simple", "fpstest", "fps_simple", "game",
+    "idle",
 )
 
 
@@ -34,6 +35,10 @@ class StyleCommandMixin:
         if not names:
             return
         self.available_styles = names
+        self.available_idle_styles = {
+            item.get("name") for item in catalog
+            if isinstance(item, dict) and item.get("name") and item.get("idle") is True
+        } or {"idle"}
         settings_path = os.getenv("PICO_MONITOR_SETTINGS_PATH")
         if settings_path:
             from win.settings import TraySettingsStore, normalize_style_catalog
@@ -46,6 +51,9 @@ class StyleCommandMixin:
                 if settings["lcd_style"] not in names:
                     settings["lcd_style"] = normalized[0]["name"]
                     self.arguments.lcd_style = settings["lcd_style"]
+                if settings["idle_style"] not in self.available_idle_styles:
+                    settings["idle_style"] = "idle"
+                    self.arguments.idle_style = settings["idle_style"]
                 store.save(settings)
         LOGGER.info("STYLE_CATALOG_UPDATED：已同步 %d 个 Pico 样式", len(names))
 
@@ -171,6 +179,8 @@ class StyleCommandMixin:
         brightness = int(payload.get("lcd_brightness", self.arguments.lcd_brightness))
         rotation = int(payload.get("screen_rotation", self.arguments.screen_rotation))
         style = payload.get("lcd_style", self.arguments.lcd_style)
+        idle_style = payload.get("idle_style", getattr(self.arguments, "idle_style", "idle"))
+        idle_timeout = int(payload.get("idle_timeout", getattr(self.arguments, "idle_timeout", 30)))
         network_unit = payload.get("network_unit", self.arguments.network_unit)
         if not 1 <= brightness <= 100:
             raise ValueError("LCD 背光亮度必须为 1 至 100")
@@ -178,15 +188,21 @@ class StyleCommandMixin:
             raise ValueError("屏幕旋转角度仅支持 0 或 180")
         if style not in self.available_styles:
             raise ValueError("不支持的 LCD 样式")
+        if idle_style not in getattr(self, "available_idle_styles", {"idle"}):
+            raise ValueError("不支持的 LCD 待机样式")
+        if idle_timeout <= 0:
+            raise ValueError("待机秒数必须大于 0")
         if network_unit not in ("MB", "Mbps"):
             raise ValueError("不支持的网络速率单位")
         self.arguments.lcd_brightness = brightness
         self.arguments.screen_rotation = rotation
         self.arguments.lcd_style = style
+        self.arguments.idle_style = idle_style
+        self.arguments.idle_timeout = idle_timeout
         self.arguments.network_unit = network_unit
         LOGGER.info(
-            "显示设置已热更新：亮度=%d%%，旋转=%d°，样式=%s，网络单位=%s",
-            brightness, rotation, style, network_unit,
+            "显示设置已热更新：亮度=%d%%，旋转=%d°，样式=%s，待机样式=%s，待机=%d 秒，网络单位=%s",
+            brightness, rotation, style, idle_style, idle_timeout, network_unit,
         )
 
     def apply_dev_config(self, payload):

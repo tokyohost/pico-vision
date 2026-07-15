@@ -23,6 +23,7 @@ class FpsSimpleStyle:
     name = "fps_simple"
     zh_name = "FPS 监控简约"
     type = "builtin"
+    idle = False
     width = 320
     height = 240
     landscape = True

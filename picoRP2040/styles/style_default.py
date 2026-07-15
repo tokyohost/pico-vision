@@ -30,6 +30,7 @@ class DefaultStyle:
     name = "default"
     zh_name = "经典概览"
     type = "builtin"
+    idle = False
     font_name = "native"
 
     @staticmethod

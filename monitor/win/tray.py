@@ -384,7 +384,7 @@ class WindowsTrayApplication(
             self.settings_store.save(self.settings)
             self._apply_display_settings()
             icon.update_menu()
-            icon.notify("已切换为{}".format(style_names(self.settings)[style]), APPLICATION_NAME)
+            icon.notify("已切换为{}".format(style_names(self.settings, idle=False)[style]), APPLICATION_NAME)
         return select
 
     def _style_checked(self, style):
@@ -528,6 +528,7 @@ class WindowsTrayApplication(
         latest_settings = self.settings_store.load()
         self.settings["styles"] = normalize_style_catalog(latest_settings["styles"])
         self.settings["lcd_style"] = latest_settings["lcd_style"]
+        self.settings["idle_style"] = latest_settings["idle_style"]
 
     def _style_menu_items(self):
         """生成最新的样式菜单项，避免托盘长期持有启动时的静态清单。"""
@@ -536,7 +537,7 @@ class WindowsTrayApplication(
         self._reload_style_catalog()
         return tuple(
             pystray.MenuItem(style_label(name, self.settings), self._select_style(name), checked=self._style_checked(name), radio=True)
-            for name in style_names(self.settings)
+            for name in style_names(self.settings, idle=False)
         )
 
     def _set_rotation(self, rotation):

@@ -135,6 +135,14 @@ class SettingsWindowMixin:
                 master=root,
                 value=style_label(self.settings["lcd_style"], self.settings)
             ),
+            "idle_style": tk.StringVar(
+                master=root,
+                value=style_label(self.settings["idle_style"], self.settings),
+            ),
+            "idle_timeout": tk.StringVar(
+                master=root,
+                value=str(self.settings.get("idle_timeout", 30)),
+            ),
             "qbittorrent_enabled": tk.BooleanVar(master=root, value=False),
             "qbittorrent_address": tk.StringVar(master=root, value=self.settings["qbittorrent_address"]),
             "qbittorrent_username": tk.StringVar(master=root, value=self.settings["qbittorrent_username"]),
@@ -166,9 +174,12 @@ class SettingsWindowMixin:
             widget.grid(row=row, column=1, sticky="ew", pady=6)
 
         display = card("显示设置")
-        styles = [style_label(name, self.settings) for name in style_names(self.settings)]
+        styles = [style_label(name, self.settings) for name in style_names(self.settings, idle=False)]
+        idle_styles = [style_label(name, self.settings) for name in style_names(self.settings, idle=True)]
         field(display, 0, "界面样式", ttk.Combobox(display, textvariable=variables["lcd_style"], values=styles, state="readonly"))
-        field(display, 1, "屏幕旋转", ttk.Combobox(display, textvariable=variables["screen_rotation"], values=("0", "180"), state="readonly"))
+        field(display, 1, "待机样式", ttk.Combobox(display, textvariable=variables["idle_style"], values=idle_styles, state="readonly"))
+        field(display, 2, "空闲进入待机（秒）", ttk.Entry(display, textvariable=variables["idle_timeout"]))
+        field(display, 3, "屏幕旋转", ttk.Combobox(display, textvariable=variables["screen_rotation"], values=("0", "180"), state="readonly"))
         brightness_control = ttk.Frame(display)
         brightness_control.columnconfigure(0, weight=1)
         brightness_slider = tk.Scale(
@@ -183,24 +194,33 @@ class SettingsWindowMixin:
             highlightthickness=0,
         )
         brightness_slider.grid(row=0, column=0, sticky="ew")
-        field(display, 2, "背光亮度（1-100%）", brightness_control)
-        field(display, 3, "网络速率单位", ttk.Combobox(display, textvariable=variables["network_unit"], values=("MB", "Mbps"), state="readonly"))
+        field(display, 4, "背光亮度（1-100%）", brightness_control)
+        field(display, 5, "网络速率单位", ttk.Combobox(display, textvariable=variables["network_unit"], values=("MB", "Mbps"), state="readonly"))
 
         def save_display_settings():
             """保存显示设置并通知运行中的 Monitor 在下一帧应用。"""
             try:
                 selected_style = next(
-                    name for name in style_names(self.settings)
+                    name for name in style_names(self.settings, idle=False)
                     if style_label(name, self.settings) == variables["lcd_style"].get()
                 )
+                selected_idle_style = next(
+                    name for name in style_names(self.settings, idle=True)
+                    if style_label(name, self.settings) == variables["idle_style"].get()
+                )
                 brightness = int(variables["lcd_brightness"].get())
+                idle_timeout = int(variables["idle_timeout"].get())
                 if not 1 <= brightness <= 100:
                     raise ValueError
+                if idle_timeout <= 0:
+                    raise ValueError
             except (ValueError, StopIteration):
-                messagebox.showerror("配置错误", "背光亮度必须为 1 至 100。", parent=root)
+                messagebox.showerror("配置错误", "背光亮度必须为 1 至 100，待机秒数必须大于 0。", parent=root)
                 return
             self.settings.update({
                 "lcd_style": selected_style,
+                "idle_style": selected_idle_style,
+                "idle_timeout": idle_timeout,
                 "screen_rotation": int(variables["screen_rotation"].get()),
                 "lcd_brightness": brightness,
                 "network_unit": variables["network_unit"].get(),
@@ -218,7 +238,7 @@ class SettingsWindowMixin:
             text="保存并应用",
             command=save_display_settings,
             width=14,
-        ).grid(row=4, column=1, sticky="e", pady=(10, 0))
+        ).grid(row=6, column=1, sticky="e", pady=(10, 0))
 
         monitor = card("监控连接")
         port_control = ttk.Frame(monitor)
@@ -353,7 +373,8 @@ class SettingsWindowMixin:
         def save():
             """校验并保存完整配置，然后重启后台监控。"""
             try:
-                selected_style = next(name for name in style_names(self.settings) if style_label(name, self.settings) == variables["lcd_style"].get())
+                selected_style = next(name for name in style_names(self.settings, idle=False) if style_label(name, self.settings) == variables["lcd_style"].get())
+                selected_idle_style = next(name for name in style_names(self.settings, idle=True) if style_label(name, self.settings) == variables["idle_style"].get())
                 collection_task_intervals = {}
                 for name, variable in collection_task_variables.items():
                     interval = float(variable.get())
@@ -376,6 +397,8 @@ class SettingsWindowMixin:
                     "lcd_brightness": int(variables["lcd_brightness"].get()),
                     "network_unit": variables["network_unit"].get(),
                     "lcd_style": selected_style,
+                    "idle_style": selected_idle_style,
+                    "idle_timeout": int(variables["idle_timeout"].get()),
                     "qbittorrent_enabled": variables["qbittorrent_enabled"].get(),
                     "qbittorrent_address": variables["qbittorrent_address"].get().strip(),
                     "qbittorrent_username": variables["qbittorrent_username"].get().strip(),
@@ -387,6 +410,7 @@ class SettingsWindowMixin:
                         or updated["interval"] < 0.3
                         or min(updated["reconnect_interval"], updated["serial_probe_interval"], updated["qbittorrent_interval"]) <= 0
                         or min(updated["collection_task_intervals"].values()) <= 0
+                        or updated["idle_timeout"] <= 0
                         or not 1 <= updated["lcd_brightness"] <= 100):
                     raise ValueError
                 if updated["qbittorrent_enabled"] and not all((updated["qbittorrent_address"], updated["qbittorrent_username"], updated["qbittorrent_password"])):

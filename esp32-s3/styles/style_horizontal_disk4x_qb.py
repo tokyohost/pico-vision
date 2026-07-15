@@ -31,6 +31,7 @@ class HorizontalDisk4xQbStyle:
     name = "horizontal_disk4x_qb"
     zh_name= "四盘下载版（qBittorrent）"
     type= "builtin"
+    idle = False
     width = 320
     height = 240
     landscape = True

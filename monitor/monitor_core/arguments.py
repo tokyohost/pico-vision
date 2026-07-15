@@ -42,6 +42,8 @@ def create_argument_parser(config=None):
     parser.add_argument("--lcd-brightness", type=int, choices=range(1, 101), default=int(config_value(config, "PICO_MONITOR_LCD_BRIGHTNESS", "50")), help="Pico LCD 背光亮度百分比，范围为 1 至 100")
     parser.add_argument("--network-unit", choices=("MB", "Mbps"), default=config_value(config, "PICO_MONITOR_NETWORK_UNIT", "MB"), help="网络速率模式：MB 自动使用 B/KB/MB/GB，Mbps 自动使用 bps/Kbps/Mbps/Gbps")
     parser.add_argument("--lcd-style", default=config_value(config, "PICO_MONITOR_LCD_STYLE", "horizontal_disk4x"), help="Pico LCD 界面样式名称")
+    parser.add_argument("--idle-style", default=config_value(config, "PICO_MONITOR_IDLE_STYLE", "idle"), help="Pico LCD 待机样式名称")
+    parser.add_argument("--idle-timeout", type=int, default=int(config_value(config, "PICO_MONITOR_IDLE_TIMEOUT", "30")), help="连续未收到 JSON 后进入待机的秒数")
     parser.add_argument("--log-level", type=lambda value: str(value).upper(), choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"), default=str(config_value(config, "PICO_MONITOR_LOG_LEVEL", "INFO")).upper(), help="日志输出级别，默认 INFO；排障时可设为 DEBUG")
     parser.add_argument("--thread-diagnostics", action="store_true", default=config_flag(config, "PICO_MONITOR_THREAD_DIAGNOSTICS", False), help="开启线程诊断，周期输出 threading.enumerate() 摘要和 faulthandler 全线程栈")
     parser.add_argument("--thread-diagnostics-interval", type=float, default=float(config_value(config, "PICO_MONITOR_THREAD_DIAGNOSTICS_INTERVAL", "10.0")), help="线程诊断输出间隔，单位为秒")
@@ -87,6 +89,7 @@ def validate_arguments(arguments):
             or not 1 <= arguments.lan_probe_port <= 65535
             or arguments.lan_probe_max_workers <= 0
             or arguments.qbittorrent_interval <= 0
+            or arguments.idle_timeout <= 0
             or arguments.thread_diagnostics_interval <= 0):
         raise SystemExit("采集间隔不得低于 0.3 秒，其他重连和任务间隔必须大于 0")
     if any(interval <= 0 for interval in arguments.collection_task_intervals.values()):

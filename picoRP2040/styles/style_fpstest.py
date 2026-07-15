@@ -16,6 +16,7 @@ class FpsTestStyle:
     name = "fpstest"
     zh_name = "FPS 稳帧测试"
     type = "builtin"
+    idle = False
     width = 320
     height = 240
     landscape = True

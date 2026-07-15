@@ -81,6 +81,7 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
         self.initialize_wifi_commands()
         self.initialize_websocket_client_commands()
         self.available_styles = set(BUILTIN_LCD_STYLES)
+        self.available_idle_styles = {"idle"}
         self._snapshot_store = LockFreeSnapshotStore(self._create_initial_snapshot(arguments))
         self._latest_collected_snapshot = self._snapshot_store.snapshot()
         self._latest_collection_error = None
@@ -182,6 +183,8 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
                 "adaptive_transmit": bool(getattr(arguments, "adaptive_transmit", True)),
                 "network_unit": arguments.network_unit,
                 "style": arguments.lcd_style,
+                "idle_style": getattr(arguments, "idle_style", "idle"),
+                "idle_timeout": getattr(arguments, "idle_timeout", 30),
                 "dev": bool(getattr(arguments, "dev", False)),
             },
         }

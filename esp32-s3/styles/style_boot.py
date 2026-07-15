@@ -54,6 +54,7 @@ class BootStyle:
     name = "boot"
     zh_name = "系统启动页"
     type = "builtin"
+    idle = False
     font_name = "native"
     width = 320
     height = 240

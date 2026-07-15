@@ -24,9 +24,15 @@ STYLE_NAMES = {
     "simple": "三盘简洁版",
     "fps_simple": "FPS 监控简约",
     "game": "游戏监控简约",
+    "idle": "像素待机时钟",
 }
 DEFAULT_STYLE_CATALOG = [
-    {"name": name, "chinese_name": chinese_name, "type": "builtin"}
+    {
+        "name": name,
+        "chinese_name": chinese_name,
+        "type": "builtin",
+        "idle": name == "idle",
+    }
     for name, chinese_name in STYLE_NAMES.items()
 ]
 DEFAULT_COLLECTION_TASK_INTERVALS = system_task_defaults()
@@ -53,6 +59,8 @@ DEFAULT_SETTINGS = {
     "lcd_brightness": 100,
     "network_unit": "MB",
     "lcd_style": "horizontal_disk6x",
+    "idle_style": "idle",
+    "idle_timeout": 30,
     "styles": DEFAULT_STYLE_CATALOG,
     "dev": False,
     "qbittorrent_enabled": False,
@@ -80,6 +88,8 @@ ARGUMENT_NAMES = {
     "--lcd-brightness": "lcd_brightness",
     "--network-unit": "network_unit",
     "--lcd-style": "lcd_style",
+    "--idle-style": "idle_style",
+    "--idle-timeout": "idle_timeout",
     "--qbittorrent-address": "qbittorrent_address",
     "--qbittorrent-username": "qbittorrent_username",
     "--qbittorrent-password": "qbittorrent_password",
@@ -87,14 +97,19 @@ ARGUMENT_NAMES = {
 }
 
 
-def style_names(settings=None):
-    """从配置中的样式清单构建名称到中文名称的映射。"""
+def style_names(settings=None, idle=None):
+    """从配置中的样式清单构建名称映射，并可按待机属性筛选。"""
     catalog = (settings or {}).get("styles", DEFAULT_STYLE_CATALOG)
     return {
         item["name"]: item["chinese_name"]
         for item in catalog
-        if isinstance(item, dict) and item.get("name") and item.get("chinese_name")
-    } or dict(STYLE_NAMES)
+        if (
+            isinstance(item, dict)
+            and item.get("name")
+            and item.get("chinese_name")
+            and (idle is None or bool(item.get("idle", False)) is idle)
+        )
+    } or ({name: label for name, label in STYLE_NAMES.items() if idle is None or (name == "idle") is idle})
 
 
 def style_label(style, settings=None):
@@ -115,7 +130,14 @@ def normalize_style_catalog(catalog):
         style_type = item.get("type")
         if not name or not chinese_name or name in seen or style_type not in ("builtin", "custom"):
             continue
-        normalized.append({"name": name, "chinese_name": chinese_name, "type": style_type})
+        normalized_item = {
+            "name": name,
+            "chinese_name": chinese_name,
+            "type": style_type,
+        }
+        if isinstance(item.get("idle"), bool):
+            normalized_item["idle"] = item["idle"]
+        normalized.append(normalized_item)
         seen.add(name)
     return normalized
 
@@ -156,8 +178,16 @@ class TraySettingsStore:
             pass
         settings["styles"] = normalize_style_catalog(settings.get("styles")) or list(DEFAULT_STYLE_CATALOG)
         settings["collection_task_intervals"] = normalize_collection_task_intervals(settings.get("collection_task_intervals"))
-        if settings["lcd_style"] not in style_names(settings):
+        if settings["lcd_style"] not in style_names(settings, idle=False):
             settings["lcd_style"] = DEFAULT_SETTINGS["lcd_style"]
+        if settings["idle_style"] not in style_names(settings, idle=True):
+            settings["idle_style"] = DEFAULT_SETTINGS["idle_style"]
+        try:
+            settings["idle_timeout"] = int(settings["idle_timeout"])
+            if settings["idle_timeout"] <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            settings["idle_timeout"] = DEFAULT_SETTINGS["idle_timeout"]
         try:
             settings["lcd_brightness"] = int(settings["lcd_brightness"])
         except (TypeError, ValueError):
@@ -248,7 +278,7 @@ def settings_from_arguments(arguments, base=None):
     converters = {
         "interval": float, "reconnect_interval": float, "serial_probe_interval": float,
         "lan_probe_port": int, "lan_probe_timeout": float, "lan_probe_max_workers": int,
-        "screen_rotation": int, "lcd_brightness": int,
+        "screen_rotation": int, "lcd_brightness": int, "idle_timeout": int,
         "qbittorrent_interval": float,
         "collection_task_intervals": lambda value: normalize_collection_task_intervals(json.loads(value)),
     }

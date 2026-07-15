@@ -44,6 +44,8 @@ def create_style(name):
         raise TypeError("样式插件缺少中文名称：{}".format(normalized_name))
     if getattr(style, "type", None) not in ("builtin", "custom"):
         raise TypeError("样式插件类型必须为 builtin 或 custom：{}".format(normalized_name))
+    if not isinstance(getattr(style, "idle", False), bool):
+        raise TypeError("样式插件 idle 属性必须为布尔值：{}".format(normalized_name))
     for method_name in ("create_dirty_regions", "draw_visible", "draw_dirty"):
         if not callable(getattr(style, method_name, None)):
             raise TypeError("样式插件缺少方法：{}".format(method_name))
@@ -140,7 +142,9 @@ def _read_style_metadata(path):
                     if attribute in ("name", "zh_name", "type"):
                         if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
                             values[attribute] = value[1:-1]
-                if len(values) == 3:
+                    elif attribute == "idle" and value in ("True", "False"):
+                        values[attribute] = value == "True"
+                if len(values) == 4:
                     break
     except OSError:
         return None
@@ -152,6 +156,7 @@ def _read_style_metadata(path):
         "name": _normalize_name(values["name"]),
         "chinese_name": values["zh_name"],
         "type": values["type"],
+        "idle": bool(values.get("idle", False)),
     }
 
 

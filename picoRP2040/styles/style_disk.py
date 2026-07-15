@@ -30,6 +30,7 @@ class DiskStyle:
     name = "disk"
     zh_name = "磁盘概览"
     type = "builtin"
+    idle = False
     font_name = "native"
 
     def __init__(self):
