@@ -74,7 +74,20 @@ class LanWebSocketScannerTest(unittest.TestCase):
 
         self.assertEqual("ws://192.168.1.20:8765/pv1", result.url)
         self.assertIn(b"GET /pv1 HTTP/1.1", fake_socket.request)
+        self.assertIn(b"X-OmniWatch-Discovery: 1", fake_socket.request)
         create_connection.assert_called_once_with(("192.168.1.20", 8765), timeout=0.2)
+
+    @mock.patch("net.lan_websocket_discovery.socket.create_connection")
+    def test_port_probe_does_not_send_protocol_data(self, create_connection):
+        """端口初筛只建立 TCP 连接，不得向非目标服务发送 WebSocket 数据。"""
+        fake_socket = FakeHandshakeSocket()
+        create_connection.return_value = fake_socket
+        scanner = LanWebSocketScanner(timeout=0.15)
+
+        self.assertTrue(scanner.port_is_open_safely("192.168.1.20"))
+
+        self.assertEqual(b"", fake_socket.request)
+        create_connection.assert_called_once_with(("192.168.1.20", 8765), timeout=0.15)
 
     @mock.patch("net.lan_websocket_discovery._load_psutil")
     def test_local_hosts_merge_active_networks(self, load_psutil):
@@ -126,8 +139,9 @@ class LanWebSocketScannerTest(unittest.TestCase):
         self.assertEqual(253, len(LanWebSocketScanner.local_hosts()))
 
     def test_scan_uses_multiple_workers_and_keeps_only_successes(self):
-        """确认批量扫描并发执行，并过滤握手失败的地址。"""
+        """确认批量扫描只对端口开放地址执行 WebSocket 协议握手。"""
         scanner = LanWebSocketScanner(max_workers=8)
+        scanner.port_is_open = mock.Mock(side_effect=lambda ip: ip.endswith("2"))
         scanner.probe = mock.Mock(side_effect=lambda ip: (
             types.SimpleNamespace(ip=ip)
             if ip.endswith("2")
@@ -137,6 +151,7 @@ class LanWebSocketScannerTest(unittest.TestCase):
         results = scanner.scan(hosts=("192.168.1.1", "192.168.1.2"))
 
         self.assertEqual(["192.168.1.2"], [result.ip for result in results])
+        scanner.probe.assert_called_once_with("192.168.1.2")
 
 
 if __name__ == "__main__":

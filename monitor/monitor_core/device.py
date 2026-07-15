@@ -38,18 +38,21 @@ def format_pico_information(information):
 
 
 def show_pico_information(port=None, websocket_url=None):
-    """通过 USB 或 WebSocket 连接设备，输出信息后安全断开。"""
+    """探测 USB 或 WebSocket 设备；未找到时返回失败状态而不抛出异常。"""
     client = (
         PicoJsonClient(port, websocket_url=websocket_url)
         if websocket_url
         else PicoJsonClient(port)
     )
     try:
-        client.connect()
-        _write_version_to_console(
-            format_pico_information(client.device_information())
-        )
-        return 0
-
+        try:
+            client.connect()
+            _write_version_to_console(
+                format_pico_information(client.device_information())
+            )
+            return 0
+        except (OSError, RuntimeError) as error:
+            _write_version_to_console("设备探测未发现有效目标：{}".format(error))
+            return 1
     finally:
         client.close()
