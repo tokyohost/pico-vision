@@ -7,7 +7,9 @@ import platform
 import queue
 import socket
 import threading
+import time
 from datetime import datetime
+from urllib.parse import urlsplit
 
 import serial
 
@@ -15,6 +17,7 @@ from collectTask import CollectionCoordinator, LockFreeSnapshotStore
 from custom_data import CustomDataCollectionCoordinator
 from custom_data import get_manager as get_custom_data_manager
 from pico_client import PicoJsonClient, PicoRestartingError
+from net import LanWebSocketScanner
 from qbittorrent_monitor import QbittorrentMonitor
 from system_monitor import SystemInformationCollector
 
@@ -23,6 +26,11 @@ from .style_commands import BUILTIN_LCD_STYLES, StyleCommandMixin
 from .wifi_commands import WifiCommandMixin
 
 LOGGER = logging.getLogger("pico-monitor")
+
+WINDOWS_WEBSOCKET_DIRECT_PROBE_INTERVAL = 5.0
+WINDOWS_WEBSOCKET_NETWORK_SCAN_INTERVAL = 10.0
+WINDOWS_WEBSOCKET_FAST_PROBE_TIMEOUT = 0.15
+WINDOWS_WEBSOCKET_FAST_SCAN_WORKERS = 32
 
 
 class MonitorService(WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin):
@@ -187,6 +195,120 @@ class MonitorService(WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin
         self._stop_transmit_worker(wait=True)
         self.collector.close()
 
+    def _create_lan_scanner(self, port=None, path=None, fast=False):
+        """创建局域网扫描器；自恢复模式使用更短超时和更低并发以保护局域网。"""
+        configured_timeout = getattr(self.arguments, "lan_probe_timeout", 0.3)
+        configured_workers = getattr(self.arguments, "lan_probe_max_workers", 256)
+        return LanWebSocketScanner(
+            port=port if port is not None else getattr(self.arguments, "lan_probe_port", 8765),
+            path=path if path is not None else getattr(self.arguments, "lan_probe_path", "/pv1"),
+            timeout=(
+                min(configured_timeout, WINDOWS_WEBSOCKET_FAST_PROBE_TIMEOUT)
+                if fast
+                else configured_timeout
+            ),
+            max_workers=(
+                min(configured_workers, WINDOWS_WEBSOCKET_FAST_SCAN_WORKERS)
+                if fast
+                else configured_workers
+            ),
+            minimum_prefix_length=24,
+        )
+
+    def _rediscover_websocket_device(self, fast=False):
+        """扫描局域网候选地址，并通过 PV1 握手切换到可用 Wi-Fi 设备。"""
+        scanner = self._create_lan_scanner(fast=fast)
+        original_url = self.client.websocket_url
+        LOGGER.info("开始快速扫描局域网中的 Wi-Fi 设备")
+        try:
+            candidates = scanner.scan()
+        except (OSError, RuntimeError, ValueError) as error:
+            LOGGER.warning("重新扫描 Wi-Fi 设备失败：%s", error)
+            return False
+        for candidate in candidates:
+            self.client.websocket_url = candidate.url
+            try:
+                self.client.connect()
+            except (OSError, RuntimeError, serial.SerialException) as error:
+                LOGGER.info("Wi-Fi 候选设备确认失败：地址=%s，原因=%s", candidate.url, error)
+                self.client.close()
+                continue
+            LOGGER.info("重新扫描 Wi-Fi 设备成功：%s", candidate.url)
+            self.arguments.websocket_url = candidate.url
+            return True
+        self.client.websocket_url = original_url
+        LOGGER.warning("重新扫描局域网未发现可连接的 Pico LCD")
+        return False
+
+    def _probe_and_reconnect_saved_websocket(self, websocket_url):
+        """快速探测保存的 WebSocket 地址，并仅在端口可用时执行完整 PV1 重连。"""
+        parsed = urlsplit(websocket_url)
+        if parsed.scheme != "ws" or not parsed.hostname:
+            LOGGER.warning("保存的 WebSocket 地址无法用于快速探测：%s", websocket_url)
+            return False
+        scanner = self._create_lan_scanner(
+            port=parsed.port or 80,
+            path=parsed.path or "/",
+            fast=True,
+        )
+        if scanner.probe_safely(parsed.hostname) is None:
+            LOGGER.debug("保存的 Wi-Fi 地址尚不可用：%s", websocket_url)
+            return False
+        self.client.websocket_url = websocket_url
+        try:
+            self.client.connect()
+        except (OSError, RuntimeError, serial.SerialException) as error:
+            LOGGER.info("保存的 Wi-Fi 地址端口已响应，但 PV1 重连失败：%s", error)
+            self.client.close()
+            return False
+        self.arguments.websocket_url = websocket_url
+        LOGGER.info("保存的 Wi-Fi 设备地址已恢复：%s", websocket_url)
+        return True
+
+    def _recover_windows_websocket(self, websocket_url):
+        """在 Windows 中按五秒直连、十秒扫描的节奏持续恢复 WebSocket 业务。"""
+        next_direct_probe = time.monotonic() + WINDOWS_WEBSOCKET_DIRECT_PROBE_INTERVAL
+        next_network_scan = time.monotonic() + WINDOWS_WEBSOCKET_NETWORK_SCAN_INTERVAL
+        LOGGER.warning(
+            "WebSocket 已断开；每 %.0f 秒探测原地址，每 %.0f 秒快速扫描本地网段",
+            WINDOWS_WEBSOCKET_DIRECT_PROBE_INTERVAL,
+            WINDOWS_WEBSOCKET_NETWORK_SCAN_INTERVAL,
+        )
+        while not self.stopping.is_set():
+            now = time.monotonic()
+            wait_seconds = max(0.0, min(next_direct_probe, next_network_scan) - now)
+            if self.stopping.wait(wait_seconds):
+                return False
+            now = time.monotonic()
+            if now >= next_direct_probe:
+                next_direct_probe = now + WINDOWS_WEBSOCKET_DIRECT_PROBE_INTERVAL
+                if (
+                    self._probe_and_reconnect_saved_websocket(websocket_url)
+                    and self._complete_websocket_recovery()
+                ):
+                    return True
+            if now >= next_network_scan:
+                next_network_scan = now + WINDOWS_WEBSOCKET_NETWORK_SCAN_INTERVAL
+                if (
+                    self._rediscover_websocket_device(fast=True)
+                    and self._complete_websocket_recovery()
+                ):
+                    return True
+        return False
+
+    def _complete_websocket_recovery(self):
+        """重新同步设备状态并恢复发送线程，失败时保持服务继续自恢复。"""
+        try:
+            LOGGER.info("Pico LCD 已恢复连接：%s", self.client.port_name)
+            self._synchronize_style_catalog()
+            self._start_transmit_worker()
+            return True
+        except (OSError, RuntimeError, serial.SerialException) as error:
+            LOGGER.warning("WebSocket 已重连但业务恢复失败，将继续探测：%s", error)
+            self._stop_transmit_worker(wait=True)
+            self.client.close()
+            return False
+
     def run(self):
         """持续连接设备、采集指标并发送最新系统快照。"""
         LOGGER.info(
@@ -257,7 +379,15 @@ class MonitorService(WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin
             except (OSError, RuntimeError, serial.SerialException) as error:
                 LOGGER.warning("监控通信异常：%s；准备重新连接", error)
                 self._stop_transmit_worker(wait=True)
+                websocket_url = getattr(self.client, "websocket_url", None)
                 self.client.close()
+                if (
+                    platform.system() == "Windows"
+                    and isinstance(websocket_url, str)
+                    and websocket_url
+                    and self._recover_windows_websocket(websocket_url)
+                ):
+                    continue
                 if isinstance(error, PicoRestartingError):
                     self.stopping.wait(self.arguments.reconnect_interval)
                     continue

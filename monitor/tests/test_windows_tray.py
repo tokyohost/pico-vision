@@ -1,5 +1,6 @@
 """验证 Windows 托盘配置的纯数据行为。"""
 
+import io
 import json
 import logging
 import queue
@@ -22,6 +23,7 @@ from windows_tray import (
 from monitor_core.tray_commands import _dispatch_tray_command
 from win.tray import APPLICATION_NAME
 from win.worker_controller import MAXIMUM_LOG_SIZE, WorkerControllerMixin
+from win.ui.device_window import parse_device_information_line
 from win.ui.wifi_window import merge_wifi_networks
 from style_validator import ValidatedStyle
 
@@ -493,6 +495,44 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertTrue(application._get_device_connection()["connected"])
         self.assertEqual(connection, application.device_connection_messages.get_nowait())
 
+    def test_websocket_connection_log_with_space_updates_snapshot(self):
+        """确认实际 WebSocket 握手日志中的空格不会阻止连接状态解析。"""
+        connection = WorkerControllerMixin._parse_device_connection(
+            "2026-07-15 10:27:14,370 [INFO] "
+            "[WebSocket 连接] ws://192.168.0.224:8765/pv1 "
+            "握手成功：开发板=ESP32-S3，LCD=st7789-2inch-8pin-a，"
+            "屏幕方案=st7789vw_2inch，固件版本=development，"
+            "分辨率=240x320，Wi-Fi支持=是"
+        )
+
+        self.assertIsNotNone(connection)
+        self.assertTrue(connection["connected"])
+        self.assertEqual("WebSocket", connection["transport"])
+        self.assertEqual("ESP32-S3", connection["board_model"])
+        self.assertTrue(connection["wifi_supported"])
+
+    def test_rediscovered_websocket_address_is_persisted(self):
+        """确认重连扫描得到的新 Wi-Fi 地址会保存供后续启动使用。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.device_connection_lock = threading.Lock()
+        application.current_device_connection = {"connected": False}
+        application.device_connection_messages = queue.Queue()
+        application.settings = dict(DEFAULT_SETTINGS, websocket_url="ws://192.168.0.10:8765/pv1")
+        application.settings_store = mock.Mock()
+        application.icon = None
+
+        application._update_device_connection({
+            "connected": True,
+            "transport": "WebSocket",
+            "address": "ws://192.168.0.224:8765/pv1",
+        })
+
+        self.assertEqual(
+            application.settings["websocket_url"],
+            "ws://192.168.0.224:8765/pv1",
+        )
+        application.settings_store.save.assert_called_once_with(application.settings)
+
     def test_device_connection_change_produces_success_and_failure_notifications(self):
         """确认连接成功和随后断开各产生一次托盘通知。"""
         application = WindowsTrayApplication.__new__(WindowsTrayApplication)
@@ -635,8 +675,62 @@ class WindowsTraySettingsTest(unittest.TestCase):
         process.terminate.assert_not_called()
         process.kill.assert_not_called()
         process.stdin.close.assert_called_once_with()
-        process.stdout.close.assert_called_once_with()
+        process.stdout.close.assert_not_called()
         self.assertIsNone(application.worker_process)
+
+    def test_log_collector_accepts_output_closed_during_worker_stop(self):
+        """确认停止进程时输出流已关闭不会造成日志线程未处理异常。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.log_path = Path(self.temporary_directory.name) / "pico-monitor.log"
+        application.log_file_lock = threading.Lock()
+        application.stopping = threading.Event()
+        application.icon = None
+        process = mock.Mock()
+        process.stdout = io.StringIO()
+        process.stdout.close()
+        process.poll.return_value = 0
+        process.wait.return_value = 0
+        application.worker_process = process
+
+        application._collect_output(process)
+
+        process.wait.assert_called_once_with()
+
+    def test_log_collector_restarts_unexpectedly_exited_worker(self):
+        """确认托盘仍运行时后台 Monitor 异常退出会延迟自动拉起。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.log_path = Path(self.temporary_directory.name) / "pico-monitor.log"
+        application.log_file_lock = threading.Lock()
+        application.stopping = mock.Mock()
+        application.stopping.is_set.return_value = False
+        application.stopping.wait.return_value = False
+        application.icon = mock.Mock()
+        application._start_worker = mock.Mock()
+        process = mock.Mock()
+        process.stdout = io.StringIO("")
+        process.wait.return_value = 7
+        application.worker_process = process
+
+        application._collect_output(process)
+
+        application.stopping.wait.assert_called_once_with(5.0)
+        application._start_worker.assert_called_once_with()
+        application.icon.notify.assert_called_once()
+
+    def test_device_probe_output_uses_current_pico_prefix(self):
+        """确认设备管理页面能够解析单次探测实际输出的 Pico 字段。"""
+        self.assertEqual(
+            ("board_model", "esp32-s3"),
+            parse_device_information_line("Pico 开发板型号：esp32-s3\n"),
+        )
+        self.assertEqual(
+            ("firmware_version", "1.2.3"),
+            parse_device_information_line("Pico 固件版本：1.2.3\n"),
+        )
+        self.assertEqual(
+            ("wifi_supported", "是"),
+            parse_device_information_line("Pico Wi-Fi 支持：是\n"),
+        )
 
     def test_managed_arguments_are_replaced_without_losing_worker_flag(self):
         """确认托盘参数覆盖配置时保留后台工作模式标志。"""

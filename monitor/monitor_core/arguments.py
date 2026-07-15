@@ -32,6 +32,10 @@ def create_argument_parser(config=None):
     parser.set_defaults(collection_task_logs=config_flag(config, "PICO_MONITOR_COLLECTION_TASK_LOGS", False))
     parser.add_argument("--reconnect-interval", type=float, default=float(config_value(config, "PICO_MONITOR_RECONNECT_INTERVAL", "3.0")), help="设备断线后的重连间隔，单位为秒")
     parser.add_argument("--serial-probe-interval", type=float, default=float(config_value(config, "PICO_MONITOR_SERIAL_PROBE_INTERVAL", "3.0")), help="串口探测 PING 的发送间隔，单位为秒")
+    parser.add_argument("--lan-probe-port", type=int, default=int(config_value(config, "PICO_MONITOR_LAN_PROBE_PORT", "8765")), help="Wi-Fi 设备局域网扫描端口")
+    parser.add_argument("--lan-probe-path", default=config_value(config, "PICO_MONITOR_LAN_PROBE_PATH", "/pv1"), help="Wi-Fi 设备 WebSocket 扫描路径")
+    parser.add_argument("--lan-probe-timeout", type=float, default=float(config_value(config, "PICO_MONITOR_LAN_PROBE_TIMEOUT", "0.3")), help="Wi-Fi 设备单地址扫描超时，单位为秒")
+    parser.add_argument("--lan-probe-max-workers", type=int, default=int(config_value(config, "PICO_MONITOR_LAN_PROBE_MAX_WORKERS", "256")), help="Wi-Fi 设备局域网扫描最大并发数")
     parser.add_argument("--screen-rotation", type=int, choices=(0, 180), default=int(config_value(config, "PICO_MONITOR_SCREEN_ROTATION", "0")), help="Pico 屏幕旋转角度，可选 0 或 180")
     parser.add_argument("--lcd-brightness", type=int, choices=range(1, 101), default=int(config_value(config, "PICO_MONITOR_LCD_BRIGHTNESS", "50")), help="Pico LCD 背光亮度百分比，范围为 1 至 100")
     parser.add_argument("--network-unit", choices=("MB", "Mbps"), default=config_value(config, "PICO_MONITOR_NETWORK_UNIT", "MB"), help="网络速率模式：MB 自动使用 B/KB/MB/GB，Mbps 自动使用 bps/Kbps/Mbps/Gbps")
@@ -77,6 +81,9 @@ def validate_arguments(arguments):
         raise SystemExit("--pico-info、--upgrade-pico 和 --update 不能同时使用")
     if (arguments.interval <= 0 or arguments.reconnect_interval <= 0
             or arguments.serial_probe_interval <= 0
+            or arguments.lan_probe_timeout <= 0
+            or not 1 <= arguments.lan_probe_port <= 65535
+            or arguments.lan_probe_max_workers <= 0
             or arguments.qbittorrent_interval <= 0
             or arguments.thread_diagnostics_interval <= 0):
         raise SystemExit("采集间隔和重连间隔必须大于 0")

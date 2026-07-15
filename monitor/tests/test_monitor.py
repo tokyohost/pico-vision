@@ -711,6 +711,7 @@ class PicoClientTest(unittest.TestCase):
             "firmware_version": "1.2.3",
             "screen_width": 320,
             "screen_height": 240,
+            "net": {"wifi_enabled": True, "mode": "wifi", "ip": "192.168.0.224"},
         })
 
     @mock.patch("pico_client.time.monotonic")
@@ -767,6 +768,7 @@ class PicoClientTest(unittest.TestCase):
         self.assertIn("Pico 屏幕色彩方案：st7789_2_4inch", text)
         self.assertIn("Pico 固件版本：1.2.3", text)
         self.assertIn("Pico 屏幕分辨率：320 x 240", text)
+        self.assertIn("Pico Wi-Fi 支持：是", text)
 
     @mock.patch("pico_monitor._write_version_to_console")
     @mock.patch("pico_monitor.PicoJsonClient")
@@ -1039,6 +1041,84 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertEqual(service.client.connect.call_count, 3)
         service.stopping.wait.assert_any_call(3.0)
+
+    @mock.patch("monitor_core.service.LanWebSocketScanner")
+    def test_websocket_rediscovery_confirms_candidate_with_pv1(self, scanner_class):
+        """确认保存地址失效后会扫描并通过 PV1 握手切换 Wi-Fi 设备。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(
+            websocket_url="ws://192.168.0.10:8765/pv1",
+            lan_probe_port=8765,
+            lan_probe_path="/pv1",
+            lan_probe_timeout=0.3,
+            lan_probe_max_workers=32,
+        )
+        service.client = mock.Mock()
+        service.client.websocket_url = service.arguments.websocket_url
+        scanner_class.return_value.scan.return_value = [
+            SimpleNamespace(url="ws://192.168.0.224:8765/pv1")
+        ]
+
+        self.assertTrue(service._rediscover_websocket_device())
+
+        self.assertEqual(
+            service.client.websocket_url,
+            "ws://192.168.0.224:8765/pv1",
+        )
+        self.assertEqual(
+            service.arguments.websocket_url,
+            "ws://192.168.0.224:8765/pv1",
+        )
+        service.client.connect.assert_called_once_with()
+
+    @mock.patch("monitor_core.service.time.monotonic")
+    def test_windows_websocket_recovery_uses_five_and_ten_second_cadence(self, monotonic):
+        """确认 Windows 断线恢复每五秒探测原地址，并每十秒快速扫描网段。"""
+        service = MonitorService.__new__(MonitorService)
+        service.stopping = mock.Mock()
+        service.stopping.is_set.return_value = False
+        service.stopping.wait.return_value = False
+        service._probe_and_reconnect_saved_websocket = mock.Mock(return_value=False)
+        service._rediscover_websocket_device = mock.Mock(return_value=True)
+        service._complete_websocket_recovery = mock.Mock(return_value=True)
+        monotonic.side_effect = (0.0, 0.0, 0.0, 5.0, 5.0, 10.0)
+        websocket_url = "ws://192.168.0.10:8765/pv1"
+
+        self.assertTrue(service._recover_windows_websocket(websocket_url))
+
+        self.assertEqual(
+            [mock.call(5.0), mock.call(5.0)],
+            service.stopping.wait.call_args_list,
+        )
+        self.assertEqual(2, service._probe_and_reconnect_saved_websocket.call_count)
+        service._rediscover_websocket_device.assert_called_once_with(fast=True)
+        service._complete_websocket_recovery.assert_called_once_with()
+
+    @mock.patch("monitor_core.service.LanWebSocketScanner")
+    def test_saved_websocket_is_reconnected_only_after_fast_probe(self, scanner_class):
+        """确认原地址先完成低成本协议探测，端口可用后才执行完整业务重连。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(
+            websocket_url="ws://192.168.0.10:8765/pv1",
+            lan_probe_timeout=0.3,
+            lan_probe_max_workers=256,
+        )
+        service.client = mock.Mock()
+        scanner_class.return_value.probe_safely.return_value = SimpleNamespace()
+
+        self.assertTrue(service._probe_and_reconnect_saved_websocket(
+            service.arguments.websocket_url,
+        ))
+
+        scanner_class.assert_called_once_with(
+            port=8765,
+            path="/pv1",
+            timeout=0.15,
+            max_workers=32,
+            minimum_prefix_length=24,
+        )
+        scanner_class.return_value.probe_safely.assert_called_once_with("192.168.0.10")
+        service.client.connect.assert_called_once_with()
 
     def test_connected_send_failure_retries_without_usb_addition(self):
         """确认已连接后的通信异常不再等待新增 COM 口才重连。"""

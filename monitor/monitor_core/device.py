@@ -25,6 +25,9 @@ def format_pico_information(information):
             if information.get("screen_width") and information.get("screen_height")
             else "未知（旧版固件未提供）"
         ),
+        "Pico Wi-Fi 支持：{}".format(
+            "是" if (information.get("net") or {}).get("wifi_enabled") else "否"
+        ),
         "Pico 当前传输：{}".format(
             (information.get("net") or {}).get("mode", "未知（旧版固件未提供）")
         ),

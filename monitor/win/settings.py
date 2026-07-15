@@ -65,6 +65,10 @@ ARGUMENT_NAMES = {
     "--interval": "interval",
     "--reconnect-interval": "reconnect_interval",
     "--serial-probe-interval": "serial_probe_interval",
+    "--lan-probe-port": "lan_probe_port",
+    "--lan-probe-path": "lan_probe_path",
+    "--lan-probe-timeout": "lan_probe_timeout",
+    "--lan-probe-max-workers": "lan_probe_max_workers",
     "--collection-task-intervals": "collection_task_intervals",
     "--screen-rotation": "screen_rotation",
     "--lcd-brightness": "lcd_brightness",
@@ -231,6 +235,7 @@ def settings_from_arguments(arguments, base=None):
     settings = dict(DEFAULT_SETTINGS if base is None else base)
     converters = {
         "interval": float, "reconnect_interval": float, "serial_probe_interval": float,
+        "lan_probe_port": int, "lan_probe_timeout": float, "lan_probe_max_workers": int,
         "screen_rotation": int, "lcd_brightness": int,
         "qbittorrent_interval": float,
         "collection_task_intervals": lambda value: normalize_collection_task_intervals(json.loads(value)),

@@ -17,11 +17,16 @@ class WebSocketDevice:
             raise RuntimeError("WebSocket 模式需要安装 websocket-client") from error
         self._websocket_module = websocket
         self.port = str(url)
-        self._socket = websocket.create_connection(
-            self.port,
-            timeout=max(0.1, float(connect_timeout)),
-            enable_multithread=True,
-        )
+        try:
+            self._socket = websocket.create_connection(
+                self.port,
+                timeout=max(0.1, float(connect_timeout)),
+                enable_multithread=True,
+            )
+        except websocket.WebSocketException as error:
+            raise serial.SerialException(
+                "WebSocket 连接失败：{}".format(error)
+            ) from error
         self._socket.settimeout(max(0.05, float(read_timeout)))
         self._heartbeat_interval = max(1.0, float(heartbeat_interval))
         self._next_heartbeat = time.monotonic() + self._heartbeat_interval

@@ -5,6 +5,8 @@ import types
 import unittest
 from unittest import mock
 
+import serial
+
 from net.websocket_transport import WebSocketDevice
 
 
@@ -79,6 +81,17 @@ class WebSocketDeviceTest(unittest.TestCase):
         self.assertEqual(self.device.readline(), b"PV1:PONG:0:0000:\n")
         self.device.close()
         self.assertFalse(self.device.is_open)
+
+    def test_connection_failure_uses_reconnect_compatible_exception(self):
+        """确认 WebSocket 初始握手失败会进入统一通信重连流程。"""
+        websocket_module = types.SimpleNamespace(
+            create_connection=mock.Mock(side_effect=FakeWebSocketException("远端连接丢失")),
+            WebSocketException=FakeWebSocketException,
+            WebSocketTimeoutException=FakeWebSocketTimeout,
+        )
+        with mock.patch.dict(sys.modules, {"websocket": websocket_module}):
+            with self.assertRaisesRegex(serial.SerialException, "WebSocket 连接失败"):
+                WebSocketDevice("ws://192.168.0.224:8765/pv1")
 
 
 if __name__ == "__main__":

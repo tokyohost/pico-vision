@@ -106,6 +106,25 @@ class LanWebSocketScannerTest(unittest.TestCase):
 
         self.assertEqual(("192.168.8.1",), LanWebSocketScanner.local_hosts())
 
+    @mock.patch("net.lan_websocket_discovery._load_psutil")
+    def test_large_network_is_limited_to_local_24_prefix(self, load_psutil):
+        """确认大网段只快速探测本机所在二十四位子网，避免周期扫描冲击局域网。"""
+        load_psutil.return_value = types.SimpleNamespace(
+            net_if_stats=mock.Mock(return_value={"以太网": types.SimpleNamespace(isup=True)}),
+            net_if_addrs=mock.Mock(return_value={
+                "以太网": [types.SimpleNamespace(
+                    family=socket.AF_INET,
+                    address="10.20.30.40",
+                    netmask="255.255.0.0",
+                )],
+            }),
+        )
+
+        networks = LanWebSocketScanner.local_networks()
+
+        self.assertEqual(("10.20.30.0/24",), tuple(str(network) for network in networks))
+        self.assertEqual(253, len(LanWebSocketScanner.local_hosts()))
+
     def test_scan_uses_multiple_workers_and_keeps_only_successes(self):
         """确认批量扫描并发执行，并过滤握手失败的地址。"""
         scanner = LanWebSocketScanner(max_workers=8)

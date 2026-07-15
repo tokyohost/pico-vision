@@ -16,10 +16,32 @@ LOGGER = logging.getLogger("pico-monitor.windows-update")
 
 # 主运行日志允许占用的最大磁盘空间，超限后仅保留末尾的最新内容。
 MAXIMUM_LOG_SIZE = 15 * 1024 * 1024
+WORKER_RESTART_DELAY_SECONDS = 5.0
 
 
 class WorkerControllerMixin:
     """为托盘应用提供独立的业务能力。"""
+
+    @staticmethod
+    def _parse_device_connection(line):
+        """从串口或 WebSocket 握手日志中解析已连接设备快照。"""
+        connection = re.search(
+            r"\[(串口|WebSocket)\s*连接\]\s+(.+?)\s+握手成功：开发板=(.*)，LCD=(.*)，屏幕方案=(.*)，固件版本=(.*)，分辨率=(.*?)(?:，Wi-Fi支持=(是|否))?$",
+            line.strip(),
+        )
+        if connection is None:
+            return None
+        return {
+            "connected": True,
+            "transport": connection.group(1),
+            "address": connection.group(2),
+            "board_model": connection.group(3),
+            "lcd_device_type": connection.group(4),
+            "screen_color_profile": connection.group(5),
+            "firmware_version": connection.group(6),
+            "screen_resolution": connection.group(7),
+            "wifi_supported": connection.group(8) == "是",
+        }
 
     @staticmethod
     def _parse_worker_result(line, prefix, fallback_message):
@@ -66,12 +88,18 @@ class WorkerControllerMixin:
         environment["PICO_MONITOR_ERROR_LOG_PATH"] = str(
             self.data_directory / "pico-monitor-error.log"
         )
-        self.worker_process = subprocess.Popen(
+        process = subprocess.Popen(
             self._worker_command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
             creationflags=0x08000000, env=environment,
         )
-        threading.Thread(target=self._collect_output, name="日志收集", daemon=True).start()
+        self.worker_process = process
+        threading.Thread(
+            target=self._collect_output,
+            args=(process,),
+            name="日志收集",
+            daemon=True,
+        ).start()
 
     def _stop_worker(self):
         """优雅停止后台监控，超时后再逐级终止并回收进程句柄。"""
@@ -95,12 +123,12 @@ class WorkerControllerMixin:
                 except (OSError, subprocess.TimeoutExpired):
                     LOGGER.warning("后台监控进程无法在退出期限内结束：PID=%s", process.pid)
         finally:
-            for stream in (process.stdin, process.stdout):
-                if stream is not None:
-                    try:
-                        stream.close()
-                    except OSError:
-                        pass
+            if process.stdin is not None:
+                try:
+                    process.stdin.close()
+                except OSError:
+                    pass
+            # stdout 由日志收集线程独占读取并关闭，避免此处关闭时打断迭代器。
             self.worker_process = None
 
     def _restart_worker(self):
@@ -165,83 +193,99 @@ class WorkerControllerMixin:
         except (BrokenPipeError, OSError):
             return False
 
-    def _collect_output(self):
-        """收集工作进程日志，并在 Pico 样式清单变化后刷新托盘菜单。"""
-        process = self.worker_process
+    def _collect_output(self, process):
+        """收集指定工作进程日志，并在退出时安全回收其输出流。"""
         self.log_path.touch(exist_ok=True)
-        with self.log_path.open("r+b") as log_file:
-            log_file.seek(0, os.SEEK_END)
-            for line in process.stdout:
-                with self.log_file_lock:
-                    # 清空日志可能改变文件长度，每次写入前重新定位到真实文件末尾。
-                    log_file.seek(0, os.SEEK_END)
-                    log_file.write(line.encode("utf-8"))
-                    log_file.flush()
-                    self._truncate_log_file(log_file)
-                if self.custom_style_upload_active.is_set():
-                    self.custom_style_upload_logs.put(line.rstrip("\r\n"))
-                if "STYLE_CATALOG_UPDATED" in line:
-                    self._reload_style_catalog()
-                    if self.icon is not None:
-                        self.icon.update_menu()
-                if line.startswith("DEVICE_REBOOT_RESULT:"):
-                    result = self._parse_worker_result(
-                        line, "DEVICE_REBOOT_RESULT:", "设备返回了无效响应",
-                    )
-                    self.device_management_messages.put(result)
-                if line.startswith("WIFI_RESULT:"):
-                    result = self._parse_worker_result(
-                        line, "WIFI_RESULT:", "设备返回了无效 Wi-Fi 响应",
-                    )
-                    self.wifi_messages.put(result)
-                if line.startswith("CUSTOM_STYLE_LIST_RESULT:"):
-                    result = self._parse_worker_result(
-                        line, "CUSTOM_STYLE_LIST_RESULT:", "设备返回了无效响应",
-                    )
-                    self.custom_style_messages.put(result)
-                if line.startswith("CUSTOM_STYLE_UPLOAD_RESULT:"):
-                    result = self._parse_worker_result(
-                        line, "CUSTOM_STYLE_UPLOAD_RESULT:", "设备返回了无效响应",
-                    )
-                    self.custom_style_upload_messages.put(result)
-                    self.custom_style_upload_active.clear()
-                if line.startswith("CUSTOM_STYLE_DELETE_RESULT:"):
-                    result = self._parse_worker_result(
-                        line, "CUSTOM_STYLE_DELETE_RESULT:", "设备返回了无效响应",
-                    )
-                    self.custom_style_delete_messages.put(result)
-                if line.startswith("SCREENSHOT_RESULT:"):
-                    result = self._parse_worker_result(
-                        line, "SCREENSHOT_RESULT:", "设备返回了无效截图响应",
-                    )
-                    self._handle_screenshot_result(result)
-                if "[串口关闭]" in line:
-                    self._update_device_connection({"connected": None}, announce=False)
-                if "监控通信异常：" in line:
-                    detail = line.split("监控通信异常：", 1)[1].split("；准备重新连接", 1)[0].strip()
-                    self._update_device_connection({
-                        "connected": False,
-                        "message": detail,
-                    })
-                connection = re.search(
-                    r"\[(串口|WebSocket)连接\]\s+(.+?)\s+握手成功：开发板=(.*)，LCD=(.*)，屏幕方案=(.*)，固件版本=(.*)，分辨率=(.*?)(?:，Wi-Fi支持=(是|否))?$",
-                    line.strip(),
-                )
-                if connection:
-                    self._update_device_connection({
-                        "connected": True,
-                        "transport": connection.group(1),
-                        "address": connection.group(2),
-                        "board_model": connection.group(3),
-                        "lcd_device_type": connection.group(4),
-                        "screen_color_profile": connection.group(5),
-                        "firmware_version": connection.group(6),
-                        "screen_resolution": connection.group(7),
-                        "wifi_supported": connection.group(8) == "是",
-                    })
+        try:
+            with self.log_path.open("r+b") as log_file:
+                log_file.seek(0, os.SEEK_END)
+                try:
+                    for line in process.stdout:
+                        with self.log_file_lock:
+                            # 清空日志可能改变文件长度，每次写入前重新定位到真实文件末尾。
+                            log_file.seek(0, os.SEEK_END)
+                            log_file.write(line.encode("utf-8"))
+                            log_file.flush()
+                            self._truncate_log_file(log_file)
+                        if self.custom_style_upload_active.is_set():
+                            self.custom_style_upload_logs.put(line.rstrip("\r\n"))
+                        if "STYLE_CATALOG_UPDATED" in line:
+                            self._reload_style_catalog()
+                            if self.icon is not None:
+                                self.icon.update_menu()
+                        if line.startswith("DEVICE_REBOOT_RESULT:"):
+                            result = self._parse_worker_result(
+                                line, "DEVICE_REBOOT_RESULT:", "设备返回了无效响应",
+                            )
+                            self.device_management_messages.put(result)
+                        if line.startswith("WIFI_RESULT:"):
+                            result = self._parse_worker_result(
+                                line, "WIFI_RESULT:", "设备返回了无效 Wi-Fi 响应",
+                            )
+                            self.wifi_messages.put(result)
+                        if line.startswith("CUSTOM_STYLE_LIST_RESULT:"):
+                            result = self._parse_worker_result(
+                                line, "CUSTOM_STYLE_LIST_RESULT:", "设备返回了无效响应",
+                            )
+                            self.custom_style_messages.put(result)
+                        if line.startswith("CUSTOM_STYLE_UPLOAD_RESULT:"):
+                            result = self._parse_worker_result(
+                                line, "CUSTOM_STYLE_UPLOAD_RESULT:", "设备返回了无效响应",
+                            )
+                            self.custom_style_upload_messages.put(result)
+                            self.custom_style_upload_active.clear()
+                        if line.startswith("CUSTOM_STYLE_DELETE_RESULT:"):
+                            result = self._parse_worker_result(
+                                line, "CUSTOM_STYLE_DELETE_RESULT:", "设备返回了无效响应",
+                            )
+                            self.custom_style_delete_messages.put(result)
+                        if line.startswith("SCREENSHOT_RESULT:"):
+                            result = self._parse_worker_result(
+                                line, "SCREENSHOT_RESULT:", "设备返回了无效截图响应",
+                            )
+                            self._handle_screenshot_result(result)
+                        # 已退出的旧进程只能补写日志，不能覆盖新进程的设备状态。
+                        if process is not self.worker_process:
+                            continue
+                        if "[串口关闭]" in line:
+                            self._update_device_connection({"connected": None}, announce=False)
+                        if "监控通信异常：" in line:
+                            detail = line.split("监控通信异常：", 1)[1].split("；准备重新连接", 1)[0].strip()
+                            self._update_device_connection({
+                                "connected": False,
+                                "message": detail,
+                            })
+                        connection = self._parse_device_connection(line)
+                        if connection is not None:
+                            self._update_device_connection(connection)
+                except (OSError, ValueError) as error:
+                    if process.poll() is None:
+                        LOGGER.warning("读取后台监控输出失败：%s", error)
+        finally:
+            if process.stdout is not None:
+                try:
+                    process.stdout.close()
+                except (OSError, ValueError):
+                    pass
         return_code = process.wait()
-        if not self.stopping.is_set() and process is self.worker_process and self.icon is not None:
-            self.icon.notify("后台监控已退出，返回码：{}".format(return_code), APPLICATION_NAME)
+        if (
+            not self.stopping.is_set()
+            and process is self.worker_process
+            and self.icon is not None
+        ):
+            self.icon.notify(
+                "后台监控异常退出，{} 秒后自动恢复，返回码：{}".format(
+                    int(WORKER_RESTART_DELAY_SECONDS), return_code,
+                ),
+                APPLICATION_NAME,
+            )
+            LOGGER.warning(
+                "后台监控异常退出，%.0f 秒后自动拉起：返回码=%s",
+                WORKER_RESTART_DELAY_SECONDS,
+                return_code,
+            )
+            if not self.stopping.wait(WORKER_RESTART_DELAY_SECONDS) and process is self.worker_process:
+                self._start_worker()
 
     @staticmethod
     def _truncate_log_file(log_file, maximum_size=MAXIMUM_LOG_SIZE):
@@ -263,6 +307,20 @@ class WorkerControllerMixin:
         with self.device_connection_lock:
             previous = dict(self.current_device_connection)
             self.current_device_connection = snapshot
+        settings = getattr(self, "settings", None)
+        websocket_url = snapshot.get("address")
+        if (
+            snapshot.get("connected")
+            and snapshot.get("transport") == "WebSocket"
+            and websocket_url
+            and isinstance(settings, dict)
+            and settings.get("websocket_url") != websocket_url
+        ):
+            settings["websocket_url"] = websocket_url
+            try:
+                self.settings_store.save(settings)
+            except OSError as error:
+                LOGGER.warning("保存重新发现的 Wi-Fi 设备地址失败：%s", error)
         self.device_connection_messages.put(snapshot)
         if not announce or previous.get("connected") == snapshot.get("connected"):
             return

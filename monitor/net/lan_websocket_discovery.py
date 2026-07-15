@@ -35,20 +35,29 @@ class WebSocketProbeResult:
 
 
 class LanWebSocketScanner:
-    """枚举本机局域网地址，并发执行 WebSocket 协议升级握手。"""
+    """枚举本机局域网地址，并发执行低影响 WebSocket 协议升级握手。"""
 
-    def __init__(self, port=8765, path="/pv1", timeout=0.35, max_workers=128):
-        """保存目标端口、协议路径、单地址超时和最大并发线程数。"""
+    def __init__(
+        self,
+        port=8765,
+        path="/pv1",
+        timeout=0.35,
+        max_workers=128,
+        minimum_prefix_length=24,
+    ):
+        """保存探测参数，并限制单次主动扫描覆盖的最小 IPv4 前缀。"""
         self.port = int(port)
         self.path = "/" + str(path or "").lstrip("/")
         self.timeout = max(0.05, float(timeout))
         self.max_workers = max(1, int(max_workers))
+        self.minimum_prefix_length = min(30, max(0, int(minimum_prefix_length)))
 
     @staticmethod
-    def local_networks():
-        """返回所有已启用非回环 IPv4 网卡对应的局域网网段。"""
+    def local_networks(minimum_prefix_length=24):
+        """返回活动 IPv4 网段；过大的网段仅探测本机所在子网以降低广播域压力。"""
         psutil = _load_psutil()
         networks = set()
+        limited_prefix_length = min(30, max(0, int(minimum_prefix_length)))
         statistics = psutil.net_if_stats()
         for interface_name, addresses in psutil.net_if_addrs().items():
             interface_statistics = statistics.get(interface_name)
@@ -67,11 +76,16 @@ class LanWebSocketScanner:
                     )
                 except ValueError:
                     continue
+                if network.prefixlen < limited_prefix_length:
+                    network = ipaddress.ip_network(
+                        "{}/{}".format(address.address, limited_prefix_length),
+                        strict=False,
+                    )
                 networks.add(network)
         return tuple(sorted(networks, key=lambda item: (int(item.network_address), item.prefixlen)))
 
     @classmethod
-    def local_hosts(cls):
+    def local_hosts(cls, minimum_prefix_length=24):
         """合并全部局域网网段，返回去重且排除本机地址的可探测 IP。"""
         psutil = _load_psutil()
         local_addresses = {
@@ -82,7 +96,7 @@ class LanWebSocketScanner:
         }
         hosts = {
             str(host)
-            for network in cls.local_networks()
+            for network in cls.local_networks(minimum_prefix_length)
             for host in network.hosts()
             if str(host) not in local_addresses
         }
@@ -90,7 +104,11 @@ class LanWebSocketScanner:
 
     def scan(self, hosts=None, progress_callback=None):
         """多线程探测给定或自动发现的全部 IP，并返回握手成功结果。"""
-        source_hosts = self.local_hosts() if hosts is None else hosts
+        source_hosts = (
+            self.local_hosts(self.minimum_prefix_length)
+            if hosts is None
+            else hosts
+        )
         candidates = tuple(dict.fromkeys(str(host) for host in source_hosts))
         if not candidates:
             return []
@@ -136,6 +154,10 @@ class LanWebSocketScanner:
             return self.probe(ip)
         except (OSError, ValueError):
             return None
+
+    def probe_safely(self, ip):
+        """公开执行单地址快速探测，并以空结果表示地址当前不可用。"""
+        return self._probe_safely(ip)
 
     @staticmethod
     def _receive_headers(connection):

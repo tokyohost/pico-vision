@@ -15,6 +15,29 @@ from ..constants import APPLICATION_NAME
 
 LOGGER = logging.getLogger("pico-monitor.windows-update")
 
+DEVICE_INFORMATION_FIELDS = {
+    "开发板型号": "board_model",
+    "LCD 设备类型": "lcd_device_type",
+    "屏幕色彩方案": "screen_color_profile",
+    "固件版本": "firmware_version",
+    "屏幕分辨率": "screen_resolution",
+    "Wi-Fi 支持": "wifi_supported",
+}
+
+
+def parse_device_information_line(content):
+    """解析单次探测输出中的设备字段，同时兼容现有 Pico 与旧名称前缀。"""
+    normalized = content.strip()
+    for device_prefix in ("Pico ", "OmniWatch "):
+        if not normalized.startswith(device_prefix):
+            continue
+        field_content = normalized[len(device_prefix):]
+        for label, field_name in DEVICE_INFORMATION_FIELDS.items():
+            prefix = label + "："
+            if field_content.startswith(prefix):
+                return field_name, field_content[len(prefix):].strip() or "未知"
+    return None
+
 
 class DeviceWindowMixin:
     """为托盘应用提供独立的窗口实现。"""
@@ -128,6 +151,7 @@ class DeviceWindowMixin:
         messages = queue.Queue()
         reboot_state = {"started": None}
         firmware_state = {"current_version": None}
+        probe_connection = {"connected": False, "wifi_supported": False}
         initial_connection = self._get_device_connection()
 
         def update_wifi_button(connection=None):
@@ -202,11 +226,24 @@ class DeviceWindowMixin:
                     message_type, content = messages.get_nowait()
                     if message_type == "log":
                         append_log(content)
-                        normalized = content.strip()
-                        for field_name, value in device_values.items():
-                            prefix = "OmniWatch " + device_labels[field_name] + "："
-                            if normalized.startswith(prefix):
-                                value.set(normalized[len(prefix):].strip() or "未知")
+                        parsed_information = parse_device_information_line(content)
+                        if parsed_information is not None:
+                            field_name, field_value = parsed_information
+                            if field_name == "wifi_supported":
+                                probe_connection["wifi_supported"] = field_value == "是"
+                                update_wifi_button({
+                                    "connected": True,
+                                    "wifi_supported": probe_connection["wifi_supported"],
+                                })
+                            else:
+                                device_values[field_name].set(field_value)
+                                probe_connection[field_name] = field_value
+                            if field_name == "firmware_version":
+                                firmware_state["current_version"] = field_value
+                    elif message_type == "connected":
+                        append_log("设备已由常驻监控连接，取消重复探测。\n")
+                        probe_button.configure(state=tk.NORMAL)
+                        show_connected_device(content)
                     elif message_type == "done":
                         progress.stop()
                         progress.configure(mode="determinate", maximum=100, value=100)
@@ -214,7 +251,10 @@ class DeviceWindowMixin:
                         status.set("设备信息加载完成" if success else "未探测到可用设备")
                         reboot_button.configure(state=tk.NORMAL if success else tk.DISABLED)
                         probe_button.configure(state=tk.NORMAL)
-                        if not success:
+                        if success:
+                            probe_connection["connected"] = True
+                            update_wifi_button(probe_connection)
+                        else:
                             clear_connected_device()
                     elif message_type == "firmware_checked":
                         updater, latest_version, release_notes, asset = content
@@ -415,6 +455,10 @@ class DeviceWindowMixin:
 
         def perform_probe():
             """暂停常驻监控，并发扫描局域网后执行 PV1 设备身份确认。"""
+            current_connection = self._get_device_connection()
+            if current_connection.get("connected"):
+                messages.put(("connected", current_connection))
+                return
             worker_process = self.worker_process
             if worker_process is not None and worker_process.poll() is None:
                 messages.put(("log", "检测到当前设备连接，正在断开……\n"))
@@ -497,6 +541,8 @@ class DeviceWindowMixin:
 
         def start_probe():
             """启动主动设备探测线程，避免阻塞设备管理窗口。"""
+            probe_connection.clear()
+            probe_connection.update({"connected": False, "wifi_supported": False})
             probe_button.configure(state=tk.DISABLED)
             reboot_button.configure(state=tk.DISABLED)
             status.set("正在主动探测 OmniWatch 设备，请稍候……")
