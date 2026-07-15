@@ -106,6 +106,11 @@ class Application:
                 self._lcd.color_profile_name()
             ).encode()
         )
+        self._protocol.write(
+            "BOOT:LCD_TRANSFER_BACKEND:{}\n".format(
+                self._lcd.transfer_backend_name().upper()
+            ).encode()
+        )
         self._protocol.write(b"BOOT:LCD_READY\n")
         self._failed_custom_style = None
         self._renderer = RenderService(
@@ -399,7 +404,7 @@ class Application:
             "VIEW={}US:BUFFER={}US:GC={}US:SCHEDULE={}US:"
             "SLOWEST_REGION={}US:"
             "REGIONS={}:MEMORY_USED={}:MEMORY_TOTAL={}:"
-            "CANVAS_BACKEND={}:PROTOCOL_BACKEND={}:"
+            "CANVAS_BACKEND={}:PROTOCOL_BACKEND={}:LCD_BACKEND={}:"
             "RENDER_MODE={}:DROPPED_FRAMES={}\n"
         ).format(
             completed_version,
@@ -416,6 +421,7 @@ class Application:
             memory_total,
             self._renderer.canvas_backend().upper(),
             self._protocol.protocol_backend(),
+            self._lcd.transfer_backend_name().upper(),
             "THREAD" if self._renderer.threaded() else "SYNC",
             self._renderer.dropped_frames(),
         )

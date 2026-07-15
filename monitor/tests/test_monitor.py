@@ -474,8 +474,8 @@ class PicoClientTest(unittest.TestCase):
             service.client.sent_versions,
         )
 
-    def test_json_ack_timeout_falls_back_without_disconnect(self):
-        """确认设备未确认 ACK 时后续快照降级发送且不会触发重连异常。"""
+    def test_json_ack_timeout_keeps_backpressure_without_disconnect(self):
+        """确认设备暂未确认 ACK 时后续快照仍保持背压且不触发重连。"""
         service = RuntimeOperationsHarness(adaptive_transmit=True)
         service.client = AckTimeoutTransmitClient()
         try:
@@ -489,8 +489,23 @@ class PicoClientTest(unittest.TestCase):
             service.stopping.set()
             service._stop_transmit_worker(wait=True)
 
-        self.assertEqual([(1, True, 15.0), (2, False, 15.0)], service.client.calls)
-        self.assertTrue(any("保持异步发送" in message for message in logs.output))
+        self.assertEqual([(1, True, 15.0), (2, True, 15.0)], service.client.calls)
+        self.assertTrue(any("保持 JSON ACK 背压" in message for message in logs.output))
+
+    def test_fixed_interval_transmission_still_waits_for_ack(self):
+        """确认关闭间隔自适应后仍限制为一条未确认 JSON。"""
+        service = RuntimeOperationsHarness(adaptive_transmit=False)
+        try:
+            self.assertTrue(service._submit_snapshot_for_transmission({"version": 1}))
+            self.assertTrue(service.client.started.wait(1.0))
+            self.assertFalse(service._submit_snapshot_for_transmission({"version": 2}))
+            service.client.release.set()
+            service._wait_for_transmit_idle()
+        finally:
+            service.stopping.set()
+            service._stop_transmit_worker(wait=True)
+
+        self.assertEqual([(1, True, 15.0)], service.client.sent_versions)
 
     def test_adaptive_interval_uses_json_ack_history_in_display_snapshot(self):
         """确认自适应发送间隔根据历史 ACK 耗时计算并同步到 Pico 配置。"""
@@ -1105,7 +1120,7 @@ class PicoClientTest(unittest.TestCase):
         self.assertFalse(accepted)
         service.client.send.assert_called_once_with(
             {"sequence": 1},
-            wait_ack=False,
+            wait_ack=True,
             ack_timeout=15.0,
         )
         self.assertIn("JSON 快照发送仍在进行，丢弃本轮快照", "\n".join(logs.output))

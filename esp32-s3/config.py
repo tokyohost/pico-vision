@@ -19,11 +19,15 @@ BOARD_MODEL = "ESP32-S3"
 # 开发源码使用 development；正式升级包由打包工具写入发布版本。
 FIRMWARE_VERSION = "development"
 # LCD 屏幕方案：具体分辨率、色彩、显存偏移和 GPIO 均由 lcd 目录中的档案定义。
-LCD_DEVICE_TYPE = "st7789-2.4inch-8pin-b"
+LCD_DEVICE_TYPE = "st7789-2inch-8pin-a"
 
 
 # LCD 通用刷新参数。
 LCD_STRIP_HEIGHT = 40
+# LCD 像素传输后端：auto 优先使用原生 DMA，旧固件缺少模块时自动回退 legacy。
+LCD_TRANSFER_BACKEND = "auto"
+# ESP32 machine.SPI 默认单笔事务上限为 4092 字节，原生后端使用等大的双缓冲。
+LCD_DMA_CHUNK_SIZE = 4092
 # 未收到新 JSON 时仍使用缓存快照主动刷新的最大间隔，保证至少一帧每秒。
 RENDER_INTERVAL_MS = 1000
 # 本地时间显示的固定刷新周期，独立于监控数据采集周期。
@@ -37,9 +41,9 @@ RENDER_MAX_REGIONS = 8
 # 每轮渲染的软时间预算；单个区域完成后才检查，因此允许少量超时。
 RENDER_TIME_BUDGET_US = 50 * 1000
 # 是否启用第二阶段 Python 渲染工作线程；失败时自动回退同步服务。
-RENDER_SERVICE_THREAD_ENABLED = True
+RENDER_SERVICE_THREAD_ENABLED = False
 # 渲染线程每轮只推进一个区域，及时检查控制队列和最新快照。
-RENDER_WORKER_MAX_REGIONS = 1
+RENDER_WORKER_MAX_REGIONS = 5
 # 渲染线程栈需覆盖样式插件、字体和 Canvas 的较深调用链。
 RENDER_WORKER_STACK_SIZE = 32 * 1024
 # 样式切换、旋转和截图等不可丢弃控制命令的固定队列容量。
@@ -81,6 +85,13 @@ PIXEL_FORMAT = "RGB565"
 MAX_UPGRADE_LINE_SIZE = 1024
 # 内置 USB 控制台连续无活动达到该时长后释放当前会话。
 USB_SESSION_TIMEOUT_MS = 5000
+# 是否在原生 USB OTG 上注册保留 REPL 的独立 PV1 数据 CDC。
+USB_DEDICATED_CDC_ENABLED = True
+# 独立数据 CDC 的发送与接收环形缓冲区容量。
+USB_CDC_TX_BUFFER_SIZE = 1024
+# ESP-IDF 的 CDC 示例会及时读空 TinyUSB FIFO并投递到应用队列。这里的纯 Python
+# CDC 也必须为业务解析、样式切换和渲染期间的突发数据保留至少两个最大 PV1 帧。
+USB_CDC_RX_BUFFER_SIZE = 2 * (MAX_JSON_SIZE + 64)
 # 是否启用 Wi-Fi 与 WebSocket 传输；设为 False 时完全不初始化无线网卡。
 WIFI_ENABLED = True
 # Wi-Fi WebSocket 服务参数；Monitor 默认连接 ws://设备IP:8765/pv1。
@@ -119,6 +130,7 @@ def _load_runtime_configuration():
     allowed = {
         "WIFI_ENABLED": bool,
         "LCD_STYLE": str,
+        "LCD_TRANSFER_BACKEND": str,
         "RENDER_INTERVAL_MS": int,
         "MONITOR_TIMEOUT_INTERVALS": int,
         "TIME_CALIBRATION_SNAPSHOTS": int,

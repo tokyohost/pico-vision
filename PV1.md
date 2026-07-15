@@ -373,12 +373,13 @@ BAD_FRAME_LENGTH:DECLARED=1772:REMAINDER=1771:SHORTAGE=1:MAX=16384:LINE_BYTES=17
 ```text
 BOOT:PICO_LCD_READY
 CONFIG:LCD_STYLE:horizontal_disk4x_qb
-ACK:LCD_FRAME:<version>:TOTAL=...MS:...:CANVAS_BACKEND=C:PROTOCOL_BACKEND=C
+ACK:LCD_FRAME:<version>:TOTAL=...MS:...:CANVAS_BACKEND=C:PROTOCOL_BACKEND=C:LCD_BACKEND=NATIVE_DMA
 PROTOCOL_TIMING:TYPE=JSONZ:...
 FATAL:<ExceptionType>:<message>
 ```
 
 `PROTOCOL_BACKEND` 为 `C` 时表示 PV1 帧由 UF2 原生模块解析，为 `PYTHON` 时表示使用 Python 兼容解析器。
+`LCD_BACKEND` 为 `NATIVE_DMA` 时表示像素使用内部 DMA 双缓冲发送，为 `LEGACY` 时表示使用标准 `machine.SPI.write()`。
 
 `display.dev` 由 Monitor 的 Dev 开关穿透到 Pico。关闭时 Pico 不发送
 `PROTOCOL_TIMING` 和 `ACK:LCD_FRAME` 高频性能事件，仅保留 `ACK`、`CONFIG`、

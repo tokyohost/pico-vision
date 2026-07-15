@@ -150,9 +150,11 @@ class JsonProtocol:
         if self._poller is not None:
             self._poller.register(self._input, select.POLLIN)
         self._buffer = bytearray()
-        # 独立 CDC 的 readinto() 会按当前 FIFO 可用长度立即返回；
-        # 内置 REPL stdin 则只能安全地逐字节读取。
-        self._read_buffer = bytearray(512 if self._dedicated_stream else 1)
+        # 一次尽量排空本轮读取预算，避免 micropython-lib Buffer 在部分读取后
+        # 多次搬移剩余数据，也让 CDC OUT 端点更早恢复可接收状态。
+        self._read_buffer = bytearray(
+            SERIAL_READ_BUDGET if self._dedicated_stream else 1
+        )
         self._last_byte_ms = None
         self._frame_started_ms = None
         self._frame_read_calls = 0

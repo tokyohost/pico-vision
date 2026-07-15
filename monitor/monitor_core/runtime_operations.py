@@ -214,7 +214,10 @@ class RuntimeOperationsMixin:
                 with self._transmit_lock:
                     self._transmit_sending = True
                 adaptive_transmit = bool(getattr(self.arguments, "adaptive_transmit", True))
-                wait_ack = adaptive_transmit and not self._json_ack_suspended
+                # ACK 是串口流量控制，不是自适应采集间隔的附属能力。即使用户
+                # 关闭自适应，也必须限制为一条在途 JSON，避免设备忙于样式加载
+                # 或渲染时持续写满 CDC OUT 缓冲并触发 Windows WriteFile 失败。
+                wait_ack = True
                 ack_timeout = max(15.0, self._effective_transmit_interval() * 3.0)
                 send_started = time.monotonic()
                 try:
@@ -225,14 +228,14 @@ class RuntimeOperationsMixin:
                     )
                 except JsonAckTimeoutError as error:
                     # 快照写入已经完成，缺少 ACK 只能说明设备端未确认该能力，
-                    # 不能据此关闭仍然可用的串口并进入无限重连循环。
-                    self._json_ack_suspended = True
+                    # 不能据此关闭仍然可用的串口，也不能降级为无限异步写入。
+                    # 后续快照继续以 ACK 门控重试，保持 CDC 缓冲始终有上界。
                     LOGGER.warning(
-                        "%s；当前连接已自动关闭 JSON ACK 等待并保持异步发送，串口不会重连",
+                        "%s；当前连接保持 JSON ACK 背压并在下一帧重试，串口不会重连",
                         error,
                     )
                     continue
-                if wait_ack:
+                if adaptive_transmit:
                     self._record_json_ack_duration(time.monotonic() - send_started)
             except (OSError, RuntimeError) as error:
                 with self._transmit_lock:

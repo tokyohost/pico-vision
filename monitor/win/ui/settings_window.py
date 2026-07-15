@@ -242,7 +242,7 @@ class SettingsWindowMixin:
         field(monitor, 2, "采集间隔（秒）", ttk.Entry(monitor, textvariable=variables["interval"]))
         adaptive_control = ttk.Checkbutton(
             monitor,
-            text="启用发送自适应（等待 Pico ACK，拥塞时合并最新快照）",
+            text="启用间隔自适应（始终等待 Pico ACK，拥塞时合并最新快照）",
             variable=variables["adaptive_transmit"],
         )
         field(monitor, 3, "发送背压", adaptive_control)

@@ -19,6 +19,8 @@ import struct
 import time
 
 from color_manager import get_color_profile
+from config import LCD_DMA_CHUNK_SIZE, LCD_TRANSFER_BACKEND
+from lcd.transfer_backend import create_lcd_transfer_backend
 
 
 class LcdDevice:
@@ -54,6 +56,10 @@ class LcdDevice:
         if self.pin_profile.miso is not None:
             spi_parameters["miso"] = Pin(self.pin_profile.miso)
         self.spi = SPI(self.pin_profile.spi_id, **spi_parameters)
+        self._transfer_backend = create_lcd_transfer_backend(
+            LCD_TRANSFER_BACKEND,
+            LCD_DMA_CHUNK_SIZE,
+        )
         self._rotation = 0
         self._landscape = False
         self._color_profile = get_color_profile(
@@ -194,6 +200,14 @@ class LcdDevice:
         """返回当前 LCD 的规范硬件类型编码。"""
         return self.panel_profile.device_type
 
+    def transfer_backend_name(self):
+        """返回当前实际生效的 LCD 像素传输后端名称。"""
+        return self._transfer_backend.name
+
+    def transfer_backend_stats(self):
+        """返回当前 LCD 像素传输后端的累计运行统计。"""
+        return self._transfer_backend.stats()
+
     def rotation(self):
         """返回当前生效的屏幕旋转角度。"""
         return self._rotation
@@ -213,5 +227,7 @@ class LcdDevice:
         self.set_window(x, y, x + width - 1, y + height - 1)
         self.dc.value(1)
         self.cs.value(0)
-        self.spi.write(pixels)
-        self.cs.value(1)
+        try:
+            self._transfer_backend.write(self.spi, pixels)
+        finally:
+            self.cs.value(1)
