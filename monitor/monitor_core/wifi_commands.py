@@ -32,6 +32,15 @@ class WifiCommandMixin:
             "password": password,
         }))
 
+    def request_wifi_forget(self, payload):
+        """校验并安排忘记指定的已保存无线网络。"""
+        if not isinstance(payload, dict):
+            raise ValueError("忘记 Wi-Fi 参数必须是对象")
+        ssid = payload.get("ssid")
+        if not isinstance(ssid, str) or not ssid.strip():
+            raise ValueError("Wi-Fi 名称不能为空")
+        self.wifi_operations.put(("forget", {"ssid": ssid.strip()}))
+
     def has_pending_wifi_operation(self):
         """返回是否存在等待执行的 Wi-Fi 管理任务。"""
         operations = getattr(self, "wifi_operations", None)
@@ -43,8 +52,10 @@ class WifiCommandMixin:
         try:
             if action == "list":
                 response = self.client.request_wifi_list()
-            else:
+            elif action == "connect":
                 response = self.client.set_wifi(payload["ssid"], payload["password"])
+            else:
+                response = self.client.forget_wifi(payload["ssid"])
             result = {
                 "status": "ok",
                 "action": action,

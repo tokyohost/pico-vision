@@ -41,6 +41,7 @@ class PicoPackageTargetsTest(unittest.TestCase):
         self.assertIn("WIFI_ENABLED = True", config)
         self.assertIn("net/wifi.py", names)
         self.assertIn("net/websocket.py", names)
+        self.assertIn("command/wifi_forget.py", names)
         self.assertIn("styles/style_fusion_pixel_test.py", names)
         self.assertFalse(any(name.startswith("fonts/") for name in names))
 
@@ -54,6 +55,7 @@ class PicoPackageTargetsTest(unittest.TestCase):
         self.assertIn("WIFI_ENABLED = False", config)
         self.assertNotIn("net/wifi.py", names)
         self.assertNotIn("net/websocket.py", names)
+        self.assertNotIn("command/wifi_forget.py", names)
         self.assertIn("styles/style_fusion_pixel_test.py", names)
         self.assertFalse(any(name.startswith("fonts/") for name in names))
 

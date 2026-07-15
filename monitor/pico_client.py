@@ -473,6 +473,17 @@ class PicoJsonClient:
         self._write_packet(packet, "Wi-Fi 连接")
         return self._wait_command_result(request_id, timeout + 2.0, "Wi-Fi 连接", "Wi-Fi 连接失败")
 
+    def forget_wifi(self, ssid, timeout=10.0):
+        """请求设备忘记指定的已保存 Wi-Fi。"""
+        request_id = "wifi-forget-{}".format(int(time.monotonic() * 1000))
+        packet = self.build_command_packet(
+            "wifi.forget",
+            params={"ssid": ssid},
+            request_id=request_id,
+        )
+        self._write_packet(packet, "忘记 Wi-Fi")
+        return self._wait_command_result(request_id, timeout, "忘记 Wi-Fi", "忘记 Wi-Fi 失败")
+
     @staticmethod
     def _wire_snapshot(snapshot):
         """生成实际在线路上传输的快照对象，移除 Pico 端不需要的重复字段。"""

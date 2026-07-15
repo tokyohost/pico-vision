@@ -3,6 +3,11 @@
 import time
 
 try:
+    import os
+except ImportError:
+    import uos as os
+
+try:
     import ujson as json
 except ImportError:
     import json
@@ -20,6 +25,7 @@ class WifiManager:
         self._password = None
         self._last_error = None
         self._next_reconnect_ms = 0
+        self._scan_in_progress = False
         try:
             import network
 
@@ -67,7 +73,7 @@ class WifiManager:
 
     def update(self):
         """在 Wi-Fi 断开后按固定间隔尝试重新连接已保存网络。"""
-        if self._wlan is None or self.is_connected() or not self._ssid:
+        if self._wlan is None or self.is_connected() or not self._ssid or self._scan_in_progress:
             return
         now = self._ticks_ms()
         if not self._due(now, self._next_reconnect_ms):
@@ -81,11 +87,19 @@ class WifiManager:
             self._last_error = "WIFI_CONNECT_ERROR:{}".format(error)
 
     def scan(self):
-        """扫描附近 Wi-Fi，并返回去重后的结构化网络列表。"""
+        """中止未完成的自动连接并重新扫描附近全部 Wi-Fi。"""
         if self._wlan is None:
             raise RuntimeError(self._last_error or "WIFI_UNAVAILABLE")
+        self._scan_in_progress = True
+        try:
+            scanned = self._scan_all()
+        finally:
+            self._scan_in_progress = False
+            self._next_reconnect_ms = self._add_ticks(
+                self._ticks_ms(), self._reconnect_interval_ms
+            )
         networks = {}
-        for item in self._wlan.scan():
+        for item in scanned:
             ssid_bytes, bssid, channel, rssi, security, hidden = item[:6]
             ssid = ssid_bytes.decode("utf-8", "replace") if isinstance(ssid_bytes, bytes) else str(ssid_bytes)
             if not ssid:
@@ -102,6 +116,60 @@ class WifiManager:
             if previous is None or candidate["rssi"] > previous["rssi"]:
                 networks[ssid] = candidate
         return sorted(networks.values(), key=lambda item: item["rssi"], reverse=True)
+
+    def _scan_all(self):
+        """处理 ESP32 连接状态冲突，并执行一次全量无线网络扫描。"""
+        connected = self.is_connected()
+        if not connected:
+            self._cancel_pending_connection()
+        try:
+            return self._wlan.scan()
+        except OSError:
+            if connected:
+                raise
+            # ESP32 在自动连接尚未退出时可能报告 Wifi Internal State Error；
+            # 重启 STA 接口后重试，确保结果来自本次真实扫描。
+            self._wlan.active(False)
+            self._sleep_ms(100)
+            self._wlan.active(True)
+            self._sleep_ms(100)
+            return self._wlan.scan()
+
+    def _cancel_pending_connection(self):
+        """取消已保存网络的后台连接，避免占用扫描状态机。"""
+        try:
+            self._wlan.disconnect()
+        except OSError:
+            pass
+        self._sleep_ms(100)
+
+    @staticmethod
+    def _sleep_ms(duration_ms):
+        """以兼容 CPython 与 MicroPython 的方式等待指定毫秒数。"""
+        sleep_ms = getattr(time, "sleep_ms", None)
+        sleep_ms(duration_ms) if sleep_ms else time.sleep(duration_ms / 1000.0)
+
+    def forget(self, ssid=None):
+        """忘记指定的已保存网络，并停止继续自动重连。"""
+        target_ssid = str(ssid or self._ssid or "").strip()
+        if not target_ssid:
+            raise ValueError("WIFI_SAVED_NETWORK_REQUIRED")
+        if target_ssid != self._ssid:
+            raise ValueError("WIFI_NETWORK_NOT_SAVED:{}".format(target_ssid))
+        if self._wlan is not None:
+            try:
+                self._wlan.disconnect()
+            except OSError:
+                pass
+        self._ssid = None
+        self._password = None
+        self._last_error = None
+        self._next_reconnect_ms = 0
+        try:
+            os.remove(self._config_path)
+        except OSError:
+            pass
+        return self.status()
 
     def connect(self, ssid, password, timeout_ms=15000):
         """连接指定 Wi-Fi，等待成功或超时，并保存成功凭据。"""

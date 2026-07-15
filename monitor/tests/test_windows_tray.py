@@ -143,6 +143,18 @@ class WindowsTraySettingsTest(unittest.TestCase):
             "password": "测试密钥",
         })
 
+    def test_tray_command_dispatch_requests_forgetting_saved_wifi(self):
+        """确认后台进程能解析忘记已保存 Wi-Fi 的命令。"""
+        service = mock.Mock()
+
+        should_stop = _dispatch_tray_command(
+            service,
+            'WIFI_FORGET:{"ssid":"已保存网络"}',
+        )
+
+        self.assertFalse(should_stop)
+        service.request_wifi_forget.assert_called_once_with({"ssid": "已保存网络"})
+
     def test_wifi_list_keeps_saved_network_outside_scan_range(self):
         """确认未被本次扫描发现的已保存网络仍会显示。"""
         networks = merge_wifi_networks(
@@ -181,6 +193,19 @@ class WindowsTraySettingsTest(unittest.TestCase):
         command = application.worker_process.stdin.write.call_args.args[0]
         payload = json.loads(command.removeprefix("WIFI_CONNECT:"))
         self.assertEqual({"ssid": "测试网络", "password": "测试密钥"}, payload)
+        application.worker_process.stdin.flush.assert_called_once_with()
+
+    def test_wifi_forget_writes_worker_command_with_selected_ssid(self):
+        """确认忘记网络命令只携带用户选中的已保存网络名称。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.worker_process = mock.Mock()
+        application.worker_process.poll.return_value = None
+
+        self.assertTrue(application._request_wifi_forget("已保存网络"))
+
+        command = application.worker_process.stdin.write.call_args.args[0]
+        payload = json.loads(command.removeprefix("WIFI_FORGET:"))
+        self.assertEqual({"ssid": "已保存网络"}, payload)
         application.worker_process.stdin.flush.assert_called_once_with()
 
     def test_worker_result_parser_ignores_trailing_log_text(self):

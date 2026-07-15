@@ -29,6 +29,10 @@ def _dispatch_tray_command(service, command):
         service.request_wifi_connect(
             json.loads(command[len("WIFI_CONNECT:"):])
         )
+    elif command.startswith("WIFI_FORGET:"):
+        service.request_wifi_forget(
+            json.loads(command[len("WIFI_FORGET:"):])
+        )
     elif command.startswith("CUSTOM_STYLE_UPLOAD:"):
         service.request_custom_style_upload(
             json.loads(command[len("CUSTOM_STYLE_UPLOAD:"):])

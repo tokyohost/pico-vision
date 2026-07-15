@@ -79,7 +79,7 @@ python pico_monitor.py
 
 qBittorrent 也可通过环境变量 `PICO_MONITOR_QBITTORRENT_ENABLED`、`PICO_MONITOR_QBITTORRENT_ADDRESS`、`PICO_MONITOR_QBITTORRENT_USERNAME`、`PICO_MONITOR_QBITTORRENT_PASSWORD` 和 `PICO_MONITOR_QBITTORRENT_INTERVAL` 配置。启用采集后地址、账号、密码必须全部配置。建议使用环境变量或 Linux 配置文件保存密码，避免密码出现在进程命令行中。
 
-WebSocket 地址也可通过 `PICO_MONITOR_WEBSOCKET_URL` 配置。首次配网时先使用 USB CDC 连接，通过 `PicoJsonClient.request_wifi_list()` 发送 `wifi.list` 搜索网络，再通过 `PicoJsonClient.set_wifi(ssid, password)` 发送 `wifi.set`。命令使用结构化 `COMMAND` 帧返回扫描结果、连接成功详情或具体失败原因；配网成功后关闭 USB 数据串口，再以设备返回的 IP 启动 WebSocket 模式。
+WebSocket 地址也可通过 `PICO_MONITOR_WEBSOCKET_URL` 配置。首次配网时先使用 USB CDC 连接，通过 `PicoJsonClient.request_wifi_list()` 发送 `wifi.list` 搜索网络，再通过 `PicoJsonClient.set_wifi(ssid, password)` 发送 `wifi.set`。Windows Monitor 的 Wi-Fi 页面每次重新扫描附近全部网络，同时保留“已保存”网络供用户选中；点击“忘记网络”会通过 `PicoJsonClient.forget_wifi(ssid)` 发送 `wifi.forget` 并删除设备端凭据。命令使用结构化 `COMMAND` 帧返回扫描结果、连接或忘记成功详情及具体失败原因；配网成功后关闭 USB 数据串口，再以设备返回的 IP 启动 WebSocket 模式。
 
 Windows 托盘的“设备管理 → 主动探测”会枚举所有启用网卡的 IPv4 局域网地址，以线程池探测 `8765` 端口并校验 `/pv1` 的标准 WebSocket 升级握手。候选服务还会经过 PV1 设备握手确认；确认成功后，连接地址保存到当前用户的 `settings.json`，以后启动时自动连接。连接成功、首次连接失败和已连接后断开都会产生托盘通知，相同失败状态不会重复通知。
 

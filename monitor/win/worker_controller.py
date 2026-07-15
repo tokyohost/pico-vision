@@ -329,6 +329,15 @@ class WorkerControllerMixin:
         )
         return self._write_worker_command("WIFI_CONNECT:{}\n".format(payload))
 
+    def _request_wifi_forget(self, ssid):
+        """请求后台工作进程忘记指定的已保存 Wi-Fi。"""
+        payload = json.dumps(
+            {"ssid": str(ssid)},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return self._write_worker_command("WIFI_FORGET:{}\n".format(payload))
+
     def _write_worker_command(self, command):
         """向运行中的 Monitor 写入一条完整控制命令。"""
         process = self.worker_process

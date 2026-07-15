@@ -108,7 +108,7 @@ GitHub Actions 会按照全部开发板型号与规范 LCD 设备类型的笛卡
 
 PV1 帧可承载在 USB CDC 字节流或 WebSocket 二进制消息中。USB 和 WebSocket 同时可用时，设备锁定首个建立的连接；活动连接断开后才释放并重新选择。WebSocket 默认监听 `ws://设备IP:8765/pv1`，双方发送 Ping/Pong 心跳，Monitor 通信异常后按重连间隔重新握手。
 
-设备提供两个配网命令：`wifi.list` 返回按信号强度排序的附近网络；`wifi.set` 的 `params` 接受 `ssid`、`password` 和可选 `timeout_ms`，并通过 `COMMAND` 帧返回连接成功详情或失败原因。Wi-Fi 凭据仅保存在设备端 `wifi_config.json`，PONG 和日志不会返回密码。
+设备提供三个配网命令：`wifi.list` 每次返回按信号强度排序的附近全部网络，并在失败中的自动重连与扫描冲突时恢复无线状态后重试；`wifi.set` 的 `params` 接受 `ssid`、`password` 和可选 `timeout_ms`；`wifi.forget` 的 `params` 接受已保存的 `ssid`，用于删除设备凭据。命令均通过 `COMMAND` 帧返回成功详情或失败原因。Wi-Fi 凭据仅保存在设备端 `wifi_config.json`，PONG 和日志不会返回密码。
 
 数据包采用纯 ASCII 行协议，避免 MicroPython 将二进制 `0x03` 解释为 Ctrl+C：
 

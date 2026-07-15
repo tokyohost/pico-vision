@@ -32,6 +32,7 @@ ESP32_BOARD_MODELS = frozenset(("esp32-s3",))
 ESP32_ONLY_FILES = frozenset((
     "command/wifi_list.py",
     "command/wifi_set.py",
+    "command/wifi_forget.py",
     "net/websocket.py",
     "net/wifi.py",
 ))

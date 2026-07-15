@@ -132,13 +132,17 @@ class WifiWindowMixin:
         refresh_button.pack(side=tk.LEFT)
         connect_button = ttk.Button(actions, text="连接", state=tk.DISABLED)
         connect_button.pack(side=tk.RIGHT)
+        forget_button = ttk.Button(actions, text="忘记网络", state=tk.DISABLED)
+        forget_button.pack(side=tk.RIGHT, padx=(0, 8))
         operation = {"action": None}
+        displayed_networks = {}
 
         def set_busy(action, message):
             """切换页面忙碌状态并锁定重复操作。"""
             operation["action"] = action
             refresh_button.configure(state=tk.DISABLED)
             connect_button.configure(state=tk.DISABLED)
+            forget_button.configure(state=tk.DISABLED)
             progress.start(12)
             status.set(message)
 
@@ -147,6 +151,7 @@ class WifiWindowMixin:
             operation["action"] = None
             refresh_button.configure(state=tk.NORMAL)
             connect_button.configure(state=tk.NORMAL)
+            update_forget_button()
             progress.stop()
             status.set(message)
 
@@ -181,6 +186,33 @@ class WifiWindowMixin:
                 return
             set_busy("connect", "设备正在连接 {}，请稍候……".format(target_ssid))
 
+        def request_forget():
+            """确认后请求设备忘记当前选中的已保存网络。"""
+            selection = tree.selection()
+            network = displayed_networks.get(selection[0]) if selection else None
+            if not network or not network.get("saved"):
+                messagebox.showwarning("Wi-Fi 设置", "请选择一个已保存的网络。", parent=window)
+                return
+            target_ssid = network["ssid"]
+            if not messagebox.askyesno(
+                "忘记网络",
+                "确定要忘记已保存的 Wi-Fi“{}”吗？".format(target_ssid),
+                parent=window,
+            ):
+                return
+            clear_pending_results()
+            if not self._request_wifi_forget(target_ssid):
+                status.set("当前没有可用的设备连接")
+                return
+            set_busy("forget", "正在忘记 {}……".format(target_ssid))
+
+        def update_forget_button():
+            """仅在选中已保存网络且页面空闲时启用忘记按钮。"""
+            selection = tree.selection()
+            network = displayed_networks.get(selection[0]) if selection else None
+            enabled = operation["action"] is None and network and network.get("saved")
+            forget_button.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+
         def select_network(event=None):
             """将列表中选中的无线网络名称填入连接表单。"""
             del event
@@ -189,21 +221,24 @@ class WifiWindowMixin:
                 ssid.set(tree.item(selection[0], "values")[0])
                 password.set("")
                 password_entry.focus_set()
+            update_forget_button()
 
         def show_networks(data):
             """在列表中展示扫描、已保存及已连接的无线网络。"""
             for item_id in tree.get_children():
                 tree.delete(item_id)
+            displayed_networks.clear()
             networks = merge_wifi_networks(data.get("networks"), data.get("wifi"))
             for network in networks:
                 rssi = network.get("rssi")
                 signal = "{} dBm".format(rssi) if isinstance(rssi, int) else "--"
-                tree.insert("", tk.END, values=(
+                item_id = tree.insert("", tk.END, values=(
                     network["ssid"],
                     wifi_state_label(network),
                     signal,
                     wifi_security_label(network.get("security")),
                 ))
+                displayed_networks[item_id] = network
             saved_ssid = (data.get("wifi") or {}).get("ssid")
             if saved_ssid:
                 ssid.set(saved_ssid)
@@ -221,13 +256,19 @@ class WifiWindowMixin:
                 elif result.get("action") == "list":
                     count = show_networks(result.get("data") or {})
                     set_idle("扫描完成，共发现 {} 个 Wi-Fi。".format(count))
-                else:
+                elif result.get("action") == "connect":
                     wifi = (result.get("data") or {}).get("wifi") or {}
                     target = wifi.get("ssid") or ssid.get().strip()
                     ip = wifi.get("ip")
                     set_idle(
                         "已连接 {}{}。".format(target, "，设备地址 {}".format(ip) if ip else "")
                     )
+                    request_scan()
+                else:
+                    forgotten = (result.get("data") or {}).get("forgotten") or ssid.get().strip()
+                    ssid.set("")
+                    password.set("")
+                    set_idle("已忘记 {}。".format(forgotten))
                     request_scan()
             if window.winfo_exists():
                 window.after(100, poll_results)
@@ -241,6 +282,7 @@ class WifiWindowMixin:
         tree.bind("<Double-1>", select_network)
         refresh_button.configure(command=request_scan)
         connect_button.configure(command=request_connect)
+        forget_button.configure(command=request_forget)
         window.protocol("WM_DELETE_WINDOW", close_window)
         poll_results()
         request_scan()
