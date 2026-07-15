@@ -218,6 +218,29 @@ class Esp32RenderServiceTest(unittest.TestCase):
         mailbox.release(slot_index)
         self.assertFalse(mailbox.has_pending())
 
+    def test_block_mailbox_waits_until_pending_slot_is_consumed(self):
+        """确认 block 策略不会覆盖待处理帧，并在槽释放后继续发布。"""
+        mailbox = LatestFrameMailbox(_thread, policy="block")
+        mailbox.publish({"value": 1}, frame_version=1)
+        published = []
+
+        def publish_second():
+            """在辅助线程发布第二帧，用于验证阻塞解除时机。"""
+            published.append(
+                mailbox.publish({"value": 2}, frame_version=2)
+            )
+
+        _thread.start_new_thread(publish_second, ())
+        time.sleep(0.02)
+        self.assertEqual(published, [])
+        first_slot, _first_frame = mailbox.take_latest()
+        mailbox.release(first_slot)
+        deadline = time.monotonic() + 1
+        while not published and time.monotonic() < deadline:
+            time.sleep(0.001)
+        self.assertEqual(published, [2])
+        self.assertEqual(mailbox.dropped_count(), 0)
+
     def test_thread_service_owns_renderer_and_lcd_controls(self):
         """确认渲染器创建、样式控制和背光控制均在工作线程执行。"""
         main_thread = _thread.get_ident()

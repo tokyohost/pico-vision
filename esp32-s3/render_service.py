@@ -18,11 +18,25 @@ import time
 from config import (
     RENDER_CONTROL_QUEUE_CAPACITY,
     RENDER_CONTROL_TIMEOUT_MS,
+    RENDER_FRAME_POLICY,
     RENDER_SERVICE_START_TIMEOUT_MS,
     RENDER_SERVICE_THREAD_ENABLED,
     RENDER_WORKER_MAX_REGIONS,
     RENDER_WORKER_STACK_SIZE,
 )
+
+
+FRAME_POLICY_LATEST = "latest"
+FRAME_POLICY_BLOCK = "block"
+FRAME_POLICIES = (FRAME_POLICY_LATEST, FRAME_POLICY_BLOCK)
+
+
+def normalize_frame_policy(policy):
+    """规范化新帧背压策略，并拒绝会造成不确定排队行为的配置。"""
+    normalized = str(policy or FRAME_POLICY_LATEST).strip().lower()
+    if normalized not in FRAME_POLICIES:
+        raise ValueError("未知渲染帧策略：{}".format(policy))
+    return normalized
 
 
 def _ticks_ms():
@@ -68,11 +82,12 @@ def _clone_render_value(value):
 
 
 class LatestFrameMailbox:
-    """使用两个固定槽保存最新渲染快照并覆盖尚未消费的旧帧。"""
+    """使用两个固定槽按 latest 或 block 策略发布渲染快照。"""
 
-    def __init__(self, thread_module):
-        """创建双槽邮箱及其短时状态锁。"""
+    def __init__(self, thread_module, policy=FRAME_POLICY_LATEST):
+        """创建双槽邮箱、短时状态锁和指定的新帧背压策略。"""
         self._lock = thread_module.allocate_lock()
+        self._policy = normalize_frame_policy(policy)
         self._slots = [None, None]
         self._ready_index = -1
         self._reading_index = -1
@@ -81,23 +96,30 @@ class LatestFrameMailbox:
         self._dropped = 0
 
     def publish(self, snapshot, force=False, frame_version=None):
-        """深拷贝并发布最新快照，返回邮箱内部递增序号。"""
+        """深拷贝并按覆盖或阻塞策略发布快照，返回内部递增序号。"""
         payload = (_clone_render_value(snapshot or {}), bool(force), frame_version)
-        self._lock.acquire()
-        try:
-            index = self._next_index
-            if index == self._reading_index:
-                index = 1 - index
-            if self._ready_index >= 0:
-                index = self._ready_index
-                self._dropped += 1
-            self._sequence += 1
-            self._slots[index] = (self._sequence, payload)
-            self._ready_index = index
-            self._next_index = 1 - index
-            return self._sequence
-        finally:
-            self._lock.release()
+        while True:
+            self._lock.acquire()
+            try:
+                if self._policy == FRAME_POLICY_BLOCK and self._ready_index >= 0:
+                    should_wait = True
+                else:
+                    should_wait = False
+                    index = self._next_index
+                    if index == self._reading_index:
+                        index = 1 - index
+                    if self._ready_index >= 0:
+                        index = self._ready_index
+                        self._dropped += 1
+                    self._sequence += 1
+                    self._slots[index] = (self._sequence, payload)
+                    self._ready_index = index
+                    self._next_index = 1 - index
+                    return self._sequence
+            finally:
+                self._lock.release()
+            if should_wait:
+                _sleep_ms(1)
 
     def take_latest(self):
         """取得最新就绪帧及槽位编号，没有数据时返回空值。"""
@@ -148,6 +170,10 @@ class LatestFrameMailbox:
             return self._dropped
         finally:
             self._lock.release()
+
+    def policy(self):
+        """返回邮箱当前使用的 latest 或 block 背压策略。"""
+        return self._policy
 
 
 class RenderControlRequest:
@@ -215,6 +241,7 @@ class RenderService:
         style_name="boot",
         thread_enabled=RENDER_SERVICE_THREAD_ENABLED,
         thread_module=None,
+        frame_policy=RENDER_FRAME_POLICY,
     ):
         """保存渲染依赖，并准备线程模式或同步回退模式的公共状态。"""
         self._lcd = lcd
@@ -222,6 +249,7 @@ class RenderService:
         self._initial_style = style_name
         self._thread_enabled = bool(thread_enabled)
         self._thread_module = thread_module
+        self._frame_policy = normalize_frame_policy(frame_policy)
         self._mailbox = None
         self._control_queue = None
         self._renderer = None
@@ -268,7 +296,7 @@ class RenderService:
             self._start_synchronous()
             return False
         self._thread_module = thread_module
-        self._mailbox = LatestFrameMailbox(thread_module)
+        self._mailbox = LatestFrameMailbox(thread_module, self._frame_policy)
         self._control_queue = FixedControlQueue(
             thread_module, RENDER_CONTROL_QUEUE_CAPACITY
         )
@@ -580,6 +608,10 @@ class RenderService:
     def dropped_frames(self):
         """返回线程模式下被最新快照覆盖的累计帧数。"""
         return self._mailbox.dropped_count() if self._threaded else 0
+
+    def frame_policy(self):
+        """返回当前生效的 latest 或 block 新帧背压策略。"""
+        return self._frame_policy
 
     def stop(self, timeout_ms=1000):
         """停止测试或软重启前的渲染工作线程。"""

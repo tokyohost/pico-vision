@@ -124,6 +124,11 @@ class Application:
                 "THREAD" if render_threaded else "SYNC_FALLBACK"
             ).encode()
         )
+        self._protocol.write(
+            "BOOT:RENDER_FRAME_POLICY:{}\n".format(
+                self._renderer.frame_policy().upper()
+            ).encode()
+        )
         self._buttons = ButtonController()
         self._protocol.set_command_services({"renderer": self._renderer})
         self._boot_frame = 0
@@ -405,7 +410,7 @@ class Application:
             "SLOWEST_REGION={}US:"
             "REGIONS={}:MEMORY_USED={}:MEMORY_TOTAL={}:"
             "CANVAS_BACKEND={}:PROTOCOL_BACKEND={}:LCD_BACKEND={}:"
-            "RENDER_MODE={}:DROPPED_FRAMES={}\n"
+            "RENDER_MODE={}:FRAME_POLICY={}:DROPPED_FRAMES={}\n"
         ).format(
             completed_version,
             self._renderer.last_render_ms(),
@@ -423,6 +428,7 @@ class Application:
             self._protocol.protocol_backend(),
             self._lcd.transfer_backend_name().upper(),
             "THREAD" if self._renderer.threaded() else "SYNC",
+            self._renderer.frame_policy().upper(),
             self._renderer.dropped_frames(),
         )
         self._protocol.write(response.encode())

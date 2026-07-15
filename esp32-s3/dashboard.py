@@ -9,34 +9,28 @@
 #
 #  This software is provided "as is", without warranty of any kind.
 
-
-
-"""使用可插拔样式将系统快照按可见区域渲染到设备 LCD。"""
-
+"""在完整 RAM 画布绘制界面，并把脏区检测与条带发送交给 C 固件。"""
 
 import gc
 import time
 
 from canvas_backend import Canvas, canvas_backend_name
-from config import (
-    BLACK,
-    LCD_STRIP_HEIGHT,
-    LCD_STYLE,
-)
+from config import BLACK, LCD_STYLE
 from styles.style_plugins import create_style, normalize_style_name, release_style
 
 
 class DashboardRenderer:
-    """负责通用条带调度，并将具体界面绘制委托给样式插件。"""
+    """维护完整 RGB565 画布，并将每帧一次性提交给原生 LCD 后端。"""
 
     def __init__(self, lcd, style_name=LCD_STYLE):
-        """创建条带画布并加载配置指定的样式插件。"""
+        """创建样式和完整画布，不再让 MicroPython 分条带重复绘制。"""
         self.lcd = lcd
         self._style = create_style(style_name)
         self._style_name = self._style.name
-        self._apply_style_geometry()
+        self.canvas = None
         self._snapshot = None
-        self._next_y = self._height
+        self._frame_pending = False
+        self._force_frame = True
         self._render_started = None
         self._last_render_ms = 0
         self._canvas_us = 0
@@ -46,10 +40,8 @@ class DashboardRenderer:
         self._gc_us = 0
         self._slowest_region_us = 0
         self._region_count = 0
-        self._initialized = False
-        self._dirty_regions = []
-        self._dirty_index = 0
         self._completion_pending = False
+        self._apply_style_geometry()
 
     def style_name(self):
         """返回当前生效的样式插件名称。"""
@@ -64,7 +56,7 @@ class DashboardRenderer:
         return canvas_backend_name()
 
     def preload_style(self, style_name):
-        """预加载并注册指定样式，但保持当前启动页面和画布不变。"""
+        """预加载并注册指定样式，但保持当前画布和显示内容不变。"""
         normalized_name = normalize_style_name(style_name)
         if normalized_name == self._style_name:
             return False
@@ -74,14 +66,12 @@ class DashboardRenderer:
         return True
 
     def set_style(self, style_name):
-        """分阶段释放旧帧和旧样式后加载新样式，避免切换内存峰值。"""
+        """释放旧样式后加载新样式，并按新方向重建完整画布。"""
         normalized_name = normalize_style_name(style_name)
         if normalized_name == self._style_name:
             return False
         self.canvas.clear_glyph_cache()
         previous_style_name = self._style_name
-        # 大型样式模块首次导入时需要编译源码。必须先断开旧样式、快照和
-        # 脏区的全部强引用，否则新旧对象会在堆中短暂重叠并耗尽连续内存。
         self.abort_render(release_snapshot=True)
         self._style = None
         release_style(previous_style_name)
@@ -89,7 +79,6 @@ class DashboardRenderer:
         try:
             style = create_style(normalized_name)
         except Exception:
-            # 目标样式加载失败后尽力恢复轻量启动页，让主循环仍可通信和重试。
             release_style(normalized_name)
             gc.collect()
             if normalized_name != "boot":
@@ -97,52 +86,49 @@ class DashboardRenderer:
                 self._style = style
                 self._style_name = style.name
                 self._apply_style_geometry()
-                self._initialized = False
             raise
         self._style = style
         self._style_name = style.name
         self._apply_style_geometry()
-        self._initialized = False
+        self._force_frame = True
         gc.collect()
         return True
 
     def abort_render(self, release_snapshot=False):
-        """中止当前帧并释放临时区域，可选择同时丢弃帧快照。"""
-        self._dirty_regions = []
-        self._dirty_index = 0
-        self._next_y = self._height
+        """中止尚未绘制的帧，并可同时释放帧快照引用。"""
+        self._frame_pending = False
         self._render_started = None
         self._completion_pending = False
         if release_snapshot:
             self._snapshot = None
 
     def _apply_style_geometry(self):
-        """应用样式声明的画布尺寸和 LCD 横竖屏方向。"""
+        """按样式方向分配完整画布，并同步 C 固件的逻辑屏幕尺寸。"""
         panel_profile = self.lcd.panel_profile
-        self._width = int(getattr(self._style, "width", panel_profile.width))
-        self._height = int(getattr(self._style, "height", panel_profile.height))
-        required_pixels = self._width * LCD_STRIP_HEIGHT
-        current_canvas = getattr(self, "canvas", None)
+        width = int(getattr(self._style, "width", panel_profile.width))
+        height = int(getattr(self._style, "height", panel_profile.height))
+        landscape = bool(getattr(self._style, "landscape", False))
+        self.lcd.set_landscape(landscape)
+        self.lcd.configure_canvas(width, height)
+        required_pixels = width * height
+        current_canvas = self.canvas
         if (
-            current_canvas is not None
-            and current_canvas._capacity_pixels >= required_pixels
+            current_canvas is None
+            or current_canvas._capacity_pixels < required_pixels
         ):
-            self.canvas = current_canvas
-            self.canvas.set_view(
-                0, 0, self._width,
-                min(LCD_STRIP_HEIGHT, self._height),
-            )
-        else:
+            self.canvas = None
             if current_canvas is not None:
-                self.canvas = None
                 del current_canvas
                 gc.collect()
-            self.canvas = Canvas(self._width, LCD_STRIP_HEIGHT)
+            self.canvas = Canvas(width, height)
+        else:
+            self.canvas.set_view(0, 0, width, height)
+        self._width = width
+        self._height = height
         self.canvas.set_font(getattr(self._style, "font_name", "native"))
-        self.lcd.set_landscape(bool(getattr(self._style, "landscape", False)))
 
     def set_rotation(self, rotation):
-        """切换方向后按新扫描方向清屏，并要求下一帧完整刷新。"""
+        """切换扫描方向、清空显示并强制下一帧建立新的脏区基线。"""
         normalized = 180 if rotation == 180 else 0
         if normalized == self.lcd.rotation():
             return False
@@ -152,35 +138,17 @@ class DashboardRenderer:
             self._clear_screen()
         finally:
             self.lcd.set_display_enabled(True)
-        if changed:
-            self._initialized = False
+        self._force_frame = bool(changed)
         return changed
 
     def _clear_screen(self):
-        """复用画布缓冲分条带清屏，避免旋转时触发内存峰值。"""
-        strip_height = min(LCD_STRIP_HEIGHT, self._height)
-        y = 0
-        while y < self._height:
-            height = min(strip_height, self._height - y)
-            byte_count = self._width * height * 2
-            # 旋转发生在样式和字体已经加载后的堆内存高峰期。若重新创建整条
-            # 黑色像素数据按区域复用，避免反复分配大块连续内存。
-            self.canvas.set_view(0, y, self._width, height)
-            self.canvas.clear(BLACK)
-            self.lcd.show_region(
-                0,
-                y,
-                self._width,
-                height,
-                memoryview(self.canvas.buffer)[:byte_count],
-            )
-            y += height
+        """直接清空完整画布，并通过 C 固件强制提交一次全屏。"""
+        self.canvas.set_view(0, 0, self._width, self._height)
+        self.canvas.clear(BLACK)
+        self.lcd.present(self.canvas.buffer, force=True)
 
     def request_render(self, snapshot, force=False):
-        """登记快照，并按差异刷新或强制刷新动态区域。"""
-        # 时间推进器会原地更新缓存快照。渲染器必须保存独立的帧级根字典，
-        # 否则上一帧时间也会被同步改写，差异检测无法发现每秒变化，只能
-        # 等到校准或其他区域重绘时才一次跳过多个秒数。
+        """登记最新快照，实际绘制始终发生在完整 RAM 画布。"""
         next_snapshot = dict(snapshot) if snapshot else {}
         begin_frame = getattr(self._style, "begin_frame", None)
         if callable(begin_frame):
@@ -188,24 +156,11 @@ class DashboardRenderer:
         prepare_frame = getattr(self._style, "prepare_frame", None)
         if callable(prepare_frame):
             prepare_frame(next_snapshot)
-        if self._initialized:
-            self._next_y = self._height
-            selector = getattr(self._style, "select_dirty_regions", None)
-            if force:
-                self._dirty_regions = self._style.create_dirty_regions()
-            elif callable(selector):
-                self._dirty_regions = selector(
-                    self._snapshot or {}, next_snapshot
-                )
-            else:
-                self._dirty_regions = self._style.create_dirty_regions()
-            self._dirty_index = 0
-        else:
-            self._next_y = 0
-            self._dirty_regions = []
         self._snapshot = next_snapshot
-        self._render_started = time.ticks_ms()
+        self._force_frame = self._force_frame or bool(force)
+        self._frame_pending = True
         self._completion_pending = True
+        self._render_started = time.ticks_ms()
         self._canvas_us = 0
         self._view_us = 0
         self._buffer_us = 0
@@ -215,108 +170,64 @@ class DashboardRenderer:
         self._region_count = 0
 
     def is_rendering(self):
-        """判断当前帧是否仍有条带或动态区域尚未写屏。"""
-        return self._next_y < self._height or self._dirty_index < len(self._dirty_regions)
+        """返回当前是否有一帧完整画布等待绘制和提交。"""
+        return self._frame_pending
 
     def update(self):
-        """仅绘制一个条带或动态区域，并在整帧完成时返回真。"""
-        if not self.is_rendering():
+        """绘制一次完整画布，由 C 固件检测脏区并只发送变化区域。"""
+        if not self._frame_pending:
             return False
-        region_started = time.ticks_us()
-        if self._next_y < self._height:
-            x, y, width = 0, self._next_y, self._width
-            height = min(LCD_STRIP_HEIGHT, self._height - y)
-            view_started = time.ticks_us()
-            self.canvas.set_view(x, y, width, height)
-            self._view_us += time.ticks_diff(time.ticks_us(), view_started)
-            canvas_started = time.ticks_us()
-            self._style.draw_visible(self.canvas, self._snapshot)
-        else:
-            key, x, y, width, height = self._dirty_regions[self._dirty_index]
-            view_started = time.ticks_us()
-            self.canvas.set_view(x, y, width, height)
-            self._view_us += time.ticks_diff(time.ticks_us(), view_started)
-            canvas_started = time.ticks_us()
-            self._style.draw_dirty(self.canvas, key, self._snapshot)
-        self._canvas_us += time.ticks_diff(time.ticks_us(), canvas_started)
-        buffer_us, lcd_us = self._show_view(x, y, width, height)
-        self._buffer_us += buffer_us
-        self._lcd_us += lcd_us
-        self._region_count += 1
-        region_us = time.ticks_diff(time.ticks_us(), region_started)
-        if region_us > self._slowest_region_us:
-            self._slowest_region_us = region_us
-        if self._next_y < self._height:
-            self._next_y += height
-            if self._next_y >= self._height:
-                self._initialized = True
-        else:
-            self._dirty_index += 1
-        completed = not self.is_rendering()
-        if completed:
-            self._last_render_ms = time.ticks_diff(time.ticks_ms(), self._render_started)
-            self._render_started = None
-            self._completion_pending = False
-        return completed
+        frame_started = time.ticks_us()
+        self.canvas.set_view(0, 0, self._width, self._height)
+        canvas_started = time.ticks_us()
+        self._style.draw_visible(self.canvas, self._snapshot)
+        self._canvas_us = time.ticks_diff(time.ticks_us(), canvas_started)
+        lcd_started = time.ticks_us()
+        self._region_count = self.lcd.present(
+            self.canvas.buffer, force=self._force_frame
+        )
+        self._lcd_us = time.ticks_diff(time.ticks_us(), lcd_started)
+        self._slowest_region_us = self._lcd_us
+        self._force_frame = False
+        self._frame_pending = False
+        self._completion_pending = False
+        self._last_render_ms = time.ticks_diff(
+            time.ticks_ms(), self._render_started
+        )
+        self._render_started = None
+        self._buffer_us = max(
+            0,
+            time.ticks_diff(time.ticks_us(), frame_started)
+            - self._canvas_us - self._lcd_us,
+        )
+        return True
 
     def record_gc_us(self, elapsed_us):
         """记录应用在当前帧完成后安全执行垃圾回收的耗时。"""
         self._gc_us = max(0, int(elapsed_us))
 
     def update_pending(self, max_regions=8, time_budget_us=None):
-        """在区域数和软时间预算内批量刷新，减少区域间的调度延迟。"""
-        if not self.is_rendering() and self._completion_pending:
-            self._last_render_ms = time.ticks_diff(
-                time.ticks_ms(), self._render_started
-            )
-            self._render_started = None
-            self._completion_pending = False
-            return True
-        maximum_regions = max(1, int(max_regions))
-        budget_us = None
-        if time_budget_us is not None:
-            budget_us = max(1, int(time_budget_us))
-        batch_started = time.ticks_us() if budget_us is not None else None
-        updated = 0
-        while updated < maximum_regions and self.is_rendering():
-            updated += 1
-            if self.update():
-                return True
-            if (
-                budget_us is not None
-                and time.ticks_diff(time.ticks_us(), batch_started) >= budget_us
-            ):
-                break
-        return False
-
-    def _show_view(self, x, y, width, height):
-        """将当前视口提交到 LCD，并返回缓冲区准备和写屏耗时。"""
-        buffer_started = time.ticks_us()
-        byte_count = width * height * 2
-        buffer_view = memoryview(self.canvas.buffer)[:byte_count]
-        buffer_us = time.ticks_diff(time.ticks_us(), buffer_started)
-        lcd_started = time.ticks_us()
-        self.lcd.show_region(x, y, width, height, buffer_view)
-        lcd_us = time.ticks_diff(time.ticks_us(), lcd_started)
-        return buffer_us, lcd_us
+        """兼容旧调度接口；完整画布模式每次最多提交一帧。"""
+        del max_regions, time_budget_us
+        return self.update()
 
     def capture_screen(self, chunk_writer, rows_per_chunk=8):
-        """重新绘制当前画面并按 RGB565 条带输出，不额外占用整帧内存。"""
+        """从当前完整画布直接分行输出截图，无需重新执行样式绘制。"""
         if self._snapshot is None:
             raise ValueError("当前没有可截图的 LCD 画面")
-        rows_per_chunk = max(1, min(int(rows_per_chunk), LCD_STRIP_HEIGHT))
+        rows_per_chunk = max(1, min(int(rows_per_chunk), self._height))
         sequence = 0
+        row_bytes = self._width * 2
         y = 0
+        view = memoryview(self.canvas.buffer)
         while y < self._height:
             height = min(rows_per_chunk, self._height - y)
-            self.canvas.set_view(0, y, self._width, height)
-            self._style.draw_visible(self.canvas, self._snapshot)
-            byte_count = self._width * height * 2
+            start = y * row_bytes
             chunk_writer(
                 sequence,
                 y,
                 height,
-                memoryview(self.canvas.buffer)[:byte_count],
+                view[start:start + height * row_bytes],
             )
             sequence += 1
             y += height
@@ -332,20 +243,17 @@ class DashboardRenderer:
         return self._last_render_ms
 
     def last_profile(self):
-        """返回最近一帧画布、LCD 和区域数量性能统计。"""
+        """返回最近一帧画布、LCD 和 C 固件脏区数量统计。"""
         return self._canvas_us, self._lcd_us, self._region_count
 
     def last_detailed_profile(self):
-        """返回最近一帧各渲染步骤的详细耗时统计。"""
-        measured_us = (
-            self._view_us + self._canvas_us + self._buffer_us
-            + self._lcd_us
-        )
+        """返回最近一帧完整画布绘制与增量发送的详细统计。"""
+        measured_us = self._canvas_us + self._buffer_us + self._lcd_us
         total_us = self._last_render_ms * 1000
         return {
             "view_us": self._view_us,
             "canvas_us": self._canvas_us,
-            "buffer_us": self._buffer_us,
+            "buffer_us": max(0, self._buffer_us),
             "lcd_us": self._lcd_us,
             "gc_us": self._gc_us,
             "schedule_us": max(0, total_us - measured_us),

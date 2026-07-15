@@ -23,11 +23,17 @@ LCD_DEVICE_TYPE = "st7789-2inch-8pin-a"
 
 
 # LCD 通用刷新参数。
-LCD_STRIP_HEIGHT = 40
 # LCD 像素传输后端：auto 优先使用原生 DMA，旧固件缺少模块时自动回退 legacy。
 LCD_TRANSFER_BACKEND = "auto"
 # ESP32 machine.SPI 默认单笔事务上限为 4092 字节，原生后端使用等大的双缓冲。
 LCD_DMA_CHUNK_SIZE = 4092
+# C 固件使用两块内部 SRAM 条带缓冲交替整理完整画布中的脏矩形。
+LCD_STRIP_HEIGHT = 40
+# C 固件按瓦片检测完整画布变化，再把相邻瓦片合并为待发送脏矩形。
+LCD_DIRTY_TILE_WIDTH = 16
+LCD_DIRTY_TILE_HEIGHT = 8
+# 新帧背压策略：latest 覆盖未消费旧帧，block 等待待处理槽释放。
+RENDER_FRAME_POLICY = "latest"
 # 未收到新 JSON 时仍使用缓存快照主动刷新的最大间隔，保证至少一帧每秒。
 RENDER_INTERVAL_MS = 1000
 # 本地时间显示的固定刷新周期，独立于监控数据采集周期。
@@ -41,7 +47,7 @@ RENDER_MAX_REGIONS = 8
 # 每轮渲染的软时间预算；单个区域完成后才检查，因此允许少量超时。
 RENDER_TIME_BUDGET_US = 50 * 1000
 # 是否启用第二阶段 Python 渲染工作线程；失败时自动回退同步服务。
-RENDER_SERVICE_THREAD_ENABLED = False
+RENDER_SERVICE_THREAD_ENABLED = True
 # 渲染线程每轮只推进一个区域，及时检查控制队列和最新快照。
 RENDER_WORKER_MAX_REGIONS = 5
 # 渲染线程栈需覆盖样式插件、字体和 Canvas 的较深调用链。
@@ -131,6 +137,7 @@ def _load_runtime_configuration():
         "WIFI_ENABLED": bool,
         "LCD_STYLE": str,
         "LCD_TRANSFER_BACKEND": str,
+        "RENDER_FRAME_POLICY": str,
         "RENDER_INTERVAL_MS": int,
         "MONITOR_TIMEOUT_INTERVALS": int,
         "TIME_CALIBRATION_SNAPSHOTS": int,

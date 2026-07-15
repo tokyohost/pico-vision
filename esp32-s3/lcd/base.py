@@ -19,7 +19,13 @@ import struct
 import time
 
 from color_manager import get_color_profile
-from config import LCD_DMA_CHUNK_SIZE, LCD_TRANSFER_BACKEND
+from config import (
+    LCD_DIRTY_TILE_HEIGHT,
+    LCD_DIRTY_TILE_WIDTH,
+    LCD_DMA_CHUNK_SIZE,
+    LCD_STRIP_HEIGHT,
+    LCD_TRANSFER_BACKEND,
+)
 from lcd.transfer_backend import create_lcd_transfer_backend
 
 
@@ -58,13 +64,45 @@ class LcdDevice:
         self.spi = SPI(self.pin_profile.spi_id, **spi_parameters)
         self._transfer_backend = create_lcd_transfer_backend(
             LCD_TRANSFER_BACKEND,
-            LCD_DMA_CHUNK_SIZE,
+            self._native_transfer_configuration(),
         )
         self._rotation = 0
         self._landscape = False
         self._color_profile = get_color_profile(
             self.panel_profile.color_profile_name
         )
+
+    def _native_transfer_configuration(self):
+        """生成传给 C 固件初始化的屏幕方案、GPIO 脚位和缓冲参数。"""
+        pins = self.pin_profile
+        panel = self.panel_profile
+        return {
+            "device_type": panel.device_type,
+            "width": panel.width,
+            "height": panel.height,
+            "x_offset": panel.x_offset,
+            "y_offset": panel.y_offset,
+            "spi_id": pins.spi_id,
+            "sck": pins.sck,
+            "mosi": pins.mosi,
+            "miso": -1 if pins.miso is None else pins.miso,
+            "cs": pins.cs,
+            "dc": pins.dc,
+            "rst": pins.rst,
+            "backlight": pins.backlight.control_pin,
+            "baudrate": pins.baudrate,
+            "dma_chunk_size": LCD_DMA_CHUNK_SIZE,
+            "strip_height": LCD_STRIP_HEIGHT,
+            "tile_width": LCD_DIRTY_TILE_WIDTH,
+            "tile_height": LCD_DIRTY_TILE_HEIGHT,
+        }
+
+    def configure_canvas(self, width, height):
+        """把当前完整画布尺寸同步给 C 固件并按需重建条带与脏区状态。"""
+        configuration = self._native_transfer_configuration()
+        configuration["width"] = int(width)
+        configuration["height"] = int(height)
+        return self._transfer_backend.configure(configuration)
 
     def write_command(self, command):
         """向 LCD 写入一个控制命令。"""
@@ -218,9 +256,37 @@ class LcdDevice:
 
     def show(self, frame):
         """将一帧大端 RGB565 数据完整写入 LCD。"""
-        self.show_region(
-            0, 0, self.panel_profile.width, self.panel_profile.height, frame
-        )
+        return self.present(frame, force=True)
+
+    def present(self, frame, force=False):
+        """提交完整 RAM 画布，并仅发送 C 固件检测到的变化区域。"""
+        if self._transfer_backend.name != "native_dma":
+            self.show_region(
+                0, 0,
+                self.panel_profile.height
+                if self._landscape else self.panel_profile.width,
+                self.panel_profile.width
+                if self._landscape else self.panel_profile.height,
+                frame,
+            )
+            return 1
+        regions = self._transfer_backend.dirty_regions(frame, force)
+        try:
+            for x, y, width, height in regions:
+                self.set_window(x, y, x + width - 1, y + height - 1)
+                self.dc.value(1)
+                self.cs.value(0)
+                try:
+                    self._transfer_backend.write_region(
+                        self.spi, frame, x, y, width, height
+                    )
+                finally:
+                    self.cs.value(1)
+            self._transfer_backend.commit_frame()
+        except Exception:
+            self._transfer_backend.discard_frame()
+            raise
+        return len(regions)
 
     def show_region(self, x, y, width, height, pixels):
         """将一块 RGB565 像素数据写入指定屏幕区域。"""
