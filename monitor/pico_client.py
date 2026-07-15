@@ -73,10 +73,13 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
     _build_jsonz_packet = staticmethod(build_jsonz_packet)
     build_command_packet = staticmethod(build_command_packet)
 
-    def __init__(self, configured_port=None, probe_interval=3.0, cancellation_event=None, websocket_url=None):
+    def __init__(self, configured_port=None, probe_interval=3.0, cancellation_event=None,
+                 websocket_url=None, websocket_client_name=None, websocket_client_id=None):
         """保存可选串口或 WebSocket 地址并初始化断开状态。"""
         self.configured_port = configured_port
         self.websocket_url = str(websocket_url).strip() if websocket_url else None
+        self.websocket_client_name = websocket_client_name
+        self.websocket_client_id = websocket_client_id
         self.probe_interval = max(0.0, float(probe_interval))
         self.cancellation_event = cancellation_event
         self.serial = None
@@ -182,7 +185,11 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         device = None
         try:
             LOGGER.info("[WebSocket 连接] 正在连接 %s", self.websocket_url)
-            device = WebSocketDevice(self.websocket_url)
+            device = WebSocketDevice(
+                self.websocket_url,
+                client_name=self.websocket_client_name,
+                client_id=self.websocket_client_id,
+            )
             if not self._handshake(device):
                 raise RuntimeError("WebSocket 未返回有效设备标识")
             self.serial = device

@@ -132,6 +132,12 @@ class DeviceWindowMixin:
             state=tk.DISABLED,
             command=lambda: self._show_wifi_settings(root),
         )
+        websocket_clients_button = ttk.Button(
+            action_frame,
+            text="WebSocket 客户端",
+            state=tk.DISABLED,
+            command=lambda: self._show_websocket_clients(root),
+        )
         reboot_button = ttk.Button(action_frame, text="重启设备", state=tk.DISABLED)
         reboot_button.pack(side=tk.RIGHT)
 
@@ -155,16 +161,22 @@ class DeviceWindowMixin:
         initial_connection = self._get_device_connection()
 
         def update_wifi_button(connection=None):
-            """仅在已连接设备明确支持 Wi-Fi 时显示设置入口。"""
+            """仅在已连接设备明确支持 Wi-Fi 时显示无线管理入口。"""
             supported = bool(connection and connection.get("connected") and connection.get("wifi_supported"))
             if supported:
                 if not wifi_button.winfo_manager():
                     wifi_button.pack(side=tk.LEFT, padx=(8, 0))
+                if not websocket_clients_button.winfo_manager():
+                    websocket_clients_button.pack(side=tk.LEFT, padx=(8, 0))
                 wifi_button.configure(state=tk.NORMAL)
+                websocket_clients_button.configure(state=tk.NORMAL)
                 return
             wifi_button.configure(state=tk.DISABLED)
+            websocket_clients_button.configure(state=tk.DISABLED)
             if wifi_button.winfo_manager():
                 wifi_button.pack_forget()
+            if websocket_clients_button.winfo_manager():
+                websocket_clients_button.pack_forget()
 
         def clear_connected_device():
             """清空已连接设备信息，并禁用依赖有效串口的重启操作。"""
@@ -454,7 +466,7 @@ class DeviceWindowMixin:
             status.set("设备已连接")
 
         def perform_probe():
-            """暂停常驻监控，并发扫描局域网后执行 PV1 设备身份确认。"""
+            """暂停常驻监控，优先探测 USB CDC，失败后再扫描局域网。"""
             current_connection = self._get_device_connection()
             if current_connection.get("connected"):
                 messages.put(("connected", current_connection))
@@ -468,6 +480,15 @@ class DeviceWindowMixin:
                 messages.put(("log", "当前没有已连接设备，开始探测。\n"))
             self.worker_process = None
             try:
+                messages.put(("log", "正在优先探测 USB CDC 设备……\n"))
+                usb_result = run_probe_process(self._device_probe_command(""))
+                if usb_result == 0:
+                    self.settings["websocket_url"] = ""
+                    self.settings_store.save(self.settings)
+                    messages.put(("log", "USB CDC 设备确认成功，已切换为 USB 优先连接。\n"))
+                    messages.put(("done", 0))
+                    return
+                messages.put(("log", "USB CDC 未发现有效设备，继续扫描局域网 WebSocket。\n"))
                 scanner = LanWebSocketScanner(
                     port=self.settings["lan_probe_port"],
                     path=self.settings["lan_probe_path"],
@@ -504,12 +525,8 @@ class DeviceWindowMixin:
                     messages.put(("log", "已保存连接地址：{}，下次启动将自动连接。\n".format(successful_url)))
                     messages.put(("done", 0))
                     return
-                messages.put(("log", "局域网未发现有效设备，继续探测 USB CDC。\n"))
-                result = run_probe_process(self._device_probe_command(""))
-                if result == 0:
-                    self.settings["websocket_url"] = ""
-                    self.settings_store.save(self.settings)
-                messages.put(("done", result))
+                messages.put(("log", "USB CDC 与局域网 WebSocket 均未发现有效设备。\n"))
+                messages.put(("done", 1))
             except Exception as error:
                 LOGGER.exception("主动设备探测失败：%s", error)
                 messages.put(("log", "启动设备探测失败：{}\n".format(error)))

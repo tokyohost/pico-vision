@@ -47,6 +47,42 @@ class PicoCommandMixin:
         self._write_packet(packet, "忘记 Wi-Fi")
         return self._wait_command_result(request_id, timeout, "忘记 Wi-Fi", "忘记 Wi-Fi 失败")
 
+    def request_websocket_clients(self, timeout=5.0):
+        """请求设备返回曾连接的 WebSocket 客户端清单。"""
+        request_id = "websocket-clients-{}".format(int(time.monotonic() * 1000))
+        packet = self.build_command_packet(
+            "websocket.clients.list",
+            request_id=request_id,
+        )
+        self._write_packet(packet, "WebSocket 客户端清单")
+        return self._wait_command_result(
+            request_id,
+            timeout,
+            "WebSocket 客户端清单",
+            "WebSocket 客户端清单查询失败",
+        )
+
+    def update_websocket_client(self, client_id, enabled=None, priority=None, timeout=5.0):
+        """请求设备修改 WebSocket 客户端的启用状态或优先级。"""
+        params = {"id": str(client_id)}
+        if enabled is not None:
+            params["enabled"] = bool(enabled)
+        if priority is not None:
+            params["priority"] = int(priority)
+        request_id = "websocket-client-update-{}".format(int(time.monotonic() * 1000))
+        packet = self.build_command_packet(
+            "websocket.client.update",
+            params=params,
+            request_id=request_id,
+        )
+        self._write_packet(packet, "WebSocket 客户端策略")
+        return self._wait_command_result(
+            request_id,
+            timeout,
+            "WebSocket 客户端策略",
+            "WebSocket 客户端策略更新失败",
+        )
+
     def reboot(self, timeout=30.0):
         """请求 Pico 执行软重启，并在指定秒数内等待设备确认。"""
         if not self.is_connected:

@@ -64,6 +64,22 @@ class WebSocketDeviceTest(unittest.TestCase):
         self.module_patch.start()
         self.device = WebSocketDevice("ws://127.0.0.1:8765/pv1")
 
+    def test_connection_carries_stable_client_identity_headers(self):
+        """确认连接握手同时携带客户端稳定标识和本机设备名称。"""
+        create_connection = mock.Mock(return_value=self.socket)
+        self.websocket_module.create_connection = create_connection
+        device = WebSocketDevice(
+            "ws://127.0.0.1:8765/pv1",
+            client_name="工作站甲",
+            client_id="monitor-a",
+        )
+        try:
+            headers = create_connection.call_args.kwargs["header"]
+            self.assertIn("X-OmniWatch-Client-Id: monitor-a", headers)
+            self.assertIn("X-OmniWatch-Device-Name: 工作站甲", headers)
+        finally:
+            device.close()
+
     def tearDown(self):
         """关闭设备并恢复原始模块表。"""
         self.device.close()

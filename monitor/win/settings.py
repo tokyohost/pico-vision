@@ -1,6 +1,8 @@
 """Windows 托盘配置模型、持久化与启动参数转换。"""
 
 import json
+import platform
+import uuid
 from pathlib import Path
 
 from custom_data import custom_data_task_defaults, custom_data_task_zh_names
@@ -34,6 +36,8 @@ COLLECTION_TASK_ZH_NAMES.update(custom_data_task_zh_names())
 DEFAULT_SETTINGS = {
     "port": "",
     "websocket_url": "",
+    "websocket_client_name": platform.node() or "Monitor",
+    "websocket_client_id": "{}-{:012x}".format(platform.node() or "Monitor", uuid.getnode()),
     "ping_target": "www.baidu.com",
     "interval": 0.5,
     "adaptive_transmit": True,
@@ -61,6 +65,8 @@ DEFAULT_SETTINGS = {
 ARGUMENT_NAMES = {
     "--port": "port",
     "--websocket-url": "websocket_url",
+    "--websocket-client-name": "websocket_client_name",
+    "--websocket-client-id": "websocket_client_id",
     "--ping-target": "ping_target",
     "--interval": "interval",
     "--reconnect-interval": "reconnect_interval",
@@ -159,6 +165,12 @@ class TraySettingsStore:
         if not 1 <= settings["lcd_brightness"] <= 100:
             settings["lcd_brightness"] = DEFAULT_SETTINGS["lcd_brightness"]
         settings["adaptive_transmit"] = bool(settings.get("adaptive_transmit", True))
+        settings["websocket_client_name"] = str(
+            settings.get("websocket_client_name") or DEFAULT_SETTINGS["websocket_client_name"]
+        ).strip()[:64]
+        settings["websocket_client_id"] = str(
+            settings.get("websocket_client_id") or DEFAULT_SETTINGS["websocket_client_id"]
+        ).strip()[:96]
         settings["collection_task_logs"] = bool(settings.get("collection_task_logs", True))
         try:
             settings["lan_probe_port"] = int(settings["lan_probe_port"])

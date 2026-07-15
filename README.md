@@ -106,7 +106,9 @@ GitHub Actions 会按照全部开发板型号与规范 LCD 设备类型的笛卡
 
 ## 通信协议
 
-PV1 帧可承载在 USB CDC 字节流或 WebSocket 二进制消息中。USB 和 WebSocket 同时可用时，设备锁定首个建立的连接；活动连接断开后才释放并重新选择。WebSocket 默认监听 `ws://设备IP:8765/pv1`，双方发送 Ping/Pong 心跳，Monitor 通信异常后按重连间隔重新握手。
+PV1 帧可承载在 USB CDC 字节流或 WebSocket 二进制消息中。USB 和 WebSocket 同时可用时，设备始终优先锁定 USB。WebSocket 默认监听 `ws://设备IP:8765/pv1`，Monitor 握手会携带稳定客户端标识和本机设备名称；ESP32-S3 在 `websocket_clients.json` 中记录成功连接次数、最近地址、启用状态和优先级。设备管理页面可打开“WebSocket 客户端”查看、禁用或设置 `-1000` 至 `1000` 的优先级；仅严格更高优先级的新客户端能够抢占当前 WebSocket，会话切换时会清空旧缓冲，始终只允许一个客户端同步 JSON。
+
+启用 JSON 发送间隔自适应后，Monitor 根据近期 ACK 耗时同时上调或下调发送周期，并继续保持一条在途 JSON 的背压约束。最低采集与发送间隔为 `300ms`；固定间隔模式也不接受更低配置。
 
 设备提供三个配网命令：`wifi.list` 每次返回按信号强度排序的附近全部网络，并在失败中的自动重连与扫描冲突时恢复无线状态后重试；`wifi.set` 的 `params` 接受 `ssid`、`password` 和可选 `timeout_ms`；`wifi.forget` 的 `params` 接受已保存的 `ssid`，用于删除设备凭据。命令均通过 `COMMAND` 帧返回成功详情或失败原因。Wi-Fi 凭据仅保存在设备端 `wifi_config.json`，PONG 和日志不会返回密码。
 

@@ -223,6 +223,13 @@ class WorkerControllerMixin:
                                 line, "WIFI_RESULT:", "设备返回了无效 Wi-Fi 响应",
                             )
                             self.wifi_messages.put(result)
+                        if line.startswith("WEBSOCKET_CLIENT_RESULT:"):
+                            result = self._parse_worker_result(
+                                line,
+                                "WEBSOCKET_CLIENT_RESULT:",
+                                "设备返回了无效 WebSocket 客户端响应",
+                            )
+                            self.websocket_client_messages.put(result)
                         if line.startswith("CUSTOM_STYLE_LIST_RESULT:"):
                             result = self._parse_worker_result(
                                 line, "CUSTOM_STYLE_LIST_RESULT:", "设备返回了无效响应",
@@ -395,6 +402,20 @@ class WorkerControllerMixin:
             separators=(",", ":"),
         )
         return self._write_worker_command("WIFI_FORGET:{}\n".format(payload))
+
+    def _request_websocket_client_list(self):
+        """通知后台 Monitor 查询设备记录的 WebSocket 客户端。"""
+        return self._write_worker_command("WEBSOCKET_CLIENT_LIST\n")
+
+    def _request_websocket_client_update(self, client_id, enabled=None, priority=None):
+        """通知后台 Monitor 更新指定 WebSocket 客户端策略。"""
+        payload = {"id": str(client_id)}
+        if enabled is not None:
+            payload["enabled"] = bool(enabled)
+        if priority is not None:
+            payload["priority"] = int(priority)
+        encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        return self._write_worker_command("WEBSOCKET_CLIENT_UPDATE:{}\n".format(encoded))
 
     def _write_worker_command(self, command):
         """向运行中的 Monitor 写入一条完整控制命令。"""

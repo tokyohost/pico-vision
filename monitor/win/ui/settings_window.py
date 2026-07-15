@@ -118,6 +118,10 @@ class SettingsWindowMixin:
 
         variables = {
             "port": tk.StringVar(master=root, value=self.settings["port"]),
+            "websocket_client_name": tk.StringVar(
+                master=root,
+                value=self.settings.get("websocket_client_name", "Monitor"),
+            ),
             "ping_target": tk.StringVar(master=root, value=self.settings["ping_target"]),
             "interval": tk.StringVar(master=root, value=self.settings["interval"]),
             "adaptive_transmit": tk.BooleanVar(master=root, value=bool(self.settings.get("adaptive_transmit", True))),
@@ -242,12 +246,13 @@ class SettingsWindowMixin:
         field(monitor, 2, "采集间隔（秒）", ttk.Entry(monitor, textvariable=variables["interval"]))
         adaptive_control = ttk.Checkbutton(
             monitor,
-            text="启用间隔自适应（始终等待 Pico ACK，拥塞时合并最新快照）",
+            text="启用间隔自适应（根据 ACK 在 300ms 以上升降，拥塞时合并最新快照）",
             variable=variables["adaptive_transmit"],
         )
         field(monitor, 3, "发送背压", adaptive_control)
         field(monitor, 4, "重连间隔（秒）", ttk.Entry(monitor, textvariable=variables["reconnect_interval"]))
         field(monitor, 5, "串口探测 PING 间隔（秒）", ttk.Entry(monitor, textvariable=variables["serial_probe_interval"]))
+        field(monitor, 6, "WebSocket 客户端名称", ttk.Entry(monitor, textvariable=variables["websocket_client_name"]))
 
         collection_tasks = card("系统采集任务")
         collection_task_logs_control = ttk.Checkbutton(
@@ -359,6 +364,7 @@ class SettingsWindowMixin:
                 updated = dict(self.settings)
                 updated.update({
                     "port": variables["port"].get().strip(),
+                    "websocket_client_name": variables["websocket_client_name"].get().strip(),
                     "ping_target": variables["ping_target"].get().strip(),
                     "interval": float(variables["interval"].get()),
                     "adaptive_transmit": bool(variables["adaptive_transmit"].get()),
@@ -377,7 +383,9 @@ class SettingsWindowMixin:
                     "qbittorrent_interval": float(variables["qbittorrent_interval"].get()),
                 })
                 if (not updated["ping_target"]
-                        or min(updated["interval"], updated["reconnect_interval"], updated["serial_probe_interval"], updated["qbittorrent_interval"]) <= 0
+                        or not updated["websocket_client_name"]
+                        or updated["interval"] < 0.3
+                        or min(updated["reconnect_interval"], updated["serial_probe_interval"], updated["qbittorrent_interval"]) <= 0
                         or min(updated["collection_task_intervals"].values()) <= 0
                         or not 1 <= updated["lcd_brightness"] <= 100):
                     raise ValueError
@@ -388,7 +396,11 @@ class SettingsWindowMixin:
                     messagebox.showerror("配置错误", "请先验证 qBittorrent 账号密码，验证成功后才能启用指标采集。", parent=root)
                     return
             except (ValueError, StopIteration):
-                messagebox.showerror("配置错误", "请检查地址和时间间隔，时间间隔必须大于 0。", parent=root)
+                messagebox.showerror(
+                    "配置错误",
+                    "请检查设备名称、地址和时间间隔；JSON 采集间隔不得低于 0.3 秒。",
+                    parent=root,
+                )
                 return
             self.settings = updated
             self.settings_store.save(updated)

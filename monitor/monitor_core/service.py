@@ -24,6 +24,7 @@ from system_monitor import SystemInformationCollector
 from .runtime_operations import RuntimeOperationsMixin
 from .style_commands import BUILTIN_LCD_STYLES, StyleCommandMixin
 from .wifi_commands import WifiCommandMixin
+from .websocket_client_commands import WebSocketClientCommandMixin
 
 LOGGER = logging.getLogger("pico-monitor")
 
@@ -31,9 +32,12 @@ WINDOWS_WEBSOCKET_DIRECT_PROBE_INTERVAL = 5.0
 WINDOWS_WEBSOCKET_NETWORK_SCAN_INTERVAL = 10.0
 WINDOWS_WEBSOCKET_FAST_PROBE_TIMEOUT = 0.15
 WINDOWS_WEBSOCKET_FAST_SCAN_WORKERS = 32
+LINUX_WEBSOCKET_NETWORK_SCAN_INTERVAL = 30.0
+LINUX_WEBSOCKET_FAST_PROBE_TIMEOUT = 0.15
+LINUX_WEBSOCKET_FAST_SCAN_WORKERS = 16
 
 
-class MonitorService(WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin):
+class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin):
     """管理系统指标采集、Pico 连接以及异常重连。"""
 
     def __init__(self, arguments):
@@ -65,6 +69,8 @@ class MonitorService(WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin
             arguments.port,
             arguments.serial_probe_interval,
             websocket_url=getattr(arguments, "websocket_url", None),
+            websocket_client_name=getattr(arguments, "websocket_client_name", None),
+            websocket_client_id=getattr(arguments, "websocket_client_id", None),
         )
         self.stopping = threading.Event()
         self.reboot_requested = threading.Event()
@@ -73,6 +79,7 @@ class MonitorService(WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin
         self.custom_style_deletes = queue.Queue()
         self.screenshot_requested = threading.Event()
         self.initialize_wifi_commands()
+        self.initialize_websocket_client_commands()
         self.available_styles = set(BUILTIN_LCD_STYLES)
         self._snapshot_store = LockFreeSnapshotStore(self._create_initial_snapshot(arguments))
         self._latest_collected_snapshot = self._snapshot_store.snapshot()
@@ -171,7 +178,7 @@ class MonitorService(WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin
             "display": {
                 "rotation": arguments.screen_rotation,
                 "brightness": getattr(arguments, "lcd_brightness", 100),
-                "collection_interval_ms": max(1, round(arguments.interval * 1000)),
+                "collection_interval_ms": max(300, round(arguments.interval * 1000)),
                 "adaptive_transmit": bool(getattr(arguments, "adaptive_transmit", True)),
                 "network_unit": arguments.network_unit,
                 "style": arguments.lcd_style,
@@ -195,29 +202,39 @@ class MonitorService(WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin
         self._stop_transmit_worker(wait=True)
         self.collector.close()
 
-    def _create_lan_scanner(self, port=None, path=None, fast=False):
+    def _create_lan_scanner(self, port=None, path=None, fast=False, low_impact=False):
         """创建局域网扫描器；自恢复模式使用更短超时和更低并发以保护局域网。"""
         configured_timeout = getattr(self.arguments, "lan_probe_timeout", 0.3)
         configured_workers = getattr(self.arguments, "lan_probe_max_workers", 256)
+        fast_timeout = (
+            LINUX_WEBSOCKET_FAST_PROBE_TIMEOUT
+            if low_impact
+            else WINDOWS_WEBSOCKET_FAST_PROBE_TIMEOUT
+        )
+        fast_workers = (
+            LINUX_WEBSOCKET_FAST_SCAN_WORKERS
+            if low_impact
+            else WINDOWS_WEBSOCKET_FAST_SCAN_WORKERS
+        )
         return LanWebSocketScanner(
             port=port if port is not None else getattr(self.arguments, "lan_probe_port", 8765),
             path=path if path is not None else getattr(self.arguments, "lan_probe_path", "/pv1"),
             timeout=(
-                min(configured_timeout, WINDOWS_WEBSOCKET_FAST_PROBE_TIMEOUT)
+                min(configured_timeout, fast_timeout)
                 if fast
                 else configured_timeout
             ),
             max_workers=(
-                min(configured_workers, WINDOWS_WEBSOCKET_FAST_SCAN_WORKERS)
+                min(configured_workers, fast_workers)
                 if fast
                 else configured_workers
             ),
             minimum_prefix_length=24,
         )
 
-    def _rediscover_websocket_device(self, fast=False):
+    def _rediscover_websocket_device(self, fast=False, low_impact=False):
         """扫描局域网候选地址，并通过 PV1 握手切换到可用 Wi-Fi 设备。"""
-        scanner = self._create_lan_scanner(fast=fast)
+        scanner = self._create_lan_scanner(fast=fast, low_impact=low_impact)
         original_url = self.client.websocket_url
         LOGGER.info("开始快速扫描局域网中的 Wi-Fi 设备")
         try:
@@ -240,6 +257,21 @@ class MonitorService(WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin
         LOGGER.warning("重新扫描局域网未发现可连接的 Pico LCD")
         return False
 
+    def _maybe_discover_linux_websocket(self, now=None):
+        """Linux 未连接时按三十秒节流执行一次低影响局域网设备发现。"""
+        if platform.system() != "Linux" or self.client.is_connected:
+            return False
+        current = time.monotonic() if now is None else float(now)
+        next_scan = getattr(self, "_next_linux_network_scan", 0.0)
+        if current < next_scan:
+            return False
+        self._next_linux_network_scan = current + LINUX_WEBSOCKET_NETWORK_SCAN_INTERVAL
+        LOGGER.info(
+            "Linux 未连接设备，开始低影响局域网扫描；下一次扫描不早于 %.0f 秒后",
+            LINUX_WEBSOCKET_NETWORK_SCAN_INTERVAL,
+        )
+        return self._rediscover_websocket_device(fast=True, low_impact=True)
+
     def _probe_and_reconnect_saved_websocket(self, websocket_url):
         """快速探测保存的 WebSocket 地址，并仅在端口可用时执行完整 PV1 重连。"""
         parsed = urlsplit(websocket_url)
@@ -251,8 +283,11 @@ class MonitorService(WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin
             path=parsed.path or "/",
             fast=True,
         )
+        if not scanner.port_is_open_safely(parsed.hostname):
+            LOGGER.debug("保存的 Wi-Fi 地址端口尚未开放：%s", websocket_url)
+            return False
         if scanner.probe_safely(parsed.hostname) is None:
-            LOGGER.debug("保存的 Wi-Fi 地址尚不可用：%s", websocket_url)
+            LOGGER.debug("保存的 Wi-Fi 地址未通过 WebSocket 协议验证：%s", websocket_url)
             return False
         self.client.websocket_url = websocket_url
         try:
@@ -340,7 +375,8 @@ class MonitorService(WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin
                             if result is not None:
                                 return result
                             continue
-                        raise
+                        if not self._maybe_discover_linux_websocket():
+                            raise
                     LOGGER.info("Pico LCD 已连接：%s", self.client.port_name)
                     self._synchronize_style_catalog()
                     self._start_transmit_worker()
@@ -353,6 +389,7 @@ class MonitorService(WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin
                     or not self.custom_style_uploads.empty()
                     or not self.custom_style_deletes.empty()
                     or self.has_pending_wifi_operation()
+                    or self.has_pending_websocket_client_operation()
                 )
                 if has_control_operation:
                     self._wait_for_transmit_idle()
@@ -367,6 +404,9 @@ class MonitorService(WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin
                     continue
                 if self.has_pending_wifi_operation():
                     self.publish_wifi_operation()
+                    continue
+                if self.has_pending_websocket_client_operation():
+                    self.publish_websocket_client_operation()
                     continue
                 snapshot = self._snapshot_for_sending()
                 if self.arguments.dev:

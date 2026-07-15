@@ -103,7 +103,7 @@ class LanWebSocketScanner:
         return tuple(sorted(hosts, key=lambda value: int(ipaddress.ip_address(value))))
 
     def scan(self, hosts=None, progress_callback=None):
-        """多线程探测给定或自动发现的全部 IP，并返回握手成功结果。"""
+        """先筛选端口开放地址，再验证 WebSocket 协议并返回成功结果。"""
         source_hosts = (
             self.local_hosts(self.minimum_prefix_length)
             if hosts is None
@@ -115,14 +115,44 @@ class LanWebSocketScanner:
         worker_count = min(self.max_workers, len(candidates))
         with ThreadPoolExecutor(
             max_workers=worker_count,
+            thread_name_prefix="局域网端口探测",
+        ) as executor:
+            open_hosts = [
+                host
+                for host in executor.map(self._port_is_open_safely, candidates)
+                if host is not None
+            ]
+        if not open_hosts:
+            if progress_callback is not None:
+                progress_callback(len(candidates), [])
+            return []
+        websocket_worker_count = min(self.max_workers, len(open_hosts))
+        with ThreadPoolExecutor(
+            max_workers=websocket_worker_count,
             thread_name_prefix="局域网WebSocket探测",
         ) as executor:
-            results = list(executor.map(self._probe_safely, candidates))
+            results = list(executor.map(self._probe_safely, open_hosts))
         successful = [result for result in results if result is not None]
         successful.sort(key=lambda result: int(ipaddress.ip_address(result.ip)))
         if progress_callback is not None:
             progress_callback(len(candidates), successful)
         return successful
+
+    def port_is_open(self, ip):
+        """仅建立并立即关闭 TCP 连接，判断目标端口是否开放。"""
+        with socket.create_connection((str(ip), self.port), timeout=self.timeout):
+            return True
+
+    def _port_is_open_safely(self, ip):
+        """低成本检查单个地址端口，关闭或超时时返回空值。"""
+        try:
+            return str(ip) if self.port_is_open(ip) else None
+        except OSError:
+            return None
+
+    def port_is_open_safely(self, ip):
+        """公开执行端口快速检查，并以布尔值表示端口是否开放。"""
+        return self._port_is_open_safely(ip) is not None
 
     def probe(self, ip):
         """连接单个 IPv4 地址，并校验其 WebSocket HTTP 升级响应。"""
@@ -134,7 +164,8 @@ class LanWebSocketScanner:
             "Upgrade: websocket\r\n"
             "Connection: Upgrade\r\n"
             "Sec-WebSocket-Key: {}\r\n"
-            "Sec-WebSocket-Version: 13\r\n\r\n"
+            "Sec-WebSocket-Version: 13\r\n"
+            "X-OmniWatch-Discovery: 1\r\n\r\n"
         ).format(self.path, ip, self.port, key).encode("ascii")
         with socket.create_connection((str(ip), self.port), timeout=self.timeout) as connection:
             connection.settimeout(self.timeout)

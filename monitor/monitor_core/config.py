@@ -13,6 +13,8 @@ from custom_data import custom_data_task_defaults
 CONFIG_ENV_MAP = {
     "PICO_MONITOR_PORT": ("serial", "port"),
     "PICO_MONITOR_WEBSOCKET_URL": ("network", "websocket_url"),
+    "PICO_MONITOR_WEBSOCKET_CLIENT_NAME": ("network", "websocket_client_name"),
+    "PICO_MONITOR_WEBSOCKET_CLIENT_ID": ("network", "websocket_client_id"),
     "PICO_MONITOR_PING_TARGET": ("network", "ping_target"),
     "PICO_MONITOR_INTERVAL": ("monitor", "interval"),
     "PICO_MONITOR_ADAPTIVE_TRANSMIT": ("monitor", "adaptive_transmit"),

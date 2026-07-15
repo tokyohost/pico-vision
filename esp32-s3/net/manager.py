@@ -128,6 +128,10 @@ class TransportManager:
             })
         return details
 
+    def websocket_transport(self):
+        """返回 WebSocket 管理服务，供设备命令查询和修改客户端策略。"""
+        return self._wifi_transport
+
     def close(self):
         """关闭全部候选传输策略。"""
         for strategy in self._strategies:

@@ -33,6 +33,12 @@ def _dispatch_tray_command(service, command):
         service.request_wifi_forget(
             json.loads(command[len("WIFI_FORGET:"):])
         )
+    elif command == "WEBSOCKET_CLIENT_LIST":
+        service.request_websocket_client_list()
+    elif command.startswith("WEBSOCKET_CLIENT_UPDATE:"):
+        service.request_websocket_client_update(
+            json.loads(command[len("WEBSOCKET_CLIENT_UPDATE:"):])
+        )
     elif command.startswith("CUSTOM_STYLE_UPLOAD:"):
         service.request_custom_style_upload(
             json.loads(command[len("CUSTOM_STYLE_UPLOAD:"):])

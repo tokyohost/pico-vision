@@ -19,6 +19,8 @@ def create_argument_parser(config=None):
     parser.add_argument("--config", default=None, help="YAML 配置文件路径，Linux 服务默认使用 /etc/pico-monitor.conf")
     parser.add_argument("--port", default=config_value(config, "PICO_MONITOR_PORT") or None, help="固定串口名称，留空时自动发现")
     parser.add_argument("--websocket-url", default=config_value(config, "PICO_MONITOR_WEBSOCKET_URL") or None, help="固定 WebSocket 地址，例如 ws://192.168.1.20:8765/pv1；设置后使用 Wi-Fi 模式")
+    parser.add_argument("--websocket-client-name", default=config_value(config, "PICO_MONITOR_WEBSOCKET_CLIENT_NAME") or None, help="WebSocket 握手携带的本机设备名称")
+    parser.add_argument("--websocket-client-id", default=config_value(config, "PICO_MONITOR_WEBSOCKET_CLIENT_ID") or None, help="WebSocket 客户端稳定标识；留空时根据设备名称和网卡标识生成")
     parser.add_argument("--ping-target", default=config_value(config, "PICO_MONITOR_PING_TARGET", "www.baidu.com"), help="网络延迟检测目标")
     parser.add_argument("--interval", type=float, default=float(config_value(config, "PICO_MONITOR_INTERVAL", "0.5")), help="采集和发送间隔，单位为秒")
     adaptive_group = parser.add_mutually_exclusive_group()
@@ -79,14 +81,14 @@ def validate_arguments(arguments):
     ))
     if exclusive_actions > 1:
         raise SystemExit("--pico-info、--upgrade-pico 和 --update 不能同时使用")
-    if (arguments.interval <= 0 or arguments.reconnect_interval <= 0
+    if (arguments.interval < 0.3 or arguments.reconnect_interval <= 0
             or arguments.serial_probe_interval <= 0
             or arguments.lan_probe_timeout <= 0
             or not 1 <= arguments.lan_probe_port <= 65535
             or arguments.lan_probe_max_workers <= 0
             or arguments.qbittorrent_interval <= 0
             or arguments.thread_diagnostics_interval <= 0):
-        raise SystemExit("采集间隔和重连间隔必须大于 0")
+        raise SystemExit("采集间隔不得低于 0.3 秒，其他重连和任务间隔必须大于 0")
     if any(interval <= 0 for interval in arguments.collection_task_intervals.values()):
         raise SystemExit("采集任务频率必须大于 0")
     if arguments.pico_info:

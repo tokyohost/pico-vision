@@ -559,7 +559,9 @@ class Application:
                     requested_interval_ms = int(requested_interval_ms)
                 except (TypeError, ValueError):
                     requested_interval_ms = self._monitor_interval_ms
-                self._monitor_interval_ms = max(1, requested_interval_ms)
+                # 与 Monitor 的自适应发送下限保持一致，避免异常快照把断线判定
+                # 周期压缩到 300ms 以下并造成不必要的会话抖动。
+                self._monitor_interval_ms = max(300, requested_interval_ms)
                 self._monitor_connected = True
                 requested_rotation = display.get("rotation", 0)
                 try:

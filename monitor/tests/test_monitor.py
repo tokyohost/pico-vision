@@ -527,6 +527,14 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual(500, snapshot["collection_interval_ms"])
         self.assertFalse(snapshot["adaptive_transmit"])
 
+    def test_adaptive_interval_can_fall_to_three_hundred_milliseconds(self):
+        """确认 ACK 足够快时自适应间隔可低于基础值但不会低于 300ms。"""
+        service = RuntimeOperationsHarness(adaptive_transmit=True)
+        service._record_json_ack_duration(0.01)
+        for _ in range(20):
+            service._record_json_ack_duration(0.01)
+        self.assertAlmostEqual(0.3, service._effective_transmit_interval(), places=3)
+
     @mock.patch("pico_client.time.monotonic")
     def test_json_ack_log_includes_send_elapsed(self, monotonic):
         """确认异步 JSON ACK 日志包含发送到 ACK 的耗时统计。"""
@@ -788,6 +796,21 @@ class PicoClientTest(unittest.TestCase):
         client.close.assert_called_once_with()
         self.assertIn("rp2040_usb", output.call_args.args[0])
 
+    @mock.patch("pico_monitor._write_version_to_console")
+    @mock.patch("pico_monitor.PicoJsonClient")
+    def test_show_pico_information_missing_device_returns_failure_without_traceback(
+        self, client_class, output
+    ):
+        """确认未找到设备时返回失败状态并输出简短提示，不向入口抛出异常。"""
+        client = client_class.return_value
+        client.connect.side_effect = RuntimeError("未发现可用串口")
+
+        result = show_pico_information()
+
+        self.assertEqual(1, result)
+        client.close.assert_called_once_with()
+        self.assertIn("未发现可用串口", output.call_args.args[0])
+
     def test_screen_rotation_argument(self):
         """确认屏幕旋转参数只接受固件支持的方向。"""
         arguments = create_argument_parser().parse_args(["--screen-rotation", "180"])
@@ -946,7 +969,7 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertEqual(snapshot["display"]["rotation"], 180)
         self.assertEqual(snapshot["display"]["brightness"], 66)
-        self.assertEqual(snapshot["display"]["collection_interval_ms"], 250)
+        self.assertEqual(snapshot["display"]["collection_interval_ms"], 300)
         self.assertEqual(snapshot["display"]["network_unit"], "Mbps")
         self.assertEqual(snapshot["display"]["style"], "horizontal_disk")
         self.assertTrue(snapshot["display"]["dev"])
@@ -1034,6 +1057,7 @@ class PicoClientTest(unittest.TestCase):
         service.client.is_connected = False
         service.client.available_ports.return_value = frozenset({"COM1"})
         service.client.connect.side_effect = RuntimeError("未找到 Pico")
+        service._maybe_discover_linux_websocket = mock.Mock(return_value=False)
         service._collection_thread = mock.Mock()
         service._collection_thread.is_alive.return_value = True
 
@@ -1041,6 +1065,59 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertEqual(service.client.connect.call_count, 3)
         service.stopping.wait.assert_any_call(3.0)
+
+    @mock.patch("monitor_core.service.platform.system", return_value="Linux")
+    def test_linux_websocket_discovery_is_throttled_to_thirty_seconds(self, system):
+        """确认 Linux 仅在未连接时按三十秒间隔执行低影响扫描。"""
+        del system
+        service = MonitorService.__new__(MonitorService)
+        service.client = mock.Mock()
+        service.client.is_connected = False
+        service._rediscover_websocket_device = mock.Mock(return_value=False)
+
+        self.assertFalse(service._maybe_discover_linux_websocket(now=100.0))
+        self.assertFalse(service._maybe_discover_linux_websocket(now=129.9))
+        self.assertFalse(service._maybe_discover_linux_websocket(now=130.0))
+
+        self.assertEqual(2, service._rediscover_websocket_device.call_count)
+        service._rediscover_websocket_device.assert_has_calls([
+            mock.call(fast=True, low_impact=True),
+            mock.call(fast=True, low_impact=True),
+        ])
+
+    @mock.patch("monitor_core.service.platform.system", return_value="Linux")
+    def test_linux_discovery_stops_while_device_is_connected(self, system):
+        """USB 或 WebSocket 已连接时不得启动任何局域网扫描。"""
+        del system
+        service = MonitorService.__new__(MonitorService)
+        service.client = mock.Mock()
+        service.client.is_connected = True
+        service._rediscover_websocket_device = mock.Mock(return_value=False)
+
+        self.assertFalse(service._maybe_discover_linux_websocket(now=100.0))
+
+        service._rediscover_websocket_device.assert_not_called()
+
+    @mock.patch("monitor_core.service.LanWebSocketScanner")
+    def test_linux_periodic_scanner_uses_low_network_concurrency(self, scanner_class):
+        """Linux 周期扫描应限制为十六并发和快速超时，避免形成网络风暴。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(
+            lan_probe_port=8765,
+            lan_probe_path="/pv1",
+            lan_probe_timeout=0.3,
+            lan_probe_max_workers=256,
+        )
+
+        service._create_lan_scanner(fast=True, low_impact=True)
+
+        scanner_class.assert_called_once_with(
+            port=8765,
+            path="/pv1",
+            timeout=0.15,
+            max_workers=16,
+            minimum_prefix_length=24,
+        )
 
     @mock.patch("monitor_core.service.LanWebSocketScanner")
     def test_websocket_rediscovery_confirms_candidate_with_pv1(self, scanner_class):
@@ -1104,6 +1181,7 @@ class PicoClientTest(unittest.TestCase):
             lan_probe_max_workers=256,
         )
         service.client = mock.Mock()
+        scanner_class.return_value.port_is_open_safely.return_value = True
         scanner_class.return_value.probe_safely.return_value = SimpleNamespace()
 
         self.assertTrue(service._probe_and_reconnect_saved_websocket(
@@ -1117,8 +1195,29 @@ class PicoClientTest(unittest.TestCase):
             max_workers=32,
             minimum_prefix_length=24,
         )
+        scanner_class.return_value.port_is_open_safely.assert_called_once_with("192.168.0.10")
         scanner_class.return_value.probe_safely.assert_called_once_with("192.168.0.10")
         service.client.connect.assert_called_once_with()
+
+    @mock.patch("monitor_core.service.LanWebSocketScanner")
+    def test_saved_websocket_closed_port_skips_all_protocol_handshakes(self, scanner_class):
+        """保存地址端口关闭时不得发送 WebSocket 请求或启动 PV1 连接。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(
+            websocket_url="ws://192.168.0.10:8765/pv1",
+            lan_probe_timeout=0.3,
+            lan_probe_max_workers=256,
+        )
+        service.client = mock.Mock()
+        scanner_class.return_value.port_is_open_safely.return_value = False
+
+        self.assertFalse(service._probe_and_reconnect_saved_websocket(
+            service.arguments.websocket_url,
+        ))
+
+        scanner_class.return_value.port_is_open_safely.assert_called_once_with("192.168.0.10")
+        scanner_class.return_value.probe_safely.assert_not_called()
+        service.client.connect.assert_not_called()
 
     def test_connected_send_failure_retries_without_usb_addition(self):
         """确认已连接后的通信异常不再等待新增 COM 口才重连。"""

@@ -10,6 +10,7 @@
 - LCD 控制：CS GPIO10，DC GPIO9，RST GPIO14，背光 PWM GPIO13
 - 按键：GPIO1、GPIO2、GPIO3，低电平有效并启用内部上拉
 - 通信：ESP32-S3 内置 USB 控制台和可选 Wi-Fi WebSocket
+- WebSocket：客户端握手携带设备名称和稳定标识；设备持久化连接记录，并支持禁用、优先级抢占和单活动连接 JSON 同步
 
 ## 固件要求
 

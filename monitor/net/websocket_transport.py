@@ -2,6 +2,8 @@
 
 import threading
 import time
+import platform
+import uuid
 
 import serial
 
@@ -9,7 +11,14 @@ import serial
 class WebSocketDevice:
     """提供串口兼容接口的 WebSocket 客户端传输策略。"""
 
-    def __init__(self, url, connect_timeout=5.0, read_timeout=0.3, heartbeat_interval=10.0):
+    @staticmethod
+    def _header_value(value, fallback, maximum_length):
+        """清除身份头中的换行符并限制长度，避免生成畸形 HTTP 请求。"""
+        value = str(value or fallback).replace("\r", " ").replace("\n", " ").strip()
+        return (value or fallback)[:maximum_length]
+
+    def __init__(self, url, connect_timeout=5.0, read_timeout=0.3, heartbeat_interval=10.0,
+                 client_name=None, client_id=None):
         """连接指定 WebSocket 地址并初始化分帧与心跳状态。"""
         try:
             import websocket
@@ -17,11 +26,25 @@ class WebSocketDevice:
             raise RuntimeError("WebSocket 模式需要安装 websocket-client") from error
         self._websocket_module = websocket
         self.port = str(url)
+        self.client_name = self._header_value(
+            client_name,
+            platform.node() or "Monitor",
+            64,
+        )
+        self.client_id = self._header_value(
+            client_id,
+            "{}-{:012x}".format(self.client_name, uuid.getnode()),
+            96,
+        )
         try:
             self._socket = websocket.create_connection(
                 self.port,
                 timeout=max(0.1, float(connect_timeout)),
                 enable_multithread=True,
+                header=[
+                    "X-OmniWatch-Client-Id: {}".format(self.client_id),
+                    "X-OmniWatch-Device-Name: {}".format(self.client_name),
+                ],
             )
         except websocket.WebSocketException as error:
             raise serial.SerialException(

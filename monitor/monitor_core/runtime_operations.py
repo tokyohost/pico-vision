@@ -20,6 +20,7 @@ TRANSMIT_STOP = object()
 ADAPTIVE_ACK_HISTORY_SIZE = 8
 ADAPTIVE_ACK_SAFETY_FACTOR = 1.25
 ADAPTIVE_ACK_INTERVAL_CHANGE_LOG_RATIO = 0.1
+MINIMUM_TRANSMIT_INTERVAL_SECONDS = 0.3
 
 
 class RuntimeOperationsMixin:
@@ -316,9 +317,9 @@ class RuntimeOperationsMixin:
             raise error
 
     def _base_transmit_interval(self):
-        """返回用户配置的基础发送间隔，异常配置按半秒兜底。"""
+        """返回用户配置的基础发送间隔，并把最低发送时延限制为三百毫秒。"""
         try:
-            return max(0.1, float(getattr(self.arguments, "interval", 0.5)))
+            return max(MINIMUM_TRANSMIT_INTERVAL_SECONDS, float(getattr(self.arguments, "interval", 0.5)))
         except (TypeError, ValueError):
             return 0.5
 
@@ -329,7 +330,9 @@ class RuntimeOperationsMixin:
             return base_interval
         self._ensure_transmit_state()
         with self._adaptive_interval_lock:
-            return max(base_interval, self._adaptive_interval_seconds or base_interval)
+            if self._adaptive_interval_seconds is None:
+                return base_interval
+            return max(MINIMUM_TRANSMIT_INTERVAL_SECONDS, self._adaptive_interval_seconds)
 
     def _record_json_ack_duration(self, elapsed_seconds):
         """根据最近 JSON ACK 耗时刷新自适应发送间隔。"""
@@ -345,14 +348,17 @@ class RuntimeOperationsMixin:
             samples = sorted(self._adaptive_ack_seconds)
             p90_index = min(len(samples) - 1, int((len(samples) - 1) * 0.9))
             target_interval = max(
-                base_interval,
+                MINIMUM_TRANSMIT_INTERVAL_SECONDS,
                 min(max_interval, samples[p90_index] * ADAPTIVE_ACK_SAFETY_FACTOR),
             )
             previous_interval = self._adaptive_interval_seconds or base_interval
             if target_interval > previous_interval:
                 next_interval = target_interval
             else:
-                next_interval = max(base_interval, previous_interval * 0.7 + target_interval * 0.3)
+                next_interval = max(
+                    MINIMUM_TRANSMIT_INTERVAL_SECONDS,
+                    previous_interval * 0.7 + target_interval * 0.3,
+                )
             self._adaptive_interval_seconds = next_interval
         if (
                 abs(next_interval - previous_interval)
