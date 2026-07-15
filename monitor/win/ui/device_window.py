@@ -22,6 +22,8 @@ DEVICE_INFORMATION_FIELDS = {
     "固件版本": "firmware_version",
     "屏幕分辨率": "screen_resolution",
     "Wi-Fi 支持": "wifi_supported",
+    "当前传输": "transport",
+    "Wi-Fi 地址": "wifi_address",
 }
 
 
@@ -37,6 +39,30 @@ def parse_device_information_line(content):
             if field_content.startswith(prefix):
                 return field_name, field_content[len(prefix):].strip() or "未知"
     return None
+
+
+def format_connection_method(connection):
+    """将设备传输标识转换为面向用户的标准连接方式名称。"""
+    transport = str((connection or {}).get("transport") or "").strip()
+    normalized = transport.lower().replace("_", " ").replace("-", " ")
+    if normalized in ("串口", "serial", "usb", "usb cdc"):
+        return "USB CDC（串口）"
+    if normalized in ("websocket", "wifi", "wi fi"):
+        return "Wi-Fi（WebSocket）"
+    return transport or "未知"
+
+
+def format_connection_address(connection):
+    """返回当前连接端点；探测模式缺少端口时回退到设备报告的网络地址。"""
+    connection = connection or {}
+    address = connection.get("address")
+    if address:
+        return str(address)
+    if format_connection_method(connection).startswith("USB CDC"):
+        return "自动识别的 USB 设备"
+    if connection.get("wifi_address"):
+        return str(connection["wifi_address"])
+    return "未知"
 
 
 class DeviceWindowMixin:
@@ -76,7 +102,7 @@ class DeviceWindowMixin:
         root = tk.Tk()
         root.withdraw()
         root.title("设备管理")
-        root.geometry("720x520")
+        root.geometry("720x610")
         root.minsize(560, 320)
         root.attributes("-topmost", True)
         self._set_tk_window_icon(root)
@@ -88,7 +114,25 @@ class DeviceWindowMixin:
         progress.pack(fill=tk.X, padx=16, pady=(0, 12))
         progress.start(12)
 
-        device_panel = ttk.LabelFrame(root, text="当前已连接设备", padding=12)
+        connection_panel = ttk.LabelFrame(root, text="当前已连接设备", padding=12)
+        connection_panel.pack(fill=tk.X, padx=16, pady=(0, 12))
+        connection_values = {
+            "connection_method": tk.StringVar(master=root, value="未连接"),
+            "connection_address": tk.StringVar(master=root, value="--"),
+        }
+        for row, (label, field_name) in enumerate((
+            ("连接方式", "connection_method"),
+            ("连接地址", "connection_address"),
+        )):
+            ttk.Label(connection_panel, text=label + "：", width=20).grid(
+                row=row, column=0, sticky=tk.W, pady=2
+            )
+            ttk.Label(
+                connection_panel,
+                textvariable=connection_values[field_name],
+            ).grid(row=row, column=1, sticky=tk.W, pady=2)
+
+        device_panel = ttk.LabelFrame(root, text="设备详情", padding=12)
         device_panel.pack(fill=tk.X, padx=16, pady=(0, 12))
         device_labels = {
             "board_model": "开发板型号",
@@ -96,6 +140,7 @@ class DeviceWindowMixin:
             "screen_color_profile": "屏幕色彩方案",
             "firmware_version": "固件版本",
             "screen_resolution": "屏幕分辨率",
+            "wifi_supported": "Wi-Fi 支持",
         }
         device_values = {
             "board_model": tk.StringVar(master=root, value="未连接"),
@@ -103,6 +148,7 @@ class DeviceWindowMixin:
             "screen_color_profile": tk.StringVar(master=root, value="--"),
             "firmware_version": tk.StringVar(master=root, value="--"),
             "screen_resolution": tk.StringVar(master=root, value="--"),
+            "wifi_supported": tk.StringVar(master=root, value="--"),
         }
         for row, (field_name, value) in enumerate(device_values.items()):
             ttk.Label(
@@ -185,6 +231,9 @@ class DeviceWindowMixin:
             device_values["screen_color_profile"].set("--")
             device_values["firmware_version"].set("--")
             device_values["screen_resolution"].set("--")
+            device_values["wifi_supported"].set("--")
+            connection_values["connection_method"].set("未连接")
+            connection_values["connection_address"].set("--")
             reboot_button.configure(state=tk.DISABLED)
             firmware_button.configure(state=tk.DISABLED)
             firmware_state["current_version"] = None
@@ -199,6 +248,12 @@ class DeviceWindowMixin:
                         clear_connected_device()
                         status.set("当前没有已连接设备")
                         continue
+                    connection_values["connection_method"].set(
+                        format_connection_method(connection)
+                    )
+                    connection_values["connection_address"].set(
+                        format_connection_address(connection)
+                    )
                     device_values["board_model"].set(
                         connection.get("board_model") or "未知"
                     )
@@ -213,6 +268,9 @@ class DeviceWindowMixin:
                     )
                     device_values["screen_resolution"].set(
                         connection.get("screen_resolution") or "未知"
+                    )
+                    device_values["wifi_supported"].set(
+                        "是" if connection.get("wifi_supported") else "否"
                     )
                     reboot_button.configure(state=tk.NORMAL)
                     firmware_button.configure(state=tk.NORMAL)
@@ -243,10 +301,19 @@ class DeviceWindowMixin:
                             field_name, field_value = parsed_information
                             if field_name == "wifi_supported":
                                 probe_connection["wifi_supported"] = field_value == "是"
+                                device_values["wifi_supported"].set(field_value)
                                 update_wifi_button({
                                     "connected": True,
                                     "wifi_supported": probe_connection["wifi_supported"],
                                 })
+                            elif field_name in ("transport", "wifi_address"):
+                                probe_connection[field_name] = field_value
+                                connection_values["connection_method"].set(
+                                    format_connection_method(probe_connection)
+                                )
+                                connection_values["connection_address"].set(
+                                    format_connection_address(probe_connection)
+                                )
                             else:
                                 device_values[field_name].set(field_value)
                                 probe_connection[field_name] = field_value
@@ -455,8 +522,17 @@ class DeviceWindowMixin:
 
         def show_connected_device(connection):
             """将已连接设备快照显示到设备管理面板。"""
+            connection_values["connection_method"].set(
+                format_connection_method(connection)
+            )
+            connection_values["connection_address"].set(
+                format_connection_address(connection)
+            )
             for field_name, value in device_values.items():
-                value.set(connection.get(field_name) or "未知")
+                if field_name == "wifi_supported":
+                    value.set("是" if connection.get(field_name) else "否")
+                else:
+                    value.set(connection.get(field_name) or "未知")
             reboot_button.configure(state=tk.NORMAL)
             firmware_button.configure(state=tk.NORMAL)
             firmware_state["current_version"] = connection.get("firmware_version")
@@ -570,6 +646,9 @@ class DeviceWindowMixin:
             device_values["screen_color_profile"].set("--")
             device_values["firmware_version"].set("--")
             device_values["screen_resolution"].set("--")
+            device_values["wifi_supported"].set("--")
+            connection_values["connection_method"].set("探测中……")
+            connection_values["connection_address"].set("--")
             threading.Thread(
                 target=perform_probe,
                 name="设备主动探测",

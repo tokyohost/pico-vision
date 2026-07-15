@@ -20,7 +20,7 @@ class Game2Style:
     """封装游戏 FPS、CPU、GPU、内存和网络的横屏监控绘制规则。"""
 
     name = "game2"
-    zh_name = "游戏监控 ESP32-S3"
+    zh_name = "游戏监控2"
     type = "builtin"
     width = 320
     height = 240
@@ -198,7 +198,7 @@ class Game2Style:
     @staticmethod
     def _history(
         canvas, x, y, width, height, values, color,
-        percentage=False, color_by_value=False,
+        percentage=False, color_by_value=False, filled=True,
     ):
         """提交历史图定义，由 Canvas 统一完成抽样、填充和分段配色。"""
         regions = (
@@ -209,7 +209,7 @@ class Game2Style:
         canvas.draw_line_chart({
             "x": x, "y": y, "width": width, "height": height,
             "maximum": 100 if percentage else 0,
-            "color": color, "filled": True, "regions": regions,
+            "color": color, "filled": filled, "regions": regions,
             "grid_step_x": 12, "grid_step_y": 7,
             "grid_color": GRAY,
         }, values or ())
@@ -408,18 +408,23 @@ class Game2Style:
 
     @classmethod
     def _draw_footer(cls, canvas, snapshot):
-        """绘制底部运行时长、功耗和累计网络流量。"""
-        cls._frame(canvas, 2, 212, 316, 26, BLUE)
+        """绘制与上方卡片对齐的运行时长、功耗及功耗历史。"""
+        cls._frame(canvas, 2, 212, 154, 26, BLUE)
+        cls._frame(canvas, 160, 212, 158, 26, BLUE)
         canvas.text(8, 220, "UPTIME", BLUE, 1)
-        canvas.text(65, 220, cls._format_uptime(snapshot.get("uptime_seconds")), WHITE, 1)
-        canvas.line(174, 216, 174, 233, BLUE)
-        watts = snapshot.get("power", {}).get("watts")
+        cls._right_text(
+            canvas, 150, 220,
+            cls._format_uptime(snapshot.get("uptime_seconds")), WHITE, 1,
+        )
+        power = snapshot.get("power") or {}
+        watts = power.get("watts")
         power_text = "--W" if watts is None else "{:.0f}W".format(cls._number(watts))
-        canvas.text(182, 220, "PWR", BLUE, 1)
-        canvas.text(215, 220, power_text, YELLOW, 1)
-        network = snapshot.get("network") or {}
-        total_text = cls._format_bytes(network.get("receive_bytes"))
-        cls._right_text(canvas, 312, 220, "RX " + total_text, GREEN, 1)
+        canvas.text(166, 220, "PWR", BLUE, 1)
+        cls._right_text(canvas, 229, 220, power_text, YELLOW, 1)
+        cls._history(
+            canvas, 237, 217, 75, 16, power.get("history"), YELLOW,
+            filled=False,
+        )
 
     @classmethod
     def draw_visible(cls, canvas, snapshot):

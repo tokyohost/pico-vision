@@ -23,7 +23,11 @@ from windows_tray import (
 from monitor_core.tray_commands import _dispatch_tray_command
 from win.tray import APPLICATION_NAME
 from win.worker_controller import MAXIMUM_LOG_SIZE, WorkerControllerMixin
-from win.ui.device_window import parse_device_information_line
+from win.ui.device_window import (
+    format_connection_address,
+    format_connection_method,
+    parse_device_information_line,
+)
 from win.ui.wifi_window import merge_wifi_networks
 from style_validator import ValidatedStyle
 
@@ -730,6 +734,41 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertEqual(
             ("wifi_supported", "是"),
             parse_device_information_line("Pico Wi-Fi 支持：是\n"),
+        )
+
+        self.assertEqual(
+            ("transport", "wifi"),
+            parse_device_information_line("Pico 当前传输：wifi\n"),
+        )
+        self.assertEqual(
+            ("wifi_address", "192.168.0.224"),
+            parse_device_information_line("Pico Wi-Fi 地址：192.168.0.224\n"),
+        )
+
+    def test_device_connection_details_use_friendly_transport_names(self):
+        """确认设备管理页面使用清晰的连接方式名称并保留实际端点。"""
+        serial_connection = {"transport": "串口", "address": "COM3"}
+        websocket_connection = {
+            "transport": "WebSocket",
+            "address": "ws://192.168.0.224:8765/pv1",
+        }
+
+        self.assertEqual("USB CDC（串口）", format_connection_method(serial_connection))
+        self.assertEqual("COM3", format_connection_address(serial_connection))
+        self.assertEqual("Wi-Fi（WebSocket）", format_connection_method(websocket_connection))
+        self.assertEqual(
+            "ws://192.168.0.224:8765/pv1",
+            format_connection_address(websocket_connection),
+        )
+
+    def test_probe_connection_address_falls_back_to_reported_wifi_address(self):
+        """确认主动探测缺少 WebSocket URL 时仍展示设备报告的 Wi-Fi 地址。"""
+        connection = {"transport": "wifi", "wifi_address": "192.168.0.224"}
+        self.assertEqual("192.168.0.224", format_connection_address(connection))
+
+        usb_connection = {"transport": "usb", "wifi_address": "192.168.0.224"}
+        self.assertEqual(
+            "自动识别的 USB 设备", format_connection_address(usb_connection)
         )
 
     def test_managed_arguments_are_replaced_without_losing_worker_flag(self):
