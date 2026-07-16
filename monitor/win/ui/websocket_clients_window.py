@@ -23,7 +23,7 @@ class WebSocketClientsWindowMixin:
         window.withdraw()
         window.title("WebSocket 客户端")
         window.geometry("820x480")
-        window.minsize(680, 450)
+        window.minsize(680, 480)
         window.transient(parent)
         window.attributes("-topmost", True)
         self._set_tk_window_icon(window)

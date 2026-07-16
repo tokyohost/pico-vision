@@ -113,6 +113,7 @@ class WindowsTrayApplication(
         self.device_probe_window_lock = threading.Lock()
         self.device_probe_window_open = False
         self.device_management_messages = queue.Queue()
+        self.sdk_flash_messages = queue.Queue()
         self.device_connection_messages = queue.Queue()
         self.wifi_messages = queue.Queue()
         self.websocket_client_messages = queue.Queue()

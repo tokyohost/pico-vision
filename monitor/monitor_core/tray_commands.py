@@ -12,6 +12,9 @@ def _dispatch_tray_command(service, command):
     if command == "EXIT_REBOOT":
         service.request_reboot_and_stop()
         return True
+    if command == "EXIT_SDK_BOOTLOADER":
+        service.request_sdk_bootloader_and_stop()
+        return True
     if command == "EXIT":
         service.stop()
         return True

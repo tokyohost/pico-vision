@@ -4,7 +4,7 @@ from pico_client import PicoJsonClient
 from .console import _write_version_to_console
 
 def format_pico_information(information):
-    """将 Pico 硬件配置与固件版本格式化为终端文本。"""
+    """将 Pico 硬件配置、业务固件及 SDK 版本格式化为终端文本。"""
     return "\n".join((
         "Pico 开发板型号：{}".format(
             information.get("board_model") or "未知（旧版固件未提供）"
@@ -17,6 +17,12 @@ def format_pico_information(information):
         ),
         "Pico 固件版本：{}".format(
             information.get("firmware_version") or "未知（旧版固件未提供）"
+        ),
+        "Pico SDK 版本：{}".format(
+            information.get("sdk_version") or "未知（旧版固件未提供）"
+        ),
+        "Pico SDK 刷写支持：{}".format(
+            "是" if (information.get("sdk_update") or {}).get("supported") else "否"
         ),
         "Pico 屏幕分辨率：{}".format(
             "{} x {}".format(

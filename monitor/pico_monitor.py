@@ -105,6 +105,10 @@ def show_pico_information(port=None, websocket_url=None):
 def main():
     """校验参数并按当前平台启动后台工作进程或 Windows 托盘。"""
     _configure_standard_streams()
+    if len(sys.argv) > 1 and sys.argv[1] == "--sdk-flasher":
+        from sdk_flash import run_sdk_flasher_cli
+
+        return run_sdk_flasher_cli(sys.argv[2:])
     arguments = parse_monitor_arguments()
     validate_arguments(arguments)
     if sys.platform == "win32" and not is_windows_administrator():

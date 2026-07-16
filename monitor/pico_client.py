@@ -87,6 +87,8 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         self.lcd_device_type = None
         self.screen_color_profile = None
         self.firmware_version = None
+        self.sdk_version = None
+        self.sdk_update_info = None
         self.screen_width = None
         self.screen_height = None
         self.styles = []
@@ -160,15 +162,17 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
                 if self._handshake(device):
                     self.serial = device
                     LOGGER.info(
-                        "[串口连接] %s 握手成功：开发板=%s，LCD=%s，屏幕方案=%s，固件版本=%s，分辨率=%sx%s，Wi-Fi支持=%s",
+                        "[串口连接] %s 握手成功：开发板=%s，LCD=%s，屏幕方案=%s，固件版本=%s，SDK版本=%s，分辨率=%sx%s，Wi-Fi支持=%s，SDK刷写支持=%s",
                         port,
                         self.board_model or "未知",
                         self.lcd_device_type or "未知",
                         self.screen_color_profile or "未知",
                         self.firmware_version or "未知",
+                        self.sdk_version or "未知",
                         self.screen_width or "未知",
                         self.screen_height or "未知",
                         "是" if (self.net_status or {}).get("wifi_enabled") else "否",
+                        "是" if (self.sdk_update_info or {}).get("supported") else "否",
                     )
                     self._start_cdc_framework()
                     return
@@ -195,15 +199,17 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
             self.serial = device
             self._start_cdc_framework()
             LOGGER.info(
-                "[WebSocket 连接] %s 握手成功：开发板=%s，LCD=%s，屏幕方案=%s，固件版本=%s，分辨率=%sx%s，Wi-Fi支持=%s",
+                "[WebSocket 连接] %s 握手成功：开发板=%s，LCD=%s，屏幕方案=%s，固件版本=%s，SDK版本=%s，分辨率=%sx%s，Wi-Fi支持=%s，SDK刷写支持=%s",
                 self.websocket_url,
                 self.board_model or "未知",
                 self.lcd_device_type or "未知",
                 self.screen_color_profile or "未知",
                 self.firmware_version or "未知",
+                self.sdk_version or "未知",
                 self.screen_width or "未知",
                 self.screen_height or "未知",
                 "是" if (self.net_status or {}).get("wifi_enabled") else "否",
+                "是" if (self.sdk_update_info or {}).get("supported") else "否",
             )
         except Exception:
             if device is not None:
@@ -268,6 +274,8 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         self.lcd_device_type = winner.lcd_device_type
         self.screen_color_profile = winner.screen_color_profile
         self.firmware_version = winner.firmware_version
+        self.sdk_version = winner.sdk_version
+        self.sdk_update_info = winner.sdk_update_info
         self.screen_width = winner.screen_width
         self.screen_height = winner.screen_height
         self.styles = winner.styles
@@ -323,6 +331,8 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         self.lcd_device_type = None
         self.screen_color_profile = None
         self.firmware_version = None
+        self.sdk_version = None
+        self.sdk_update_info = None
         self.screen_width = None
         self.screen_height = None
         self.styles = []
@@ -384,6 +394,9 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         self.lcd_device_type = information.get("lcd_device_type") or None
         self.screen_color_profile = information.get("screen_color_profile") or None
         self.firmware_version = information.get("firmware_version") or None
+        self.sdk_version = information.get("sdk_version") or None
+        sdk_update = information.get("sdk_update")
+        self.sdk_update_info = sdk_update if isinstance(sdk_update, dict) else None
         self.screen_width = information.get("width") or None
         self.screen_height = information.get("height") or None
         styles = information.get("styles")
@@ -399,6 +412,8 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
             "lcd_device_type": self.lcd_device_type,
             "screen_color_profile": self.screen_color_profile,
             "firmware_version": self.firmware_version,
+            "sdk_version": self.sdk_version,
+            "sdk_update": dict(self.sdk_update_info) if isinstance(self.sdk_update_info, dict) else None,
             "screen_width": self.screen_width,
             "screen_height": self.screen_height,
         }

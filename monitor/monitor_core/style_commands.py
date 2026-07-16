@@ -63,6 +63,12 @@ class StyleCommandMixin:
         self.reboot_requested.set()
         self.stopping.set()
 
+    def request_sdk_bootloader_and_stop(self):
+        """让主循环退出，并在释放 USB 前请求设备进入 ROM 下载模式。"""
+        LOGGER.info("收到托盘 SDK 刷写请求，将在停止监控前切换 ROM USB 模式")
+        self.sdk_bootloader_requested.set()
+        self.stopping.set()
+
     def request_custom_style_catalog(self):
         """安排主循环在当前串口交互结束后查询自定义样式。"""
         self.custom_style_catalog_requested.set()

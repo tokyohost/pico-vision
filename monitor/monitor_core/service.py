@@ -74,6 +74,7 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
         )
         self.stopping = threading.Event()
         self.reboot_requested = threading.Event()
+        self.sdk_bootloader_requested = threading.Event()
         self.custom_style_catalog_requested = threading.Event()
         self.custom_style_uploads = queue.Queue()
         self.custom_style_deletes = queue.Queue()
@@ -442,6 +443,8 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
                     )
                 self.stopping.wait(self.arguments.reconnect_interval)
                 continue
+        # 设备控制命令必须独占协议流，先等待发送线程完全退出再发送最终命令。
+        self._stop_transmit_worker(wait=True)
         reboot_requested = getattr(self, "reboot_requested", None)
         reboot_result = None
         if reboot_requested is not None and reboot_requested.is_set() and self.client.is_connected:
@@ -453,12 +456,36 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
                 reboot_result = {"status": "error", "message": str(error)}
         elif reboot_requested is not None and reboot_requested.is_set():
             reboot_result = {"status": "error", "message": "当前没有已连接设备"}
-        self._stop_transmit_worker(wait=True)
+        sdk_bootloader_requested = getattr(self, "sdk_bootloader_requested", None)
+        sdk_bootloader_result = None
+        if (
+            sdk_bootloader_requested is not None
+            and sdk_bootloader_requested.is_set()
+            and self.client.is_connected
+        ):
+            try:
+                data = self.client.enter_sdk_bootloader()
+                sdk_bootloader_result = {
+                    "status": "ok",
+                    "message": "设备已确认进入 ROM USB 下载模式",
+                    "data": data,
+                }
+            except (OSError, RuntimeError, serial.SerialException) as error:
+                LOGGER.warning("设备进入 ROM USB 下载模式失败：%s", error)
+                sdk_bootloader_result = {"status": "error", "message": str(error)}
+        elif sdk_bootloader_requested is not None and sdk_bootloader_requested.is_set():
+            sdk_bootloader_result = {"status": "error", "message": "当前没有已连接的 USB 设备"}
         self._stop_thread_diagnostics()
         self.client.close()
         if reboot_result is not None:
             print(
                 "DEVICE_REBOOT_RESULT:" + json.dumps(reboot_result, ensure_ascii=False),
+                flush=True,
+            )
+        if sdk_bootloader_result is not None:
+            print(
+                "SDK_BOOTLOADER_RESULT:"
+                + json.dumps(sdk_bootloader_result, ensure_ascii=False),
                 flush=True,
             )
         LOGGER.info("监控服务已停止")

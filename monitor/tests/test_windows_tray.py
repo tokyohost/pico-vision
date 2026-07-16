@@ -134,6 +134,15 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertFalse(should_stop)
         service.request_wifi_list.assert_called_once_with()
 
+    def test_tray_command_dispatch_requests_sdk_bootloader_and_stops(self):
+        """确认 SDK 刷写控制命令要求后台切换 ROM USB 后退出。"""
+        service = mock.Mock()
+
+        should_stop = _dispatch_tray_command(service, "EXIT_SDK_BOOTLOADER")
+
+        self.assertTrue(should_stop)
+        service.request_sdk_bootloader_and_stop.assert_called_once_with()
+
     def test_tray_command_dispatch_requests_wifi_connection(self):
         """确认 Wi-Fi 名称和密钥会作为结构化参数交给监控服务。"""
         service = mock.Mock()
@@ -472,6 +481,17 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertIn("ws://192.168.1.20:8765/pv1", command)
         self.assertNotIn("ws://192.168.1.8:8765/pv1", command)
 
+    def test_sdk_flasher_command_uses_hidden_isolated_entry(self):
+        """确认 SDK 刷写复用当前程序的隐藏入口并只传递端口和镜像。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+
+        command = application._sdk_flasher_command("COM11", r"D:\sdk.bin")
+
+        self.assertIn("--sdk-flasher", command)
+        self.assertEqual("COM11", command[command.index("--port") + 1])
+        self.assertEqual(r"D:\sdk.bin", command[command.index("--image") + 1])
+        self.assertNotIn("--worker", command)
+
     def test_websocket_url_is_persisted_and_applied_to_worker(self):
         """确认发现的 WebSocket 地址保存后会在下次启动传给工作进程。"""
         path = Path(self.temporary_directory.name) / "settings.json"
@@ -514,6 +534,20 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertEqual("WebSocket", connection["transport"])
         self.assertEqual("ESP32-S3", connection["board_model"])
         self.assertTrue(connection["wifi_supported"])
+
+    def test_usb_connection_log_parses_sdk_version_and_flash_capability(self):
+        """确认新版 USB 握手日志能够驱动 SDK 版本显示和刷写按钮能力。"""
+        connection = WorkerControllerMixin._parse_device_connection(
+            "2026-07-15 10:27:14,370 [INFO] "
+            "[串口连接] COM11 握手成功：开发板=ESP32-S3，"
+            "LCD=st7789-2inch-8pin-a，屏幕方案=st7789vw_2inch，"
+            "固件版本=development，SDK版本=v1.0.61-fnProcotolV1，"
+            "分辨率=240x320，Wi-Fi支持=是，SDK刷写支持=是"
+        )
+
+        self.assertEqual("v1.0.61-fnProcotolV1", connection["sdk_version"])
+        self.assertTrue(connection["sdk_update_supported"])
+        self.assertEqual("COM11", connection["address"])
 
     def test_rediscovered_websocket_address_is_persisted(self):
         """确认重连扫描得到的新 Wi-Fi 地址会保存供后续启动使用。"""
@@ -730,6 +764,14 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertEqual(
             ("firmware_version", "1.2.3"),
             parse_device_information_line("Pico 固件版本：1.2.3\n"),
+        )
+        self.assertEqual(
+            ("sdk_version", "v1.0.61-fnProcotolV1"),
+            parse_device_information_line("Pico SDK 版本：v1.0.61-fnProcotolV1\n"),
+        )
+        self.assertEqual(
+            ("sdk_update_supported", "是"),
+            parse_device_information_line("Pico SDK 刷写支持：是\n"),
         )
         self.assertEqual(
             ("wifi_supported", "是"),

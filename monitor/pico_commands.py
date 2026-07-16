@@ -102,6 +102,25 @@ class PicoCommandMixin:
                 raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
         raise RuntimeError("设备无响应，请重新拔插设备注册")
 
+    def enter_sdk_bootloader(self, timeout=8.0):
+        """请求 ESP32-S3 经物理 USB 受控进入 ROM SDK 下载模式。"""
+        if not self.is_connected:
+            raise RuntimeError("设备 USB CDC 尚未连接")
+        request_id = "sdk-bootloader-{}".format(int(time.monotonic() * 1000))
+        LOGGER.info("[Monitor -> Pico][%s][命令 sdk.bootloader]", self.port_name)
+        packet = self.build_command_packet(
+            "sdk.bootloader",
+            request_id=request_id,
+        )
+        self._write_packet(packet, "sdk.bootloader")
+        result = self._wait_command_result(
+            request_id,
+            timeout,
+            "sdk.bootloader",
+            "设备进入 ROM USB 下载模式失败",
+        )
+        return result.get("data") or {}
+
     def screenshot(self, timeout=30.0):
         """请求 Pico 分块返回 LCD 画面，并重组为大端 RGB565 数据。"""
         if not self.is_connected:

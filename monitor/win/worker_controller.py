@@ -26,7 +26,7 @@ class WorkerControllerMixin:
     def _parse_device_connection(line):
         """从串口或 WebSocket 握手日志中解析已连接设备快照。"""
         connection = re.search(
-            r"\[(串口|WebSocket)\s*连接\]\s+(.+?)\s+握手成功：开发板=(.*)，LCD=(.*)，屏幕方案=(.*)，固件版本=(.*)，分辨率=(.*?)(?:，Wi-Fi支持=(是|否))?$",
+            r"\[(串口|WebSocket)\s*连接\]\s+(.+?)\s+握手成功：开发板=(.*)，LCD=(.*)，屏幕方案=(.*)，固件版本=(.*?)(?:，SDK版本=(.*?))?，分辨率=(.*?)(?:，Wi-Fi支持=(是|否))?(?:，SDK刷写支持=(是|否))?$",
             line.strip(),
         )
         if connection is None:
@@ -39,8 +39,10 @@ class WorkerControllerMixin:
             "lcd_device_type": connection.group(4),
             "screen_color_profile": connection.group(5),
             "firmware_version": connection.group(6),
-            "screen_resolution": connection.group(7),
-            "wifi_supported": connection.group(8) == "是",
+            "sdk_version": connection.group(7),
+            "screen_resolution": connection.group(8),
+            "wifi_supported": connection.group(9) == "是",
+            "sdk_update_supported": connection.group(10) == "是",
         }
 
     @staticmethod
@@ -78,6 +80,21 @@ class WorkerControllerMixin:
             if websocket_url:
                 command.extend(("--websocket-url", str(websocket_url)))
         return command + ["--pico-info"]
+
+    def _sdk_flasher_command(self, port, image_path):
+        """构造复用当前 EXE 或 Python 入口的隔离 SDK 刷写子进程命令。"""
+        arguments = [
+            "--sdk-flasher",
+            "--port", str(port),
+            "--image", str(image_path),
+        ]
+        if getattr(sys, "frozen", False):
+            return [sys.executable, *arguments]
+        return [
+            sys.executable,
+            str(MONITOR_DIRECTORY / "pico_monitor.py"),
+            *arguments,
+        ]
 
     def _start_worker(self):
         """启动后台监控进程，并创建日志收集线程。"""
@@ -220,6 +237,13 @@ class WorkerControllerMixin:
                                 line, "DEVICE_REBOOT_RESULT:", "设备返回了无效响应",
                             )
                             self.device_management_messages.put(result)
+                        if line.startswith("SDK_BOOTLOADER_RESULT:"):
+                            result = self._parse_worker_result(
+                                line,
+                                "SDK_BOOTLOADER_RESULT:",
+                                "设备返回了无效的 SDK 下载模式响应",
+                            )
+                            self.sdk_flash_messages.put(result)
                         if line.startswith("WIFI_RESULT:"):
                             result = self._parse_worker_result(
                                 line, "WIFI_RESULT:", "设备返回了无效 Wi-Fi 响应",

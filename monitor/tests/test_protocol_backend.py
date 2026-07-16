@@ -3,6 +3,7 @@
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -87,6 +88,16 @@ class ProtocolBackendTest(unittest.TestCase):
         """确认缺少原生协议模块时诊断信息报告 Python 后端。"""
         with mock.patch.object(protocolC, "_native_protocol", None):
             self.assertEqual("PYTHON", protocol.JsonProtocol.protocol_backend())
+
+    def test_runtime_sdk_version_removes_build_date(self):
+        """设备握手中的 SDK 版本应保留定制标签并移除每天变化的构建日期。"""
+        uname = SimpleNamespace(version="v1.0.61-fnProcotolV1 on 2026-07-15")
+
+        with mock.patch.object(protocol.os, "uname", return_value=uname):
+            self.assertEqual(
+                "v1.0.61-fnProcotolV1",
+                protocol.runtime_sdk_version(),
+            )
 
     def test_native_parser_when_api_is_compatible(self):
         """确认接口版本匹配时把帧解析交给固件原生模块。"""

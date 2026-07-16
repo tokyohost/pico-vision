@@ -27,6 +27,7 @@
 - 固件没有编译 `_usb_cdc_data` 时才回退到原有内置控制台或 CH343 通道，不再创建存在长期稳定性问题的运行时 Python CDC。
 - 如需固定使用 CH343/控制台传输，应把 `USB_DEDICATED_CDC_ENABLED` 设为 `False`。
 - 可通过 `config.py` 的 `USB_DEDICATED_CDC_ENABLED` 控制数据通道；C 缓冲容量由板级固件宏 `MICROPY_HW_USB_CDC_DATA_RX_BUFSIZE` 决定。
+- PONG 会报告当前 MicroPython SDK 版本及 `sdk_update` 能力。仅原生 USB 传输可以执行 `sdk.bootloader`；设备先返回结构化成功应答，再调用 `machine.bootloader()` 进入 ESP32-S3 ROM USB 下载模式，供 Windows Monitor 无按键刷写完整合并 bin。
 
 ## 第二阶段渲染服务
 

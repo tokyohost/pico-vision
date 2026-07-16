@@ -709,14 +709,19 @@ class PicoClientTest(unittest.TestCase):
             "lcd_device_type": "st7789-2.4inch-8pin-b",
             "screen_color_profile": "st7789_2_4inch",
             "firmware_version": "1.2.3",
+            "sdk_version": "v1.0.61-fnProcotolV1",
+            "sdk_update": {"supported": False},
             "width": 320,
             "height": 240,
+            "net": {"wifi_enabled": True, "mode": "wifi", "ip": "192.168.0.224"},
         }).encode())
         self.assertEqual(client.device_information(), {
             "board_model": "rp2040_typec",
             "lcd_device_type": "st7789-2.4inch-8pin-b",
             "screen_color_profile": "st7789_2_4inch",
             "firmware_version": "1.2.3",
+            "sdk_version": "v1.0.61-fnProcotolV1",
+            "sdk_update": {"supported": False},
             "screen_width": 320,
             "screen_height": 240,
             "net": {"wifi_enabled": True, "mode": "wifi", "ip": "192.168.0.224"},
@@ -768,13 +773,18 @@ class PicoClientTest(unittest.TestCase):
             "lcd_device_type": "st7789-2.4inch-8pin-b",
             "screen_color_profile": "st7789_2_4inch",
             "firmware_version": "1.2.3",
+            "sdk_version": "v1.0.61-fnProcotolV1",
+            "sdk_update": {"supported": False},
             "screen_width": 320,
             "screen_height": 240,
+            "net": {"wifi_enabled": True, "mode": "wifi", "ip": "192.168.0.224"},
         })
         self.assertIn("Pico 开发板型号：rp2040_typec", text)
         self.assertIn("Pico LCD 设备类型：st7789-2.4inch-8pin-b", text)
         self.assertIn("Pico 屏幕色彩方案：st7789_2_4inch", text)
         self.assertIn("Pico 固件版本：1.2.3", text)
+        self.assertIn("Pico SDK 版本：v1.0.61-fnProcotolV1", text)
+        self.assertIn("Pico SDK 刷写支持：否", text)
         self.assertIn("Pico 屏幕分辨率：320 x 240", text)
         self.assertIn("Pico Wi-Fi 支持：是", text)
 

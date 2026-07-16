@@ -2,7 +2,7 @@
 """将 Pico 系统监控程序打包为单文件 Windows EXE。"""
 
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 
 MONITOR_ROOT = Path.cwd()
@@ -12,6 +12,7 @@ for binary_name in ("PresentMon.exe", "adlx_fps_bridge.dll"):
     if binary_path.is_file():
         optional_fps_binaries.append((str(binary_path), "win/fps/bin"))
 optional_datas = [("icon/icon.png", "icon"), ("assert/fishQr.png", "assert"), ("win/fps/PRESENTMON_LICENSE.txt", "win/fps"), ("custom_data_runner.py", ".")]
+optional_datas.extend(collect_data_files("esptool"))
 sensor_host_directory = Path("sensorhost")
 if sensor_host_directory.is_dir():
     for sensor_host_file in sensor_host_directory.rglob("*"):
@@ -24,7 +25,7 @@ analysis = Analysis(
     pathex=[],
     binaries=optional_fps_binaries,
     datas=optional_datas,
-    hiddenimports=["psutil", "serial", "serial.tools.list_ports", "websocket", "net.websocket_transport", "custom_data", "collectTask", "collectTask.coordinator", "collectTask.executor", "collectTask.result_store", "collectTask.system_tasks", "tkinter", "tkinter.filedialog", "tkinter.messagebox", "tkinter.scrolledtext", "tkinter.ttk", "pystray._win32", "PIL.Image", "PIL.ImageTk", "pico_upgrade", "build_info", "windows_update", "win.sensor_host", "win32api", "win32con", "win32file", "win32job", "win32pipe"] + collect_submodules("collectTask.tasks"),
+    hiddenimports=["psutil", "serial", "serial.tools.list_ports", "websocket", "net.websocket_transport", "custom_data", "collectTask", "collectTask.coordinator", "collectTask.executor", "collectTask.result_store", "collectTask.system_tasks", "tkinter", "tkinter.filedialog", "tkinter.messagebox", "tkinter.scrolledtext", "tkinter.ttk", "pystray._win32", "PIL.Image", "PIL.ImageTk", "pico_upgrade", "sdk_flash", "build_info", "windows_update", "win.sensor_host", "win32api", "win32con", "win32file", "win32job", "win32pipe"] + collect_submodules("collectTask.tasks") + collect_submodules("esptool"),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

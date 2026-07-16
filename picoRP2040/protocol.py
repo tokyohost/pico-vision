@@ -17,6 +17,7 @@
 import sys
 import time
 import gc
+import os
 from array import array
 
 try:
@@ -73,6 +74,21 @@ from config import (
     SERIAL_READ_BUDGET,
 )
 import protocolC
+
+
+def runtime_sdk_version():
+    """返回当前 MicroPython SDK 的定制版本号并移除构建日期。"""
+    try:
+        uname = os.uname()
+        version = getattr(uname, "version", None)
+        if version is None and len(uname) > 3:
+            version = uname[3]
+    except (AttributeError, OSError, TypeError):
+        version = None
+    normalized = str(version or "").strip()
+    if " on " in normalized:
+        normalized = normalized.split(" on ", 1)[0].strip()
+    return normalized or "未知"
 
 
 def _build_crc16_byte_table():
@@ -522,7 +538,7 @@ class JsonProtocol:
             self._buffer = bytearray(self._buffer[count:])
 
     def _write_pong(self):
-        """返回设备能力、硬件型号、屏幕方案、固件版本及网络状态。"""
+        """返回设备能力、硬件型号、屏幕方案、固件及 SDK 版本。"""
         from lcd import get_lcd_panel_profile
         from styles.style_plugins import style_catalog
 
@@ -536,6 +552,12 @@ class JsonProtocol:
             "board_model": BOARD_MODEL,
             "screen_color_profile": panel_profile.color_profile_name,
             "firmware_version": FIRMWARE_VERSION,
+            "sdk_version": runtime_sdk_version(),
+            "sdk_update": {
+                "supported": False,
+                "requires_usb": True,
+                "image_format": "unsupported",
+            },
             "device_name": DEVICE_NAME,
             "lcd_device_type": LCD_DEVICE_TYPE,
             "lcd_driver": LCD_DRIVER,
