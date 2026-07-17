@@ -222,8 +222,11 @@ def wait_for_esp32s3_bootloader_port(
     raise RuntimeError("设备未在 15 秒内重新枚举为 ESP32-S3 ROM USB 端口")
 
 
-def run_esptool_flash(port, image_path, baud=460800):
+def run_esptool_flash(port, image_path, baud=460800, before="no-reset"):
     """再次校验镜像后调用 esptool 写入 ESP32-S3 的 0x0 地址。"""
+    reset_policy = str(before or "no-reset")
+    if reset_policy not in ("no-reset", "default-reset"):
+        raise ValueError("不支持的 esptool 进入下载模式策略：{}".format(reset_policy))
     information = inspect_sdk_image(image_path)
     print(
         "SDK_FLASH_META:" + json.dumps({
@@ -241,7 +244,7 @@ def run_esptool_flash(port, image_path, baud=460800):
         "--chip", "esp32s3",
         "--port", str(port),
         "--baud", str(int(baud)),
-        "--before", "no-reset",
+        "--before", reset_policy,
         "--after", "watchdog-reset",
         "write-flash", "0x0", str(information.path),
     ])
@@ -255,9 +258,15 @@ def run_sdk_flasher_cli(arguments=None):
     parser.add_argument("--port", required=True, help="ROM 下载模式串口")
     parser.add_argument("--image", required=True, help="完整 ESP32-S3 合并 bin")
     parser.add_argument("--baud", type=int, default=460800, help="刷写波特率")
+    parser.add_argument(
+        "--before",
+        choices=("no-reset", "default-reset"),
+        default="no-reset",
+        help="esptool 写入前的下载模式进入策略",
+    )
     parsed = parser.parse_args(arguments)
     try:
-        return run_esptool_flash(parsed.port, parsed.image, parsed.baud)
+        return run_esptool_flash(parsed.port, parsed.image, parsed.baud, parsed.before)
     except SystemExit as error:
         code = error.code if isinstance(error.code, int) else 1
         print("SDK_FLASH_ERROR:esptool 参数或运行环境错误", flush=True)

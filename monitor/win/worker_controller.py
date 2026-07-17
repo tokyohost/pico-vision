@@ -81,13 +81,15 @@ class WorkerControllerMixin:
                 command.extend(("--websocket-url", str(websocket_url)))
         return command + ["--pico-info"]
 
-    def _sdk_flasher_command(self, port, image_path):
+    def _sdk_flasher_command(self, port, image_path, before=None):
         """构造复用当前 EXE 或 Python 入口的隔离 SDK 刷写子进程命令。"""
         arguments = [
             "--sdk-flasher",
             "--port", str(port),
             "--image", str(image_path),
         ]
+        if before:
+            arguments.extend(("--before", str(before)))
         if getattr(sys, "frozen", False):
             return [sys.executable, *arguments]
         return [

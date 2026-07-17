@@ -20,6 +20,9 @@ TRANSMIT_STOP = object()
 ADAPTIVE_ACK_HISTORY_SIZE = 8
 ADAPTIVE_ACK_SAFETY_FACTOR = 1.25
 ADAPTIVE_ACK_INTERVAL_CHANGE_LOG_RATIO = 0.1
+ADAPTIVE_FAST_START_INTERVAL_SECONDS = 0.4
+ADAPTIVE_SLOW_ACK_CONFIRMATIONS = 2
+ADAPTIVE_TIMEOUT_BACKOFF_FACTOR = 2.0
 MINIMUM_TRANSMIT_INTERVAL_SECONDS = 0.3
 
 
@@ -75,6 +78,10 @@ class RuntimeOperationsMixin:
             self._adaptive_ack_seconds = deque(maxlen=ADAPTIVE_ACK_HISTORY_SIZE)
         if not hasattr(self, "_adaptive_interval_seconds"):
             self._adaptive_interval_seconds = None
+        if not hasattr(self, "_adaptive_slow_ack_count"):
+            self._adaptive_slow_ack_count = 0
+        if not hasattr(self, "_adaptive_slow_ack_target_seconds"):
+            self._adaptive_slow_ack_target_seconds = 0.0
         if not hasattr(self, "_json_ack_suspended"):
             self._json_ack_suspended = False
         if not hasattr(self, "_thread_diagnostics_thread"):
@@ -88,6 +95,7 @@ class RuntimeOperationsMixin:
         transmit_thread = getattr(self, "_transmit_thread", None)
         if transmit_thread is not None and transmit_thread.is_alive():
             return
+        self._reset_adaptive_transmit_negotiation()
         self._clear_transmit_queue()
         with self._transmit_lock:
             self._transmit_error = None
@@ -235,6 +243,8 @@ class RuntimeOperationsMixin:
                         "%s；当前连接保持 JSON ACK 背压并在下一帧重试，串口不会重连",
                         error,
                     )
+                    if adaptive_transmit:
+                        self._record_json_ack_timeout()
                     continue
                 if adaptive_transmit:
                     self._record_json_ack_duration(time.monotonic() - send_started)
@@ -323,6 +333,22 @@ class RuntimeOperationsMixin:
         except (TypeError, ValueError):
             return 0.5
 
+    def _adaptive_fast_start_interval(self):
+        """返回自适应会话的快速起始周期，且不突破用户配置的更快周期。"""
+        return max(
+            MINIMUM_TRANSMIT_INTERVAL_SECONDS,
+            min(self._base_transmit_interval(), ADAPTIVE_FAST_START_INTERVAL_SECONDS),
+        )
+
+    def _reset_adaptive_transmit_negotiation(self):
+        """为新发送会话重置快速优先的 ACK 周期协商状态。"""
+        self._ensure_transmit_state()
+        with self._adaptive_interval_lock:
+            self._adaptive_ack_seconds.clear()
+            self._adaptive_interval_seconds = self._adaptive_fast_start_interval()
+            self._adaptive_slow_ack_count = 0
+            self._adaptive_slow_ack_target_seconds = 0.0
+
     def _effective_transmit_interval(self):
         """返回当前实际发送间隔；自适应关闭时等于基础间隔。"""
         base_interval = self._base_transmit_interval()
@@ -331,11 +357,11 @@ class RuntimeOperationsMixin:
         self._ensure_transmit_state()
         with self._adaptive_interval_lock:
             if self._adaptive_interval_seconds is None:
-                return base_interval
+                return self._adaptive_fast_start_interval()
             return max(MINIMUM_TRANSMIT_INTERVAL_SECONDS, self._adaptive_interval_seconds)
 
     def _record_json_ack_duration(self, elapsed_seconds):
-        """根据最近 JSON ACK 耗时刷新自适应发送间隔。"""
+        """根据 JSON ACK 耗时按快速优先、连续慢样本确认的方式刷新发送周期。"""
         self._ensure_transmit_state()
         try:
             elapsed_seconds = max(0.0, float(elapsed_seconds))
@@ -345,20 +371,33 @@ class RuntimeOperationsMixin:
         max_interval = max(15.0, base_interval * 30.0)
         with self._adaptive_interval_lock:
             self._adaptive_ack_seconds.append(elapsed_seconds)
-            samples = sorted(self._adaptive_ack_seconds)
-            p90_index = min(len(samples) - 1, int((len(samples) - 1) * 0.9))
             target_interval = max(
                 MINIMUM_TRANSMIT_INTERVAL_SECONDS,
-                min(max_interval, samples[p90_index] * ADAPTIVE_ACK_SAFETY_FACTOR),
+                min(max_interval, elapsed_seconds * ADAPTIVE_ACK_SAFETY_FACTOR),
             )
-            previous_interval = self._adaptive_interval_seconds or base_interval
+            previous_interval = (
+                self._adaptive_interval_seconds
+                if self._adaptive_interval_seconds is not None
+                else self._adaptive_fast_start_interval()
+            )
             if target_interval > previous_interval:
-                next_interval = target_interval
-            else:
-                next_interval = max(
-                    MINIMUM_TRANSMIT_INTERVAL_SECONDS,
-                    previous_interval * 0.7 + target_interval * 0.3,
+                self._adaptive_slow_ack_count += 1
+                self._adaptive_slow_ack_target_seconds = max(
+                    self._adaptive_slow_ack_target_seconds,
+                    target_interval,
                 )
+                if self._adaptive_slow_ack_count >= ADAPTIVE_SLOW_ACK_CONFIRMATIONS:
+                    next_interval = self._adaptive_slow_ack_target_seconds
+                    self._adaptive_slow_ack_count = 0
+                    self._adaptive_slow_ack_target_seconds = 0.0
+                else:
+                    next_interval = previous_interval
+            else:
+                # 连接后的首个 JSON 可能受样式初始化影响而异常缓慢。只要后续
+                # ACK 恢复，就立即采用更快周期，避免从数秒档逐轮平滑下降。
+                next_interval = target_interval
+                self._adaptive_slow_ack_count = 0
+                self._adaptive_slow_ack_target_seconds = 0.0
             self._adaptive_interval_seconds = next_interval
         if (
                 abs(next_interval - previous_interval)
@@ -369,6 +408,33 @@ class RuntimeOperationsMixin:
                 elapsed_seconds * 1000,
                 next_interval,
             )
+
+    def _record_json_ack_timeout(self):
+        """在 ACK 确认超时时把发送周期加倍，实现从快到慢的指数退避。"""
+        self._ensure_transmit_state()
+        base_interval = self._base_transmit_interval()
+        max_interval = max(15.0, base_interval * 30.0)
+        with self._adaptive_interval_lock:
+            previous_interval = (
+                self._adaptive_interval_seconds
+                if self._adaptive_interval_seconds is not None
+                else self._adaptive_fast_start_interval()
+            )
+            next_interval = min(
+                max_interval,
+                max(
+                    self._adaptive_fast_start_interval(),
+                    previous_interval * ADAPTIVE_TIMEOUT_BACKOFF_FACTOR,
+                ),
+            )
+            self._adaptive_interval_seconds = next_interval
+            self._adaptive_slow_ack_count = 0
+            self._adaptive_slow_ack_target_seconds = 0.0
+        LOGGER.warning(
+            "JSON ACK 超时触发发送周期退避：发送间隔 %.3f -> %.3f 秒",
+            previous_interval,
+            next_interval,
+        )
 
     def _wait_for_interval_or_transmit_error(self, timeout):
         """等待发送间隔，同时在发送线程失败时尽快唤醒主循环。"""

@@ -508,9 +508,10 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual([(1, True, 15.0)], service.client.sent_versions)
 
     def test_adaptive_interval_uses_json_ack_history_in_display_snapshot(self):
-        """确认自适应发送间隔根据历史 ACK 耗时计算并同步到 Pico 配置。"""
+        """确认连续慢 ACK 会调整发送间隔并同步到 Pico 配置。"""
         service = RuntimeOperationsHarness(adaptive_transmit=True)
 
+        service._record_json_ack_duration(1.2)
         service._record_json_ack_duration(1.2)
         snapshot = service._display_configuration_snapshot()
 
@@ -526,6 +527,33 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertEqual(500, snapshot["collection_interval_ms"])
         self.assertFalse(snapshot["adaptive_transmit"])
+
+    def test_adaptive_interval_starts_from_fast_period(self):
+        """确认首次连接不受较慢基础配置影响，直接从四百毫秒开始协商。"""
+        service = RuntimeOperationsHarness(adaptive_transmit=True)
+        service.arguments.interval = 8.0
+
+        self.assertAlmostEqual(0.4, service._effective_transmit_interval(), places=3)
+
+    def test_single_slow_startup_ack_does_not_delay_fast_second_probe(self):
+        """确认首帧初始化慢 ACK 不会把下一轮探测推迟到数秒以后。"""
+        service = RuntimeOperationsHarness(adaptive_transmit=True)
+
+        service._record_json_ack_duration(8.0)
+        self.assertAlmostEqual(0.4, service._effective_transmit_interval(), places=3)
+
+        service._record_json_ack_duration(0.32)
+        self.assertAlmostEqual(0.4, service._effective_transmit_interval(), places=3)
+
+    def test_json_ack_timeout_uses_exponential_backoff(self):
+        """确认真正 ACK 超时会从快速档开始按两倍周期向慢档退避。"""
+        service = RuntimeOperationsHarness(adaptive_transmit=True)
+
+        service._record_json_ack_timeout()
+        self.assertAlmostEqual(0.8, service._effective_transmit_interval(), places=3)
+
+        service._record_json_ack_timeout()
+        self.assertAlmostEqual(1.6, service._effective_transmit_interval(), places=3)
 
     def test_adaptive_interval_can_fall_to_three_hundred_milliseconds(self):
         """确认 ACK 足够快时自适应间隔可低于基础值但不会低于 300ms。"""

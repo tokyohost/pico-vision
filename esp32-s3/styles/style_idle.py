@@ -36,7 +36,7 @@ class IdleStyle:
 
     @staticmethod
     def _timestamp_parts(snapshot):
-        """从快照中读取合法的日期和分钟级时间。"""
+        """从快照中读取合法的日期和秒级时间。"""
         timestamp = str((snapshot or {}).get("timestamp") or "")
         if len(timestamp) < 16:
             return None
@@ -46,11 +46,18 @@ class IdleStyle:
             day = int(timestamp[8:10])
             hour = int(timestamp[11:13])
             minute = int(timestamp[14:16])
+            second = int(timestamp[17:19]) if len(timestamp) >= 19 else 0
         except (TypeError, ValueError):
             return None
-        if not (1 <= month <= 12 and 1 <= day <= 31 and 0 <= hour <= 23 and 0 <= minute <= 59):
+        if not (
+            1 <= month <= 12
+            and 1 <= day <= 31
+            and 0 <= hour <= 23
+            and 0 <= minute <= 59
+            and 0 <= second <= 59
+        ):
             return None
-        return year, month, day, hour, minute, timestamp[11:19]
+        return year, month, day, hour, minute, second, "{:02d}:{:02d}:{:02d}".format(hour, minute, second)
 
     @staticmethod
     def _weekday(year, month, day):
@@ -74,27 +81,58 @@ class IdleStyle:
         canvas.text((SCREEN_WIDTH - width) // 2, y, value, color, scale, font_name=font_name)
 
     @staticmethod
-    def _draw_header(canvas):
-        """绘制品牌和待机状态标题。"""
+    def _clip_text(canvas, value, max_width, scale=1, font_name=None):
+        """将文本裁剪到指定像素宽度，避免右上角状态溢出。"""
+        text = str(value or "")
+        while text and canvas.text_width(text, scale, font_name=font_name) > max_width:
+            text = text[:-1]
+        return text
+
+    @staticmethod
+    def _wifi_status(snapshot):
+        """从待机快照中提取 Wi-Fi 连接状态。"""
+        if not isinstance(snapshot, dict):
+            return {}
+        wifi = snapshot.get("wifi")
+        if isinstance(wifi, dict):
+            return wifi
+        boot = snapshot.get("boot")
+        if isinstance(boot, dict) and isinstance(boot.get("wifi"), dict):
+            return boot.get("wifi")
+        return {}
+
+    @classmethod
+    def _draw_header(cls, canvas, snapshot):
+        """绘制品牌和右上角 Wi-Fi 状态。"""
         canvas.text(8, 8, "OMNIWATCH", WHITE)
-        canvas.fill_rect(211, 9, 7, 7, IDLE_GREEN)
-        canvas.text(223, 8, "SYSTEM IDLE", WHITE)
+        wifi = cls._wifi_status(snapshot)
+        connected = bool(wifi.get("connected"))
+        color = IDLE_GREEN if connected else DIM_TEXT
+        if connected:
+            rssi = wifi.get("rssi")
+            ssid = wifi.get("ssid") or "ON"
+            label = "WIFI {}dBm {}".format(rssi, ssid) if rssi is not None else "WIFI {}".format(ssid)
+        else:
+            label = "WIFI OFF"
+        label = cls._clip_text(canvas, label.strip(), 208)
+        text_x = SCREEN_WIDTH - 8 - canvas.text_width(label)
+        canvas.fill_rect(max(104, text_x - 12), 9, 7, 7, color)
+        canvas.text(text_x, 8, label, WHITE if connected else DIM_TEXT)
 
     @classmethod
     def _draw_clock(cls, canvas, parts):
-        """绘制大时钟、日期、中文星期和全天进度。"""
-        year, month, day, hour, minute, clock_with_seconds = parts
+        """绘制大时钟、日期、中文星期和分钟内秒进度。"""
+        year, month, day, hour, minute, second, clock_with_seconds = parts
         clock = "{:02d}:{:02d}".format(hour, minute)
-        canvas.text(206, 35, "{:02d}".format(minute), GHOST_TEXT, 6)
-        cls._center_text(canvas, 50, clock, WHITE, 4)
+        canvas.text(197, 34, "{:02d}".format(minute), GHOST_TEXT, 7)
+        cls._center_text(canvas, 43, clock, WHITE, 5)
         canvas.text(12, 121, "{:04d} / {:02d} / {:02d}".format(year, month, day), WHITE)
         weekday = cls._weekday(year, month, day)
         canvas.text(244, 117, weekday, WHITE, font_name="wqy_8x16")
-        canvas.text(12, 143, "00", DIM_TEXT)
-        canvas.text(298, 143, "24", DIM_TEXT)
+        canvas.text(12, 143, "0", DIM_TEXT)
+        canvas.text(292, 143, "60", DIM_TEXT)
         canvas.fill_rect(31, 147, 260, 2, PANEL_BORDER)
-        elapsed_minutes = hour * 60 + minute
-        canvas.fill_rect(31, 147, 260 * elapsed_minutes // 1440, 2, ACCENT)
+        canvas.fill_rect(31, 147, 260 * second // 60, 2, ACCENT)
         return clock_with_seconds or clock
 
     @classmethod
@@ -115,7 +153,6 @@ class IdleStyle:
         canvas.line(0, top, 0, SCREEN_HEIGHT - 1, PANEL_BORDER)
         canvas.line(SCREEN_WIDTH - 1, top, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 1, PANEL_BORDER)
         canvas.text(12, 169, "SYSTEM LOG", DIM_TEXT)
-        canvas.text(250, 169, "LATEST 3", DIM_TEXT)
         if has_time:
             rows = (
                 (IDLE_GREEN, clock + "  Snapshot received", WHITE),
@@ -138,7 +175,7 @@ class IdleStyle:
     def _draw(cls, canvas, snapshot):
         """完整绘制待机页面。"""
         canvas.clear(BLACK)
-        cls._draw_header(canvas)
+        cls._draw_header(canvas, snapshot)
         parts = cls._timestamp_parts(snapshot)
         clock = cls._draw_clock(canvas, parts) if parts else cls._draw_waiting(canvas)
         cls._draw_log_panel(canvas, parts is not None, clock)

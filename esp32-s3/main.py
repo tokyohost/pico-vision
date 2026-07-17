@@ -480,12 +480,18 @@ class Application:
         self._renderer.set_style(self._idle_style)
         self._idle_active = True
         self._rendering_version = -1
-        self._renderer.request_render(snapshot or {}, force=True)
+        self._renderer.request_render(self._idle_snapshot(snapshot), force=True)
         self._protocol.write(
             "CONFIG:LCD_IDLE:{}:{}MS\n".format(
                 self._idle_style, self._idle_timeout_ms
             ).encode("utf-8")
         )
+
+    def _idle_snapshot(self, snapshot):
+        """为待机样式补充本机 Wi-Fi 状态，避免依赖上位机快照字段。"""
+        idle_snapshot = dict(snapshot or {})
+        idle_snapshot["wifi"] = self._boot_wifi_status()
+        return idle_snapshot
 
     def _return_to_waiting_page(self):
         """切换到系统启动等待页，并保留现有 USB CDC 等待主机重连。"""
@@ -557,7 +563,7 @@ class Application:
                 and not self._renderer.is_rendering()
                 and idle_refresh_due
             ):
-                self._renderer.request_render(snapshot, force=False)
+                self._renderer.request_render(self._idle_snapshot(snapshot), force=False)
                 self._rendering_version = version
                 self._next_clock_render = self._cache.next_refresh_ms(
                     CLOCK_REFRESH_INTERVAL_MS, now

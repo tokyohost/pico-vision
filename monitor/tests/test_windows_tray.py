@@ -492,6 +492,18 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertEqual(r"D:\sdk.bin", command[command.index("--image") + 1])
         self.assertNotIn("--worker", command)
 
+    def test_sdk_flasher_command_can_pass_force_reset_policy(self):
+        """确认手动强刷可把 esptool 下载模式策略传给隐藏入口。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+
+        command = application._sdk_flasher_command(
+            "COM11",
+            r"D:\sdk.bin",
+            before="default-reset",
+        )
+
+        self.assertEqual("default-reset", command[command.index("--before") + 1])
+
     def test_websocket_url_is_persisted_and_applied_to_worker(self):
         """确认发现的 WebSocket 地址保存后会在下次启动传给工作进程。"""
         path = Path(self.temporary_directory.name) / "settings.json"

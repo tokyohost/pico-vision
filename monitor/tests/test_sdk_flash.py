@@ -109,6 +109,24 @@ class SdkImageValidationTest(unittest.TestCase):
         self.assertEqual("watchdog-reset", arguments[arguments.index("--after") + 1])
         self.assertEqual(["write-flash", "0x0"], arguments[-3:-1])
 
+    def test_esptool_can_use_default_reset_for_manual_force_flash(self):
+        """手动强刷入口可让 esptool 控制所选串口进入下载模式。"""
+        image = self.write_image(build_sdk_image())
+        esptool = SimpleNamespace(main=mock.Mock())
+
+        with mock.patch.dict(sys.modules, {"esptool": esptool}):
+            self.assertEqual(0, run_esptool_flash("COM11", image, before="default-reset"))
+
+        arguments = esptool.main.call_args.args[0]
+        self.assertEqual("default-reset", arguments[arguments.index("--before") + 1])
+
+    def test_esptool_rejects_unknown_reset_policy(self):
+        """未知进入下载模式策略必须在调用 esptool 前失败。"""
+        image = self.write_image(build_sdk_image())
+
+        with self.assertRaisesRegex(ValueError, "不支持"):
+            run_esptool_flash("COM11", image, before="unsafe-reset")
+
 
 class SdkBootloaderPortSelectionTest(unittest.TestCase):
     """验证多串口环境按物理位置选择目标 ROM USB 端口。"""

@@ -189,6 +189,12 @@ class DeviceWindowMixin:
             state=tk.DISABLED,
         )
         sdk_button.pack(side=tk.LEFT, padx=(8, 0))
+        force_sdk_button = ttk.Button(
+            action_frame,
+            text="强刷 SDK",
+            state=tk.NORMAL,
+        )
+        force_sdk_button.pack(side=tk.LEFT, padx=(8, 0))
         wifi_button = ttk.Button(
             action_frame,
             text="Wi-Fi 设置",
@@ -254,6 +260,19 @@ class DeviceWindowMixin:
             )
             sdk_button.configure(state=tk.NORMAL if enabled else tk.DISABLED)
 
+        def update_force_sdk_button():
+            """根据后台任务生命周期更新手动强刷 SDK 入口。"""
+            enabled = bool(
+                not sdk_state["flashing"]
+                and not sdk_state["waiting_verification"]
+            )
+            force_sdk_button.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+
+        def update_sdk_buttons(connection=None):
+            """同步受控刷写与手动强刷两个 SDK 操作按钮。"""
+            update_sdk_button(connection)
+            update_force_sdk_button()
+
         def update_wifi_button(connection=None):
             """仅在已连接设备明确支持 Wi-Fi 时显示无线管理入口。"""
             supported = bool(connection and connection.get("connected") and connection.get("wifi_supported"))
@@ -288,6 +307,7 @@ class DeviceWindowMixin:
             sdk_button.configure(state=tk.DISABLED)
             firmware_state["current_version"] = None
             update_wifi_button()
+            update_force_sdk_button()
 
         def refresh_connection_state():
             """消费后台串口状态事件，实时同步设备面板和操作按钮。"""
@@ -351,7 +371,7 @@ class DeviceWindowMixin:
                             )
                     else:
                         status.set("设备已连接")
-                    update_sdk_button(connection)
+                    update_sdk_buttons(connection)
             except queue.Empty:
                 pass
             if root.winfo_exists():
@@ -396,7 +416,7 @@ class DeviceWindowMixin:
                                 probe_connection[field_name] = field_value
                             if field_name == "firmware_version":
                                 firmware_state["current_version"] = field_value
-                            update_sdk_button(probe_connection)
+                            update_sdk_buttons(probe_connection)
                     elif message_type == "connected":
                         append_log("设备已由常驻监控连接，取消重复探测。\n")
                         probe_button.configure(state=tk.NORMAL)
@@ -411,7 +431,7 @@ class DeviceWindowMixin:
                         if success:
                             probe_connection["connected"] = True
                             update_wifi_button(probe_connection)
-                            update_sdk_button(probe_connection)
+                            update_sdk_buttons(probe_connection)
                         else:
                             clear_connected_device()
                     elif message_type == "firmware_checked":
@@ -423,6 +443,7 @@ class DeviceWindowMixin:
                             status.set("设备固件已是最新版本：{}".format(current_version))
                             append_log("设备固件已是最新版本：{}\n".format(current_version))
                             firmware_button.configure(state=tk.NORMAL)
+                            update_force_sdk_button()
                             self.update_lock.release()
                         elif messagebox.askyesno(
                             "设备固件更新",
@@ -450,6 +471,7 @@ class DeviceWindowMixin:
                             status.set("已取消设备固件更新")
                             reboot_button.configure(state=tk.NORMAL)
                             firmware_button.configure(state=tk.NORMAL)
+                            update_force_sdk_button()
                             self.update_lock.release()
                     elif message_type == "firmware_finished":
                         success, detail = content
@@ -459,6 +481,7 @@ class DeviceWindowMixin:
                         append_log(detail + "\n")
                         firmware_button.configure(state=tk.NORMAL)
                         reboot_button.configure(state=tk.NORMAL)
+                        update_force_sdk_button()
                         self.update_lock.release()
                     elif message_type == "firmware_error":
                         progress.stop()
@@ -467,6 +490,7 @@ class DeviceWindowMixin:
                         append_log("检查设备固件更新失败：{}\n".format(content))
                         reboot_button.configure(state=tk.NORMAL)
                         firmware_button.configure(state=tk.NORMAL)
+                        update_force_sdk_button()
                         self.update_lock.release()
                     elif message_type == "sdk_log":
                         append_log(str(content).rstrip("\r\n") + "\n")
@@ -494,7 +518,9 @@ class DeviceWindowMixin:
                             firmware_button.configure(state=tk.DISABLED if success else tk.NORMAL)
                         if not success or already_verified:
                             update_wifi_button(self._get_device_connection())
-                            update_sdk_button(self._get_device_connection())
+                            update_sdk_buttons(self._get_device_connection())
+                        else:
+                            update_force_sdk_button()
             except queue.Empty:
                 pass
             if root.winfo_exists():
@@ -614,6 +640,7 @@ class DeviceWindowMixin:
                 status.set("已有更新任务正在执行，请稍候")
                 return
             firmware_button.configure(state=tk.DISABLED)
+            force_sdk_button.configure(state=tk.DISABLED)
             reboot_button.configure(state=tk.DISABLED)
             progress.configure(mode="indeterminate")
             progress.start(12)
@@ -625,6 +652,87 @@ class DeviceWindowMixin:
             ).start()
 
         firmware_button.configure(command=start_firmware_check)
+
+        def choose_force_sdk_port():
+            """弹出串口选择对话框并返回用户确认的 COM 口名称。"""
+            ports = list(list_ports.comports())
+            if not ports:
+                messagebox.showerror("没有可用 COM 口", "当前系统没有枚举到任何串口。", parent=root)
+                return None
+            dialog = tk.Toplevel(root)
+            dialog.title("选择强刷 COM 口")
+            dialog.transient(root)
+            dialog.grab_set()
+            dialog.resizable(False, False)
+            selected_value = tk.StringVar(master=dialog)
+            selected_port = {"device": None}
+            port_labels = []
+            port_devices = {}
+            for port in ports:
+                device = str(getattr(port, "device", "") or "").strip()
+                description = str(getattr(port, "description", "") or "未知设备").strip()
+                vid = getattr(port, "vid", None)
+                pid = getattr(port, "pid", None)
+                identity = "VID:{:04X} PID:{:04X}".format(vid, pid) if vid is not None and pid is not None else "VID/PID 未知"
+                label = "{} - {} ({})".format(device, description, identity)
+                port_labels.append(label)
+                port_devices[label] = device
+            selected_value.set(port_labels[0])
+            ttk.Label(
+                dialog,
+                text="请选择已进入下载模式或可由 esptool 控制的目标 COM 口：",
+            ).pack(fill=tk.X, padx=16, pady=(16, 8))
+            combo = ttk.Combobox(
+                dialog,
+                textvariable=selected_value,
+                values=port_labels,
+                state="readonly",
+                width=58,
+            )
+            combo.pack(fill=tk.X, padx=16, pady=(0, 12))
+            combo.focus_set()
+            button_frame = ttk.Frame(dialog)
+            button_frame.pack(fill=tk.X, padx=16, pady=(0, 16))
+
+            def confirm():
+                """确认选择并关闭串口选择对话框。"""
+                selected_port["device"] = port_devices.get(selected_value.get())
+                dialog.destroy()
+
+            def cancel():
+                """取消选择并关闭串口选择对话框。"""
+                selected_port["device"] = None
+                dialog.destroy()
+
+            ttk.Button(button_frame, text="取消", command=cancel).pack(side=tk.RIGHT)
+            ttk.Button(button_frame, text="确定", command=confirm).pack(side=tk.RIGHT, padx=(0, 8))
+            dialog.protocol("WM_DELETE_WINDOW", cancel)
+            root.wait_window(dialog)
+            return selected_port["device"]
+
+        def run_sdk_flash_process(port, information, before=None):
+            """运行隔离 SDK 刷写进程，并把输出转发到设备管理日志。"""
+            flash_process = subprocess.Popen(
+                self._sdk_flasher_command(port, information.path, before=before),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=0x08000000,
+                env=dict(
+                    os.environ,
+                    PYTHONIOENCODING="utf-8",
+                    PYTHONUTF8="1",
+                    PYTHONUNBUFFERED="1",
+                    NO_COLOR="1",
+                ),
+            )
+            for line in flash_process.stdout:
+                messages.put(("sdk_log", line))
+            return_code = flash_process.wait()
+            if return_code != 0:
+                raise RuntimeError("esptool 刷写失败，返回码 {}".format(return_code))
 
         def install_sdk(information, connection):
             """切换设备到 ROM USB，运行隔离刷写子进程并恢复常驻监控。"""
@@ -668,27 +776,7 @@ class DeviceWindowMixin:
                 )
                 messages.put(("sdk_log", "已识别 ROM 下载端口：{}".format(bootloader_port)))
 
-                flash_process = subprocess.Popen(
-                    self._sdk_flasher_command(bootloader_port, information.path),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    creationflags=0x08000000,
-                    env=dict(
-                        os.environ,
-                        PYTHONIOENCODING="utf-8",
-                        PYTHONUTF8="1",
-                        PYTHONUNBUFFERED="1",
-                        NO_COLOR="1",
-                    ),
-                )
-                for line in flash_process.stdout:
-                    messages.put(("sdk_log", line))
-                return_code = flash_process.wait()
-                if return_code != 0:
-                    raise RuntimeError("esptool 刷写失败，返回码 {}".format(return_code))
+                run_sdk_flash_process(bootloader_port, information)
                 result = (
                     True,
                     "USB SDK 刷写完成，正在重新连接并校验版本……",
@@ -765,6 +853,7 @@ class DeviceWindowMixin:
             probe_button.configure(state=tk.DISABLED)
             firmware_button.configure(state=tk.DISABLED)
             sdk_button.configure(state=tk.DISABLED)
+            force_sdk_button.configure(state=tk.DISABLED)
             reboot_button.configure(state=tk.DISABLED)
             wifi_button.configure(state=tk.DISABLED)
             websocket_clients_button.configure(state=tk.DISABLED)
@@ -788,6 +877,106 @@ class DeviceWindowMixin:
 
         sdk_button.configure(command=start_sdk_flash)
 
+        def install_forced_sdk(information, port):
+            """在用户指定 COM 口上执行手动强刷 SDK 并恢复常驻监控。"""
+            result = None
+            try:
+                worker = self.worker_process
+                if worker is not None and worker.poll() is None:
+                    messages.put(("sdk_log", "正在暂停常驻监控，准备独占串口刷写……"))
+                    self._stop_worker()
+                self.worker_process = None
+                messages.put(("sdk_log", "正在通过 {} 强制刷写 SDK……".format(port)))
+                run_sdk_flash_process(port, information, before="default-reset")
+                result = (
+                    True,
+                    "强刷 SDK 完成，正在重新连接并校验版本……",
+                    information.sdk_version,
+                )
+            except Exception as error:
+                LOGGER.exception("强刷 SDK 失败：%s", error)
+                result = (False, "强刷 SDK 失败：{}".format(error), None)
+            finally:
+                success, _detail, expected_version = result
+                sdk_state["flashing"] = False
+                sdk_state["waiting_verification"] = bool(success)
+                sdk_state["expected_version"] = expected_version if success else None
+                messages.put(("sdk_finished", result))
+                try:
+                    if not self.stopping.is_set():
+                        self._start_worker()
+                finally:
+                    self.update_lock.release()
+
+        def start_force_sdk_flash():
+            """选择 SDK bin 和 COM 口，经确认后执行手动强刷。"""
+            selected_path = filedialog.askopenfilename(
+                parent=root,
+                title="选择 ESP32-S3 SDK 合并镜像",
+                filetypes=(("ESP32-S3 SDK bin", "*.bin"), ("所有文件", "*.*")),
+            )
+            if not selected_path:
+                return
+            try:
+                information = inspect_sdk_image(selected_path)
+            except ValueError as error:
+                messagebox.showerror("SDK 镜像无效", str(error), parent=root)
+                return
+            port = choose_force_sdk_port()
+            if not port:
+                return
+            if not messagebox.askyesno(
+                "确认强刷 SDK",
+                "目标 COM 口：{}\n"
+                "目标 SDK：{}\n"
+                "镜像大小：{:.2f} MiB\n"
+                "SHA-256：{}\n\n"
+                "强刷会让 esptool 尝试控制所选 COM 口进入下载模式。\n"
+                "请确认该 COM 口属于目标 ESP32-S3 设备，刷写期间请勿断电。\n\n"
+                "是否继续？".format(
+                    port,
+                    information.sdk_version,
+                    information.size / (1024 * 1024),
+                    information.sha256,
+                ),
+                parent=root,
+            ):
+                return
+            if not self.update_lock.acquire(blocking=False):
+                status.set("已有更新任务正在执行，请稍候")
+                return
+            sdk_state["flashing"] = True
+            sdk_state["waiting_verification"] = False
+            sdk_state["expected_version"] = information.sdk_version
+            sdk_state["verification_completed"] = False
+            probe_button.configure(state=tk.DISABLED)
+            firmware_button.configure(state=tk.DISABLED)
+            sdk_button.configure(state=tk.DISABLED)
+            force_sdk_button.configure(state=tk.DISABLED)
+            reboot_button.configure(state=tk.DISABLED)
+            wifi_button.configure(state=tk.DISABLED)
+            websocket_clients_button.configure(state=tk.DISABLED)
+            progress.configure(mode="indeterminate")
+            progress.start(12)
+            status.set("正在强刷 USB SDK，请勿断开设备……")
+            append_log(
+                "开始强刷 SDK：COM口={}，文件={}，目标版本={}，大小={} 字节，SHA-256={}。\n".format(
+                    port,
+                    information.path.name,
+                    information.sdk_version,
+                    information.size,
+                    information.sha256,
+                )
+            )
+            threading.Thread(
+                target=install_forced_sdk,
+                args=(information, port),
+                name="强刷 USB SDK",
+                daemon=True,
+            ).start()
+
+        force_sdk_button.configure(command=start_force_sdk_flash)
+
         def show_connected_device(connection):
             """将已连接设备快照显示到设备管理面板。"""
             connection_values["connection_method"].set(
@@ -805,7 +994,7 @@ class DeviceWindowMixin:
             firmware_button.configure(state=tk.NORMAL)
             firmware_state["current_version"] = connection.get("firmware_version")
             update_wifi_button(connection)
-            update_sdk_button(connection)
+            update_sdk_buttons(connection)
             progress.stop()
             progress.configure(mode="determinate", maximum=100, value=100)
             status.set("设备已连接")
@@ -912,6 +1101,7 @@ class DeviceWindowMixin:
             probe_button.configure(state=tk.DISABLED)
             reboot_button.configure(state=tk.DISABLED)
             sdk_button.configure(state=tk.DISABLED)
+            force_sdk_button.configure(state=tk.DISABLED)
             status.set("正在主动探测 OmniWatch 设备，请稍候……")
             progress.configure(mode="indeterminate")
             progress.start(12)
