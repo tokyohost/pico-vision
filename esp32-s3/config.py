@@ -19,7 +19,7 @@ BOARD_MODEL = "ESP32-S3"
 # 开发源码使用 development；正式升级包由打包工具写入发布版本。
 FIRMWARE_VERSION = "development"
 # LCD 屏幕方案：具体分辨率、色彩、显存偏移和 GPIO 均由 lcd 目录中的档案定义。
-LCD_DEVICE_TYPE = "st7789-2inch-8pin-a"
+LCD_DEVICE_TYPE = "st7789-2.4inch-10pin-a"
 
 
 # LCD 通用刷新参数。

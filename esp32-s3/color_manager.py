@@ -25,13 +25,16 @@ class ColorProfile:
 
 
 # 旧款 ST7789VW 二英寸模组需要反色，且按 RGB 顺序解释像素。
-# 新款二点四英寸模组使用正常色阶；另保留 BGR 变体兼容不同批次面板。
+# 二点四英寸八针模组使用正常色阶，十针 A 款需要反色；另保留 BGR 变体兼容不同批次面板。
 _ST7789VW_2INCH_PROFILE = ColorProfile("st7789vw_2inch", True, False)
 _COLOR_PROFILES = {
     "st7789vw_2inch": _ST7789VW_2INCH_PROFILE,
     # 保留旧名称作为兼容别名，读取后统一返回规范的芯片型号名称。
     "st7789_2inch": _ST7789VW_2INCH_PROFILE,
     "st7789_2_4inch": ColorProfile("st7789_2_4inch", False, False),
+    "st7789_2_4inch_10pin_a": ColorProfile(
+        "st7789_2_4inch_10pin_a", True, False
+    ),
     "st7789_2_4inch_bgr": ColorProfile(
         "st7789_2_4inch_bgr", False, True
     ),
@@ -52,5 +55,6 @@ def available_color_profiles():
     return (
         "st7789vw_2inch",
         "st7789_2_4inch",
+        "st7789_2_4inch_10pin_a",
         "st7789_2_4inch_bgr",
     )

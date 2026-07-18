@@ -7,10 +7,57 @@
 - 开发板：ESP32-S3
 - 状态灯：GPIO48 板载 WS2812，单灯珠
 - LCD 总线：SPI2，SCK GPIO12，MOSI GPIO11，保留 MISO GPIO15
-- LCD 控制：CS GPIO10，DC GPIO9，RST GPIO14，背光 PWM GPIO13
+- LCD 控制：CS GPIO10，DC/RS GPIO9，RST/RESET GPIO14，背光 PWM GPIO13
+- 默认 LCD：ST7789 2.4 英寸十针 SPI A 款，排针顺序为 GND、RS、CS、SCL、SDA、RESET、VDD、GND、LED+、LED-
+- 十针信号：RS 接 GPIO9，CS 接 GPIO10，SCL 接 GPIO12，SDA 接 GPIO11，RESET 接 GPIO14
+- 十针背光：LED+ 接受限电源，LED- 通过外部低端 MOSFET 调光，GPIO13 只驱动 MOSFET 栅极
 - 按键：GPIO1、GPIO2、GPIO3，低电平有效并启用内部上拉
 - 通信：ESP32-S3 内置 USB 控制台和可选 Wi-Fi WebSocket
 - WebSocket：客户端握手携带设备名称和稳定标识；设备持久化连接记录，并支持禁用、优先级抢占和单活动连接 JSON 同步
+
+## 10pin LCD 接线图
+
+ST7789 2.4 英寸十针 SPI A 款屏幕按以下排针顺序连接 ESP32-S3：
+
+```text
+ST7789 10pin LCD                  ESP32-S3
+------------------------------------------------
+1  GND        ------------------  GND
+2  RS / DC    ------------------  GPIO9
+3  CS         ------------------  GPIO10
+4  SCL / SCK  ------------------  GPIO12
+5  SDA / MOSI ------------------  GPIO11
+6  RESET      ------------------  GPIO14
+7  VDD        ------------------  3V3
+8  GND        ------------------  GND
+9  LED+       ------------------  受限流的背光电源正极
+10 LED-       ------------------  MOSFET 背光模块 LED- 端子
+```
+
+背光使用 GPIO13 驱动外部低端 MOSFET，GPIO 不直接承载 LED 背光电流：
+
+```text
+MOSFET 背光模块端子              连接位置
+------------------------------------------------
+PWM / SIG / IN  --------------  ESP32-S3 GPIO13
+GND             --------------  ESP32-S3 GND
+LED-            --------------  LCD 第 10 脚 LED-
+GND             --------------  背光电源 GND，与 ESP32-S3 GND 共地
+```
+
+如果使用裸 MOSFET 而不是成品背光模块，则按以下方式连接：
+
+```text
+GPIO13 ----[100R~220R]---- MOSFET G
+GPIO13 ----[10K下拉]------ GND
+
+MOSFET S ----------------- GND
+MOSFET D ----------------- LCD LED-
+LCD LED+ ----------------- 受限流的背光电源正极
+ESP32-S3 GND ------------- 背光电源 GND 共地
+```
+
+LED+ 必须接带限流的背光电源正极，不要让 GPIO 或无保护电源直接承担背光电流。
 
 ## 固件要求
 
