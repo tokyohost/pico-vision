@@ -330,7 +330,7 @@ class Game2Style:
         color = cls._usage_color(percent)
         temperature = cpu.get("temperature_c") or cpu.get("temperature")
         cls._frame(canvas, 160, 31, 158, 55, GREEN)
-        canvas.text(166, 38, "CPU", GREEN, 1)
+        canvas.text(166, 36, "CPU", GREEN, 2)
         percent_text = "{}%".format(percent)
         cls._right_text(canvas, 312, 36, percent_text, color, 2)
         temp_text = "--℃" if temperature is None else "{}℃".format(int(cls._number(temperature)))
@@ -353,19 +353,25 @@ class Game2Style:
         color = cls._usage_color(percent)
         temperature = gpu.get("temperature_c") or gpu.get("temperature")
         cls._frame(canvas, 2, 121, 154, 87, PURPLE)
-        canvas.text(8, 128, "GPU", PURPLE, 1)
+        canvas.text(8, 126, "GPU", PURPLE, 2)
         percent_text = "N/A" if raw_percent is None else "{}%".format(percent)
         cls._right_text(canvas, 150, 126, percent_text, color, 2)
         temp_text = "--℃" if temperature is None else "{}℃".format(int(cls._number(temperature)))
         canvas.text(8, 148, temp_text, cls._temperature_color(temperature), 1)
         used_vram = gpu.get("dedicated_memory_used_bytes")
         total_vram = gpu.get("dedicated_memory_total_bytes")
-        if total_vram:
+        total_vram_value = cls._number(total_vram)
+        if total_vram_value > 0:
             vram_text = "VRAM " + cls._format_bytes(used_vram) + "/" + cls._format_bytes(total_vram)
+            vram_percent = cls._number(used_vram) * 100 / total_vram_value
         else:
             vram_text = "VRAM --/--"
+            vram_percent = 0
         cls._right_text(canvas, 150, 148, cls._fit_text(canvas, vram_text, 92), WHITE, 1)
-        cls._bar(canvas, 8, 163, 142, 8, percent, color)
+        cls._bar(
+            canvas, 8, 163, 142, 8,
+            vram_percent, cls._usage_color(vram_percent),
+        )
         cls._history(
             canvas, 8, 176, 142, 27, gpu.get("history"), color,
             percentage=True, color_by_value=True,
@@ -378,7 +384,7 @@ class Game2Style:
         percent = int(cls._number(memory.get("percent")))
         color = cls._usage_color(percent)
         cls._frame(canvas, 160, 90, 158, 55, PURPLE)
-        canvas.text(166, 97, "MEM", PURPLE, 1)
+        canvas.text(166, 95, "MEM", PURPLE, 2)
         percent_text = "{}%".format(percent)
         cls._right_text(canvas, 312, 95, percent_text, color, 2)
         used_text = cls._format_bytes(memory.get("used_bytes"))
