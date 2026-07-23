@@ -105,7 +105,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="two-columns">
+  <div class="network-stack">
     <el-card shadow="never" v-loading="wifi.loading">
       <template #header>
         <div class="card-header">
@@ -116,7 +116,7 @@ onMounted(() => {
       <el-input v-model="wifi.ssid" placeholder="网络名称" class="section-gap" />
       <el-input v-model="wifi.password" type="password" show-password placeholder="网络密码" class="section-gap" />
       <el-button type="primary" class="section-gap" :loading="wifi.connecting" :disabled="!wifi.ssid" @click="connectWifi">连接网络</el-button>
-      <el-table :data="wifi.networks" class="section-gap" highlight-current-row @row-click="selectWifi">
+      <el-table :data="wifi.networks" class="section-gap dark-table" highlight-current-row @row-click="selectWifi">
         <el-table-column prop="ssid" label="SSID" />
         <el-table-column prop="state_label" label="状态" width="90" />
         <el-table-column label="信号" width="90">
@@ -139,16 +139,42 @@ onMounted(() => {
         </div>
       </template>
       <el-empty v-if="!websocket.clients.length" description="暂无客户端记录" />
-      <div v-for="client in websocket.clients" :key="client.id" class="client-row">
-        <div>
-          <strong>{{ client.name || client.id }}</strong>
-          <small>{{ client.active ? '当前连接' : (client.enabled === false ? '已禁用' : '允许') }} · {{ client.last_peer || '无最近地址' }} · {{ client.connections || 0 }} 次</small>
-          <small>{{ client.id }}</small>
-        </div>
-        <el-switch v-model="client.enabled" />
-        <el-input-number v-model="client.priority" :min="-1000" :max="1000" size="small" />
-        <el-button size="small" @click="saveClient(client)">保存</el-button>
-      </div>
+      <el-table v-else :data="websocket.clients" class="dark-table">
+        <el-table-column label="客户端" min-width="210">
+          <template #default="{ row }">
+            <div class="client-identity">
+              <strong>{{ row.name || row.id }}</strong>
+              <small>{{ row.id }}</small>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="110">
+          <template #default="{ row }">
+            <el-tag v-if="row.active" type="success" size="small">当前连接</el-tag>
+            <el-tag v-else-if="row.enabled === false" type="info" size="small">已禁用</el-tag>
+            <el-tag v-else type="primary" size="small">允许</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="last_peer" label="最近地址" min-width="180">
+          <template #default="{ row }">{{ row.last_peer || '无最近地址' }}</template>
+        </el-table-column>
+        <el-table-column prop="connections" label="连接次数" width="100">
+          <template #default="{ row }">{{ row.connections || 0 }}</template>
+        </el-table-column>
+        <el-table-column label="启用" width="90">
+          <template #default="{ row }"><el-switch v-model="row.enabled" /></template>
+        </el-table-column>
+        <el-table-column label="优先级" width="140">
+          <template #default="{ row }">
+            <el-input-number v-model="row.priority" :min="-1000" :max="1000" size="small" />
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="90" align="right">
+          <template #default="{ row }">
+            <el-button size="small" type="primary" plain @click="saveClient(row)">保存</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
     </el-card>
   </div>
 </template>

@@ -3,13 +3,21 @@
 import base64
 import json
 import logging
+import os
 import queue
 import subprocess
+import threading
 import time
 
 import custom_data
+from serial.tools import list_ports
 from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
 from qbittorrent_monitor import QbittorrentApiClient
+from sdk_flash import (
+    inspect_sdk_image,
+    is_espressif_usb_port,
+    wait_for_esp32s3_bootloader_port,
+)
 
 from .constants import APPLICATION_NAME
 from .settings import (
@@ -18,7 +26,10 @@ from .settings import (
     normalize_collection_task_intervals,
     style_names,
 )
-from .ui.device_window import parse_device_information_line
+from .ui.device_window import (
+    format_connection_method,
+    parse_device_information_line,
+)
 from .ui.wifi_window import (
     merge_wifi_networks,
     wifi_security_label,
@@ -27,18 +38,28 @@ from .ui.wifi_window import (
 
 
 LOGGER = logging.getLogger("pico-monitor.web-ui")
+SDK_IMAGE_FILE_TYPES = ("SDK 镜像 (*.bin)", "所有文件 (*.*)")
 
 
 class WebViewBridge:
     """向 Vue 界面公开单一 action 调用入口，不创建任何 HTTP 服务。"""
 
-    __slots__ = ("_application",)
+    __slots__ = ("_application", "_sdk_lock", "_sdk_state")
 
     def __init__(self, application):
         """保存托盘应用引用，供桥接动作复用现有业务能力。"""
         # pywebview 会递归暴露公开属性；宿主对象必须保持私有，避免扫描到
         # settings_window.native.browser.webview 并跨线程读取 WebView2 COM 属性。
         self._application = application
+        self._sdk_lock = threading.Lock()
+        self._sdk_state = {
+            "busy": False,
+            "status": "idle",
+            "message": "",
+            "image_path": None,
+            "image": None,
+            "logs": [],
+        }
 
     def invoke(self, action, payload=None):
         """按动作名称调用受控业务方法，并返回可 JSON 序列化结果。"""
@@ -51,6 +72,10 @@ class WebViewBridge:
             "device.probe": self._probe_device,
             "device.screenshot": self._take_screenshot,
             "device.reboot": self._reboot_device,
+            "device.sdk.select": self._select_sdk_image,
+            "device.sdk.ports": self._sdk_ports,
+            "device.sdk.flash": self._start_sdk_flash,
+            "device.sdk.status": self._sdk_status,
             "wifi.list": self._wifi_list,
             "wifi.connect": self._wifi_connect,
             "wifi.forget": self._wifi_forget,
@@ -247,6 +272,269 @@ class WebViewBridge:
         return self._wait_worker_result(
             self._application.device_management_messages, 20
         )
+
+    @staticmethod
+    def _sdk_flash_allowed(connection):
+        """判断当前连接是否满足 ESP32-S3 原生 USB 受控刷写条件。"""
+        if not connection or not connection.get("connected"):
+            return False
+        board_model = str(connection.get("board_model") or "").lower().replace(
+            "_", "-"
+        )
+        return bool(
+            "esp32-s3" in board_model
+            and format_connection_method(connection).startswith("USB CDC")
+            and connection.get("sdk_update_supported")
+            and is_espressif_usb_port(connection.get("address"))
+        )
+
+    @staticmethod
+    def _sdk_image_payload(information):
+        """将 SDK 镜像校验结果转换为可供界面展示的安全摘要。"""
+        return {
+            "name": information.path.name,
+            "sdkVersion": information.sdk_version,
+            "size": information.size,
+            "sha256": information.sha256,
+        }
+
+    def _append_sdk_log(self, content):
+        """追加 SDK 刷写日志，并限制界面侧缓存的最大行数。"""
+        line = str(content).rstrip("\r\n")
+        if not line:
+            return
+        LOGGER.info("[SDK 更新] %s", line)
+        with self._sdk_lock:
+            self._sdk_state["logs"].append(line)
+            del self._sdk_state["logs"][:-1000]
+
+    def _select_sdk_image(self, payload):
+        """选择并严格校验 ESP32-S3 完整合并 SDK 镜像。"""
+        del payload
+        with self._sdk_lock:
+            if self._sdk_state["busy"]:
+                raise RuntimeError("SDK 更新正在执行，不能更换镜像")
+        path = self._select_file(SDK_IMAGE_FILE_TYPES)
+        if not path:
+            return {"cancelled": True}
+        information = inspect_sdk_image(path)
+        image = self._sdk_image_payload(information)
+        with self._sdk_lock:
+            self._sdk_state["image_path"] = str(information.path)
+            self._sdk_state["image"] = image
+        return {"cancelled": False, "image": image}
+
+    def _sdk_ports(self, payload):
+        """返回强刷模式可供用户明确选择的串口清单。"""
+        del payload
+        ports = []
+        for port in list_ports.comports():
+            device = str(getattr(port, "device", "") or "").strip()
+            if not device:
+                continue
+            vid = getattr(port, "vid", None)
+            pid = getattr(port, "pid", None)
+            identity = (
+                "VID:{:04X} PID:{:04X}".format(vid, pid)
+                if vid is not None and pid is not None
+                else "VID/PID 未知"
+            )
+            ports.append({
+                "device": device,
+                "label": "{} - {} ({})".format(
+                    device,
+                    str(getattr(port, "description", "") or "未知设备").strip(),
+                    identity,
+                ),
+            })
+        return {"ports": ports}
+
+    def _sdk_status(self, payload):
+        """返回当前 SDK 更新状态和实时刷写日志快照。"""
+        del payload
+        with self._sdk_lock:
+            return {
+                "busy": self._sdk_state["busy"],
+                "status": self._sdk_state["status"],
+                "message": self._sdk_state["message"],
+                "image": self._sdk_state["image"],
+                "logs": "\n".join(self._sdk_state["logs"]),
+            }
+
+    def _run_sdk_flash_process(self, port, information, before=None):
+        """运行隔离的 esptool 子进程，并实时收集标准输出。"""
+        process = subprocess.Popen(
+            self._application._sdk_flasher_command(
+                port, information.path, before=before
+            ),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=0x08000000,
+            env=dict(
+                os.environ,
+                PYTHONIOENCODING="utf-8",
+                PYTHONUTF8="1",
+                PYTHONUNBUFFERED="1",
+                NO_COLOR="1",
+            ),
+        )
+        if process.stdout is not None:
+            for line in process.stdout:
+                self._append_sdk_log(line)
+        return_code = process.wait()
+        if return_code != 0:
+            raise RuntimeError("esptool 刷写失败，返回码 {}".format(return_code))
+
+    def _run_controlled_sdk_flash(self, information, connection):
+        """让已连接设备进入 ROM USB 模式后执行受控 SDK 刷写。"""
+        worker = self._application.worker_process
+        if worker is None or worker.poll() is not None or worker.stdin is None:
+            raise RuntimeError("当前没有可控制的 USB 设备连接")
+        source_device = str(connection.get("address") or "").strip()
+        if not source_device:
+            raise RuntimeError("无法确定当前 USB 设备的串口")
+        previous_ports = tuple(list_ports.comports())
+        self._drain_queue(self._application.sdk_flash_messages)
+
+        # 提前解除托盘对旧工作进程的所有权，避免正常退出后被日志线程自动拉起。
+        self._application.worker_process = None
+        worker.stdin.write("EXIT_SDK_BOOTLOADER\n")
+        worker.stdin.flush()
+        self._append_sdk_log("已发送受控 ROM 下载模式命令，等待设备确认……")
+        try:
+            result = self._application.sdk_flash_messages.get(timeout=12)
+        except queue.Empty as error:
+            raise RuntimeError("等待设备进入 ROM USB 下载模式超时") from error
+        if result.get("status") != "ok":
+            raise RuntimeError(
+                result.get("message") or "设备拒绝进入 ROM USB 下载模式"
+            )
+        self._append_sdk_log(result.get("message") or "设备已确认")
+        try:
+            worker.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            worker.terminate()
+            worker.wait(timeout=2)
+
+        self._append_sdk_log("正在等待 ESP32-S3 ROM USB 串口重新枚举……")
+        bootloader_port = wait_for_esp32s3_bootloader_port(
+            source_device, previous_ports, timeout=15.0
+        )
+        self._append_sdk_log("已识别 ROM 下载端口：{}".format(bootloader_port))
+        self._run_sdk_flash_process(bootloader_port, information)
+
+    def _run_forced_sdk_flash(self, information, port):
+        """暂停常驻监控，并在用户指定串口上执行强制 SDK 刷写。"""
+        worker = self._application.worker_process
+        if worker is not None and worker.poll() is None:
+            self._append_sdk_log("正在暂停常驻监控，准备独占串口刷写……")
+            self._application._stop_worker()
+        self._application.worker_process = None
+        self._append_sdk_log("正在通过 {} 强制刷写 SDK……".format(port))
+        self._run_sdk_flash_process(port, information, before="default-reset")
+
+    def _run_sdk_flash_task(self, information, connection, force, port):
+        """执行 SDK 刷写后台任务，并统一恢复工作进程和更新锁。"""
+        controlled_worker = (
+            None if force else self._application.worker_process
+        )
+        try:
+            if force:
+                self._run_forced_sdk_flash(information, port)
+            else:
+                self._run_controlled_sdk_flash(information, connection)
+            message = "SDK 刷写完成，正在重新连接设备并校验版本"
+            self._append_sdk_log(message)
+            with self._sdk_lock:
+                self._sdk_state["status"] = "success"
+                self._sdk_state["message"] = message
+        except Exception as error:
+            LOGGER.exception("Web 设备管理 SDK 刷写失败：%s", error)
+            message = "SDK 刷写失败：{}".format(error)
+            self._append_sdk_log(message)
+            with self._sdk_lock:
+                self._sdk_state["status"] = "error"
+                self._sdk_state["message"] = message
+        finally:
+            with self._sdk_lock:
+                self._sdk_state["busy"] = False
+            try:
+                if (
+                    controlled_worker is not None
+                    and controlled_worker.poll() is None
+                ):
+                    try:
+                        controlled_worker.terminate()
+                        controlled_worker.wait(timeout=2)
+                    except (OSError, subprocess.TimeoutExpired):
+                        controlled_worker.kill()
+                if not self._application.stopping.is_set():
+                    self._application._start_worker()
+            except Exception as error:
+                LOGGER.exception("SDK 刷写后恢复后台监控失败：%s", error)
+                message = "SDK 刷写结束，但恢复后台监控失败：{}".format(error)
+                self._append_sdk_log(message)
+                with self._sdk_lock:
+                    self._sdk_state["status"] = "error"
+                    self._sdk_state["message"] = message
+            finally:
+                self._application.update_lock.release()
+
+    def _start_sdk_flash(self, payload):
+        """复核镜像和连接条件后启动受控刷写或手动强刷任务。"""
+        force = bool(payload.get("force"))
+        port = str(payload.get("port") or "").strip()
+        with self._sdk_lock:
+            image_path = self._sdk_state["image_path"]
+            busy = self._sdk_state["busy"]
+        if busy:
+            raise RuntimeError("SDK 更新正在执行，请稍候")
+        if not image_path:
+            raise ValueError("请先选择并校验 SDK 镜像")
+        information = inspect_sdk_image(image_path)
+        connection = self._application._get_device_connection()
+        if force:
+            available_ports = {
+                str(getattr(item, "device", "") or "").strip()
+                for item in list_ports.comports()
+            }
+            if not port or port not in available_ports:
+                raise ValueError("请选择当前系统中有效的目标 COM 口")
+        elif not self._sdk_flash_allowed(connection):
+            raise RuntimeError(
+                "当前连接不支持受控 SDK 刷写，请使用 ESP32-S3 原生 USB CDC 连接"
+            )
+        if not self._application.update_lock.acquire(blocking=False):
+            raise RuntimeError("已有更新任务正在执行，请稍候")
+
+        mode = "强刷" if force else "受控刷写"
+        with self._sdk_lock:
+            self._sdk_state.update({
+                "busy": True,
+                "status": "running",
+                "message": "正在{} SDK，请勿断电或拔线".format(mode),
+                "image": self._sdk_image_payload(information),
+                "logs": [],
+            })
+        self._append_sdk_log(
+            "开始{} SDK：文件={}，目标版本={}，大小={} 字节，SHA-256={}。".format(
+                mode,
+                information.path.name,
+                information.sdk_version,
+                information.size,
+                information.sha256,
+            )
+        )
+        threading.Thread(
+            target=self._run_sdk_flash_task,
+            args=(information, connection, force, port),
+            name="Web SDK 更新",
+            daemon=True,
+        ).start()
+        return self._sdk_status({})
 
     def _wait_worker_result(self, target, timeout=12, expected_action=None):
         """等待匹配 action 的异步结果，并忽略队列中的陈旧响应。"""

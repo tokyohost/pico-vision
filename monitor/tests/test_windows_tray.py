@@ -33,7 +33,7 @@ from win.ui.settings_window import (
     insert_decimal_point,
     is_decimal_interval_input,
 )
-from win.ui_web import WebViewBridge
+from win.ui_web import SDK_IMAGE_FILE_TYPES, WebViewBridge
 from style_validator import ValidatedStyle
 
 
@@ -183,6 +183,37 @@ class WindowsTraySettingsTest(unittest.TestCase):
 
         self.assertEqual(result["status"], "ok")
         application._write_worker_command.assert_called_once_with("EXIT_REBOOT\n")
+
+    @mock.patch("win.ui_web.is_espressif_usb_port", return_value=True)
+    def test_web_bridge_allows_supported_esp32s3_usb_sdk_flash(self, usb_port):
+        """确认 Web 设备页只为声明能力的 ESP32-S3 原生 USB 连接启用刷写。"""
+        connection = {
+            "connected": True,
+            "board_model": "ESP32-S3",
+            "transport": "串口",
+            "address": "COM11",
+            "sdk_update_supported": True,
+        }
+
+        self.assertTrue(WebViewBridge._sdk_flash_allowed(connection))
+        usb_port.assert_called_once_with("COM11")
+
+    def test_web_bridge_sdk_status_contains_realtime_flash_log(self):
+        """确认 Web 设备页可轮询读取 SDK 刷写任务的实时日志。"""
+        bridge = WebViewBridge(mock.Mock())
+
+        bridge._append_sdk_log("正在写入固件")
+        result = bridge._sdk_status({})
+
+        self.assertEqual("正在写入固件", result["logs"])
+        self.assertFalse(result["busy"])
+
+    def test_web_bridge_sdk_file_filter_avoids_invalid_punctuation(self):
+        """确认 SDK 文件过滤器描述符合 pywebview 仅允许单词和空格的格式。"""
+        description = SDK_IMAGE_FILE_TYPES[0].split("(", 1)[0].rstrip()
+
+        self.assertNotIn("-", description)
+        self.assertEqual("SDK 镜像 (*.bin)", SDK_IMAGE_FILE_TYPES[0])
 
     def test_tray_command_dispatch_requests_wifi_scan(self):
         """确认后台进程能解析 Wi-Fi 扫描命令。"""
