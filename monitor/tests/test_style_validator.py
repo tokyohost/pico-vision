@@ -15,6 +15,7 @@ class ClockStyle:
     name = "clock"
     zh_name = "时钟"
     type = "custom"
+    sync_visible_frame_to_second = True
 
     def create_dirty_regions(self):
         return []
@@ -59,6 +60,19 @@ class StyleFileValidatorTest(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "draw_dirty"):
+            StyleFileValidator().validate(self._write_style(source))
+
+    def test_non_boolean_second_sync_policy_is_rejected(self):
+        """确认自定义样式的整秒同步策略只能声明为布尔值。"""
+        source = VALID_STYLE_SOURCE.replace(
+            "sync_visible_frame_to_second = True",
+            'sync_visible_frame_to_second = "yes"',
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "sync_visible_frame_to_second",
+        ):
             StyleFileValidator().validate(self._write_style(source))
 
     def test_conflicting_registered_style_name_is_rejected(self):

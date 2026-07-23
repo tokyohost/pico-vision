@@ -27,7 +27,7 @@ def create_argument_parser(config=None):
     adaptive_group.add_argument("--adaptive-transmit", dest="adaptive_transmit", action="store_true", help="根据 Pico JSON ACK 耗时调整发送间隔，并在拥塞时合并为最新快照")
     adaptive_group.add_argument("--no-adaptive-transmit", dest="adaptive_transmit", action="store_false", help="关闭发送间隔自适应并使用固定采集周期；仍保留 JSON ACK 背压")
     parser.set_defaults(adaptive_transmit=config_flag(config, "PICO_MONITOR_ADAPTIVE_TRANSMIT", True))
-    parser.add_argument("--collection-task-intervals", type=parse_collection_task_intervals, default=parse_collection_task_intervals(config_value(config, "PICO_MONITOR_COLLECTION_TASK_INTERVALS")), help="各系统采集任务频率 JSON 或 YAML 对象，键为英文任务标识，值为秒数")
+    parser.add_argument("--collection-task-intervals", type=parse_collection_task_intervals, default=parse_collection_task_intervals(config_value(config, "PICO_MONITOR_COLLECTION_TASK_INTERVALS")), help="各系统采集任务频率 JSON 或 YAML 对象，键为英文任务标识，值为支持小数的秒数，例如 0.8")
     collection_task_logs_group = parser.add_mutually_exclusive_group()
     collection_task_logs_group.add_argument("--collection-task-logs", dest="collection_task_logs", action="store_true", help="开启采集任务提交、开始、完成和线程池状态日志")
     collection_task_logs_group.add_argument("--no-collection-task-logs", dest="collection_task_logs", action="store_false", help="关闭采集任务常规运行日志，错误和告警仍会输出")

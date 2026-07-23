@@ -21,6 +21,7 @@ class IdleStyle:
     zh_name = "像素待机时钟"
     type = "builtin"
     idle = True
+    sync_visible_frame_to_second = True
     font_name = "screen_2inch"
     width = SCREEN_WIDTH
     height = SCREEN_HEIGHT

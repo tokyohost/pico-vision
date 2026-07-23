@@ -1400,7 +1400,7 @@ class PicoClientTest(unittest.TestCase):
                     "collection_tasks:",
                     "  logs_enabled: false",
                     "  intervals:",
-                    "    cpu_memory: 2",
+                    "    cpu_memory: 0.8",
                     "qbittorrent:",
                     "  enabled: true",
                     "  address: http://127.0.0.1:8080",
@@ -1420,7 +1420,7 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual(arguments.interval, 2.5)
         self.assertEqual(arguments.lcd_brightness, 80)
         self.assertFalse(arguments.dev)
-        self.assertEqual(arguments.collection_task_intervals["cpu_memory"], 2)
+        self.assertEqual(arguments.collection_task_intervals["cpu_memory"], 0.8)
         self.assertFalse(arguments.collection_task_logs)
         self.assertTrue(arguments.qbittorrent_enabled)
         validate_arguments(arguments)
@@ -1432,7 +1432,7 @@ class PicoClientTest(unittest.TestCase):
                 "\n".join((
                     'PICO_MONITOR_PING_TARGET="8.8.8.8"',
                     'PICO_MONITOR_NETWORK_UNIT="Mbps"',
-                    'PICO_MONITOR_COLLECTION_TASK_INTERVALS="{\\"网络采集\\": 3}"',
+                    'PICO_MONITOR_COLLECTION_TASK_INTERVALS="{\\"网络采集\\": 0.8}"',
                 ))
             )
             config_path = config_file.name
@@ -1444,7 +1444,7 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertEqual(arguments.ping_target, "8.8.8.8")
         self.assertEqual(arguments.network_unit, "Mbps")
-        self.assertEqual(arguments.collection_task_intervals["network"], 3)
+        self.assertEqual(arguments.collection_task_intervals["network"], 0.8)
 
     def test_lcd_style_argument(self):
         """确认 monitor 可以选择固件提供的内置 LCD 样式。"""

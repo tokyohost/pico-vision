@@ -20,6 +20,7 @@ class ThermalWatchStyle:
     zh_name = "热力监控"
     type = "builtin"
     idle = False
+    sync_visible_frame_to_second = True
     width = 320
     height = 240
     landscape = True

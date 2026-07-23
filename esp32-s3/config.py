@@ -43,7 +43,7 @@ GC_MIN_INTERVAL_MS = 5000
 # 距离下一次时钟刷新小于该窗口时延后主动垃圾回收。
 GC_CLOCK_GUARD_MS = 100
 # 每轮最多刷新的区域数，防止单次主循环长期占用通信处理。
-RENDER_MAX_REGIONS = 8
+RENDER_MAX_REGIONS = 16
 # 每轮渲染的软时间预算；单个区域完成后才检查，因此允许少量超时。
 RENDER_TIME_BUDGET_US = 50 * 1000
 # 是否启用第二阶段 Python 渲染工作线程；失败时自动回退同步服务。

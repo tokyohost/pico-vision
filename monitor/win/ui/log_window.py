@@ -4,6 +4,7 @@ import logging
 import threading
 
 from ..constants import APPLICATION_NAME
+from .idea_theme import IDEA_COLORS, IDEA_MONO_FONT
 
 LOGGER = logging.getLogger("pico-monitor.windows-update")
 
@@ -57,7 +58,12 @@ class LogWindowMixin:
             text_frame,
             wrap=tk.NONE,
             state=tk.DISABLED,
-            font=("Consolas", 10),
+            font=IDEA_MONO_FONT,
+            background=IDEA_COLORS["field"],
+            foreground=IDEA_COLORS["text"],
+            insertbackground=IDEA_COLORS["text"],
+            selectbackground=IDEA_COLORS["selection"],
+            highlightbackground=IDEA_COLORS["border"],
         )
         vertical_scrollbar = ttk.Scrollbar(
             text_frame,

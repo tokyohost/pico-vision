@@ -19,6 +19,7 @@ from sdk_flash import (
 from windows_update import WindowsReleaseUpdater
 
 from ..constants import APPLICATION_NAME
+from .idea_theme import IDEA_COLORS
 
 LOGGER = logging.getLogger("pico-monitor.windows-update")
 
@@ -217,6 +218,11 @@ class DeviceWindowMixin:
             wrap=tk.WORD,
             state=tk.DISABLED,
             font=("Microsoft YaHei UI", 9),
+            background=IDEA_COLORS["field"],
+            foreground=IDEA_COLORS["text"],
+            insertbackground=IDEA_COLORS["text"],
+            selectbackground=IDEA_COLORS["selection"],
+            highlightbackground=IDEA_COLORS["border"],
         )
         scrollbar = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=log_text.yview)
         log_text.configure(yscrollcommand=scrollbar.set)

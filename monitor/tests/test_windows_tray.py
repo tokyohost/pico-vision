@@ -29,6 +29,10 @@ from win.ui.device_window import (
     parse_device_information_line,
 )
 from win.ui.wifi_window import merge_wifi_networks
+from win.ui.settings_window import (
+    insert_decimal_point,
+    is_decimal_interval_input,
+)
 from style_validator import ValidatedStyle
 
 
@@ -515,6 +519,75 @@ class WindowsTraySettingsTest(unittest.TestCase):
 
         index = arguments.index("--websocket-url")
         self.assertEqual("ws://192.168.1.20:8765/pv1", arguments[index + 1])
+
+    def test_decimal_collection_interval_is_persisted_and_applied(self):
+        """确认零点八秒任务频率经过托盘持久化和启动参数后保持小数。"""
+        path = Path(self.temporary_directory.name) / "settings.json"
+        store = TraySettingsStore(path)
+        task_name = next(iter(DEFAULT_SETTINGS["collection_task_intervals"]))
+        settings = dict(
+            DEFAULT_SETTINGS,
+            collection_task_intervals={task_name: 0.8},
+        )
+
+        store.save(settings)
+        loaded = store.load()
+        arguments = apply_worker_arguments(["--worker"], loaded)
+        argument_value = arguments[
+            arguments.index("--collection-task-intervals") + 1
+        ]
+
+        self.assertEqual(loaded["collection_task_intervals"][task_name], 0.8)
+        self.assertEqual(json.loads(argument_value)[task_name], 0.8)
+
+    def test_decimal_collection_interval_input_accepts_partial_decimal(self):
+        """确认采集任务输入框允许输入零点八及编辑过程中的临时状态。"""
+        for value in ("", "0", "0.", "0.8", ".8", "12.75"):
+            with self.subTest(value=value):
+                self.assertTrue(is_decimal_interval_input(value))
+        for value in ("0..8", "0.8.1", "08秒", "１２.８"):
+            with self.subTest(value=value):
+                self.assertFalse(is_decimal_interval_input(value))
+
+    def test_decimal_point_key_inserts_point_instead_of_being_dropped(self):
+        """确认小数点按键会在采集任务输入框中写入句点且不会重复写入。"""
+        class FakeEntry:
+            """模拟测试小数点插入所需的最小输入框接口。"""
+
+            def __init__(self):
+                """初始化输入文本和光标位置。"""
+                self.value = "08"
+                self.cursor = 1
+
+            def get(self):
+                """返回当前输入文本。"""
+                return self.value
+
+            def selection_present(self):
+                """返回当前是否存在选中文本。"""
+                return False
+
+            def delete(self, first, last):
+                """提供输入框删除接口，本用例不触发该分支。"""
+                del first, last
+
+            def insert(self, index, value):
+                """在当前光标位置插入指定文本。"""
+                self.assert_insert_index(index)
+                self.value = self.value[:self.cursor] + value + self.value[self.cursor:]
+
+            @staticmethod
+            def assert_insert_index(index):
+                """确认插入位置使用输入框当前光标。"""
+                if index != "insert":
+                    raise AssertionError("小数点必须插入当前光标位置")
+
+        entry = FakeEntry()
+
+        self.assertEqual(insert_decimal_point(entry), "break")
+        self.assertEqual(entry.get(), "0.8")
+        self.assertEqual(insert_decimal_point(entry), "break")
+        self.assertEqual(entry.get(), "0.8")
 
     def test_device_connection_snapshot_is_saved_and_copied(self):
         """确认设备连接状态可供新打开的设备管理窗口安全读取。"""

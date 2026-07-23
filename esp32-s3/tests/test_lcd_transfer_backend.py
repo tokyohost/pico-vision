@@ -29,7 +29,7 @@ class FakeSpi:
 class FakeNativeLcd:
     """模拟接口版本正确的 fn_lcd 原生模块。"""
 
-    def __init__(self, api_version=2, init_error=None):
+    def __init__(self, api_version=3, init_error=None):
         """保存接口版本、初始化异常和调用记录。"""
         self._api_version = api_version
         self._init_error = init_error
@@ -38,6 +38,7 @@ class FakeNativeLcd:
         self.pending_regions = [(0, 0, 2, 1)]
         self.committed = 0
         self.discarded = 0
+        self.visible_frame_second_sync = False
 
     def api_version(self):
         """返回测试指定的原生模块接口版本。"""
@@ -54,6 +55,13 @@ class FakeNativeLcd:
         """记录完整画布检测请求并返回模拟脏矩形。"""
         self.last_scan = (bytes(frame), bool(force))
         return list(self.pending_regions)
+
+    def set_visible_frame_second_sync(self, enabled):
+        """记录当前 Style 下发的整秒同步策略并返回是否改变。"""
+        enabled = bool(enabled)
+        changed = enabled != self.visible_frame_second_sync
+        self.visible_frame_second_sync = enabled
+        return changed
 
     def write(self, spi, pixels):
         """记录兼容局部刷新接口收到的连续像素。"""
@@ -118,10 +126,13 @@ class LcdTransferBackendTest(unittest.TestCase):
         frame = b"\xAB\xCD\x12\x34"
         self.assertEqual(backend.dirty_regions(frame), [(0, 0, 2, 1)])
         self.assertEqual(backend.write_region(spi, frame, 0, 0, 2, 1), 4)
+        self.assertTrue(backend.set_visible_frame_second_sync(True))
+        self.assertFalse(backend.set_visible_frame_second_sync(True))
         backend.commit_frame()
         self.assertEqual(native.initialized, [configuration])
         self.assertEqual(native.writes, [(spi, frame, 0, 0, 2, 1)])
         self.assertEqual(native.committed, 1)
+        self.assertTrue(native.visible_frame_second_sync)
         self.assertEqual(backend.stats()["backend"], "native_dma")
 
     def test_auto_backend_falls_back_when_native_module_is_missing(self):
@@ -157,7 +168,7 @@ class LcdTransferBackendTest(unittest.TestCase):
             transfer_backend.create_lcd_transfer_backend("fastest")
 
     def test_native_source_uses_two_internal_dma_buffers(self):
-        """原生实现必须使用内部 DMA RAM，且不得在事务间释放 GIL。"""
+        """原生实现必须使用内部 DMA RAM，并在首笔事务门控整秒。"""
         repository_root = ESP32_ROOT.parents[1]
         dma_source = (
             repository_root
@@ -167,6 +178,13 @@ class LcdTransferBackendTest(unittest.TestCase):
             repository_root
             / "micropython/ports/esp32/usermod/fn_lcd/fn_lcd_dma.h"
         ).read_text(encoding="utf-8")
+        binding_source = (
+            repository_root
+            / "micropython/ports/esp32/usermod/fn_lcd/mod_fn_lcd.c"
+        ).read_text(encoding="utf-8")
+        lcd_base_source = (
+            ESP32_ROOT / "lcd/base.py"
+        ).read_text(encoding="utf-8")
 
         self.assertIn("FN_LCD_DMA_BUFFER_COUNT (2)", dma_header)
         self.assertIn("FN_LCD_STRIP_BUFFER_COUNT (2)", dma_header)
@@ -175,7 +193,15 @@ class LcdTransferBackendTest(unittest.TestCase):
         self.assertIn("spi_device_queue_trans", dma_source)
         self.assertIn("fn_lcd_dma_scan_dirty", dma_source)
         self.assertIn("context->next_strip_buffer", dma_source)
+        self.assertIn("fn_lcd_dma_wait_next_second", dma_source)
+        self.assertIn("esp_timer_get_time", dma_source)
+        self.assertIn("sync_visible_frame_to_second", dma_header)
         self.assertNotIn("MP_THREAD_GIL_EXIT", dma_source)
+        self.assertIn("MP_THREAD_GIL_EXIT", binding_source)
+        self.assertIn(
+            "set_visible_frame_second_sync",
+            lcd_base_source,
+        )
 
 
 if __name__ == "__main__":

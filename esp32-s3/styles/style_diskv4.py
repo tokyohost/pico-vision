@@ -23,6 +23,7 @@ class DiskV4Style:
     zh_name = "十五盘趋势版"
     type = "builtin"
     idle = False
+    sync_visible_frame_to_second = True
     width = 320
     height = 240
     landscape = True

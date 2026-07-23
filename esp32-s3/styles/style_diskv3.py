@@ -23,6 +23,7 @@ class DiskV3Style:
     zh_name = "十五盘 IP 版"
     type = "builtin"
     idle = False
+    sync_visible_frame_to_second = True
     width = 320
     height = 240
     landscape = True

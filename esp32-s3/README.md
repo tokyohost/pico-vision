@@ -65,6 +65,18 @@ LED+ 必须接带限流的背光电源正极，不要让 GPIO 或无保护电源
 
 部署时将本目录中的 Python 文件及子目录复制到 ESP32-S3 文件系统根目录，并以 `main.py` 作为启动入口。
 
+可见帧整秒同步由每个 Style 的 `sync_visible_frame_to_second` 布尔属性独立决定。
+切换 Style 时，渲染器只把该属性下发给 MicroPython SDK；未声明的旧自定义 Style
+默认关闭。开启后，原生 LCD/DMA 层会提前完成脏区扫描、条带整理和首块 DMA
+缓冲复制，然后使用 `esp_timer` 在下一整秒门控第一笔
+`spi_device_queue_trans()`；Python 不计算目标时间、不等待边界，也不改变异步
+渲染调度。等待期间原生绑定会释放 GIL，使通信主线程可以继续接收数据。FPS、
+游戏和测试 Style 默认关闭，普通监控及待机时钟 Style 默认开启。缺少 `fn_lcd`
+API 3 的兼容 SPI 固件不支持底层整秒同步。
+设备端会同步推进所有 `history` 和 `*_history` 固定时间格：某秒没有收到新快照
+时复制最近一个值，同一秒内真实数据到达后直接覆盖该保持值，使折线持续滚动且
+不改写此前的真实历史数据。
+
 ## 独立 USB CDC
 
 固件按 TinyUSB 官方双 CDC 方案在启动时直接枚举两个原生接口：CDC 0 保留给 REPL，CDC 1 专供 PV1 数据。数据接口由 C 回调立即读空 TinyUSB FIFO，并写入独立 32 KB 环形缓冲，不再使用 `machine.USBDevice` 的 Python 端点回调。环形缓冲在后端初始化时优先从 PSRAM 动态分配，避免把 32 KB 常驻数组塞进紧张的内部 DRAM。该功能必须连接 ESP32-S3 原生 USB OTG 接口，CH343 等 USB-UART 接口仍属于兼容控制台通道。
@@ -92,7 +104,7 @@ ESP32-S3 专用入口已经使用 `render_service.py` 隔离通信主循环与�
 ## LCD 像素传输后端
 
 `LCD_TRANSFER_BACKEND` 可在 `legacy`、`native_dma` 和 `auto` 之间切换。默认
-`auto` 在固件包含 `fn_lcd` API 2 时，让 MicroPython 始终在完整 RAM 画布绘制；
+`auto` 在固件包含 `fn_lcd` API 3 时，让 MicroPython 始终在完整 RAM 画布绘制；
 C 固件自动检测并记录脏区，以两块内部 SRAM 条带缓冲交替提取像素，再通过两块
 内部 DMA RAM 发送。旧固件会安全回退标准 `machine.SPI.write()`。该优化不改变
 Python Style 和 Canvas API；完整原理、

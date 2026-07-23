@@ -11,7 +11,11 @@ import psutil  # 提前加载真实依赖，避免测试替身污染后续测试
 from collectTask.coordinator import CollectionCoordinator
 from collectTask.executor import BoundedElasticThreadPool, TaskRejectedError
 from collectTask.result_store import LockFreeSnapshotStore
-from collectTask.system_tasks import system_task_defaults, system_task_zh_names
+from collectTask.system_tasks import (
+    CollectionTask,
+    system_task_defaults,
+    system_task_zh_names,
+)
 from collectTask.tasks.disk_common import (
     DISK_CAPACITY_HEALTH_FIELDS,
     DISK_RATE_FIELDS,
@@ -127,6 +131,16 @@ class LockFreeSnapshotStoreTest(unittest.TestCase):
 
 class CollectionCoordinatorTest(unittest.TestCase):
     """验证单个采集子任务完成后立即发布对应结果。"""
+
+    def test_collection_task_accepts_decimal_second_interval(self):
+        """确认任务调度完整保留零点八秒配置，不发生整数截断。"""
+        task = CollectionTask(None)
+
+        task.configure_interval(0.8)
+        task.mark_scheduled(10.0)
+
+        self.assertEqual(task.interval, 0.8)
+        self.assertAlmostEqual(task.next_run_time, 10.8)
 
     def test_sensor_host_available_skips_cpu_memory_fallback_fields(self):
         """确认 SensorHost 有效时 CPU 和内存降级任务不发布覆盖字段。"""

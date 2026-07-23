@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from build_info import MONITOR_VERSION
+from .idea_theme import IDEA_COLORS, IDEA_MONO_FONT, apply_idea_theme
 
 LOGGER = logging.getLogger("pico-monitor.windows-update")
 
@@ -63,9 +64,10 @@ class TkSupportMixin:
         window.deiconify()
 
     def _set_tk_window_icon(self, window):
-        """为当前窗口及其后续弹框统一设置托盘程序图标。"""
+        """为当前窗口统一设置 IDEA 主题和托盘程序图标。"""
         import tkinter as tk
 
+        apply_idea_theme(window)
         application_icon = tk.PhotoImage(
             master=window,
             file=self._resource_path("icon", "icon.png"),
@@ -91,7 +93,7 @@ class TkSupportMixin:
         dialog.withdraw()
         dialog.title(title_text)
         dialog.resizable(True, True)
-        dialog.configure(bg="#f5f7fa")
+        dialog.configure(bg=IDEA_COLORS["window"])
         dialog.geometry("620x360")
         dialog.minsize(480, 260)
         try:
@@ -120,7 +122,7 @@ class TkSupportMixin:
         ttk.Label(
             container,
             text=message_text,
-            foreground="#c0392b",
+            foreground=IDEA_COLORS["danger"],
             wraplength=560,
             justify=tk.LEFT,
         ).grid(row=1, column=0, sticky="ew", pady=(10, 8))
@@ -131,7 +133,12 @@ class TkSupportMixin:
             wrap=tk.WORD,
             relief=tk.SOLID,
             borderwidth=1,
-            font=("Consolas", 9),
+            font=IDEA_MONO_FONT,
+            background=IDEA_COLORS["field"],
+            foreground=IDEA_COLORS["text"],
+            insertbackground=IDEA_COLORS["text"],
+            highlightbackground=IDEA_COLORS["border"],
+            highlightcolor=IDEA_COLORS["border_focus"],
         )
         scrollbar = ttk.Scrollbar(
             container,
@@ -146,7 +153,11 @@ class TkSupportMixin:
 
         action_frame = ttk.Frame(container)
         action_frame.grid(row=3, column=0, columnspan=2, sticky="e", pady=(12, 0))
-        copy_state = ttk.Label(action_frame, text="", foreground="#67c23a")
+        copy_state = ttk.Label(
+            action_frame,
+            text="",
+            foreground=IDEA_COLORS["success"],
+        )
         copy_state.pack(side=tk.LEFT, padx=(0, 10))
 
         def copy_error_content():

@@ -32,6 +32,7 @@ class HorizontalDisk4xQbStyle:
     zh_name= "四盘下载版（qBittorrent）"
     type= "builtin"
     idle = False
+    sync_visible_frame_to_second = True
     width = 320
     height = 240
     landscape = True

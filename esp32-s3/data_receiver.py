@@ -19,6 +19,7 @@ from config import (
     TIME_CALIBRATION_SNAPSHOTS,
     TIME_CALIBRATION_TOLERANCE_SECONDS,
 )
+from historyIncrease import HistoryIncrease
 from timeIncrease import TimeIncrease
 
 
@@ -53,6 +54,7 @@ class SnapshotCache:
         self.snapshot = None
         self.version = 0
         self._last_update_ms = None
+        self._history_increase = HistoryIncrease()
         self._time_increase = TimeIncrease(
             TIME_CALIBRATION_SNAPSHOTS,
             TIME_CALIBRATION_TOLERANCE_SECONDS,
@@ -60,14 +62,29 @@ class SnapshotCache:
 
     def update(self, snapshot):
         """合并最新快照并递增版本号。"""
-        self.snapshot = self._time_increase.receive(
-            _merge_snapshot(self.snapshot, snapshot)
+        previous = self.snapshot
+        timed_snapshot = self._time_increase.receive(
+            _merge_snapshot(previous, snapshot)
+        )
+        normalized_snapshot = self._history_increase.receive(
+            previous,
+            snapshot,
+            self._time_increase.elapsed_seconds(),
+        )
+        self.snapshot = self._time_increase.increase(
+            _merge_snapshot(previous, normalized_snapshot)
+            if previous is not None
+            else timed_snapshot
         )
         self.version += 1
         self._last_update_ms = _monotonic_ms()
 
     def latest(self):
         """返回最新快照和版本号。"""
+        self._history_increase.increase(
+            self.snapshot,
+            self._time_increase.elapsed_seconds(),
+        )
         return self._time_increase.increase(self.snapshot), self.version
 
     def next_refresh_ms(self, interval_ms=1000, now_ms=None):
@@ -82,6 +99,7 @@ class SnapshotCache:
         """清除失效快照并递增版本号。"""
         self.snapshot = None
         self._last_update_ms = None
+        self._history_increase.reset()
         self._time_increase.reset()
         self.version += 1
 

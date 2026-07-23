@@ -17,6 +17,7 @@ class HorizontalDiskV2Style(HorizontalDiskStyle):
     zh_name = "九盘紧凑版"
     type = "builtin"
     idle = False
+    sync_visible_frame_to_second = True
     font_name = "screen_2inch_compact"
 
 

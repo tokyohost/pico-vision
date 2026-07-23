@@ -78,17 +78,31 @@ class StyleFileValidator:
                 continue
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             value = node.value
-            if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+            if not isinstance(value, ast.Constant):
                 continue
             for target in targets:
-                if isinstance(target, ast.Name) and target.id in ("name", "zh_name", "type"):
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id in ("name", "zh_name", "type")
+                    and isinstance(value.value, str)
+                ):
                     metadata[target.id] = value.value.strip()
+                elif (
+                    isinstance(target, ast.Name)
+                    and target.id == "sync_visible_frame_to_second"
+                ):
+                    metadata[target.id] = value.value
         if not required:
             return metadata
         if not all(metadata.get(key) for key in ("name", "zh_name", "type")):
             raise ValueError("样式类必须声明 name、zh_name 和 type")
         if metadata["type"] != "custom":
             raise ValueError("上传样式的 type 必须为 custom")
+        second_sync = metadata.get("sync_visible_frame_to_second", False)
+        if not isinstance(second_sync, bool):
+            raise ValueError(
+                "sync_visible_frame_to_second 必须为布尔值"
+            )
         name = metadata["name"]
         if any(not ("a" <= char <= "z" or char.isdigit() or char == "_") for char in name):
             raise ValueError("样式名仅允许小写字母、数字和下划线")

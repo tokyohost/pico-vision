@@ -14,6 +14,10 @@ CPU 数据通过顶层 `cpu` 对象发送，其中 `frequency_ghz` 是当前 GHz
 
 所有 `history`、`*_history` 字段均以一秒为固定时间格，表示最近 24 秒，不受 `PICO_MONITOR_INTERVAL` 或 qBittorrent 采集间隔影响。同一秒内的多次采集保留峰值，避免折线尖峰被后续低值擦除；跨过多秒时，缺失秒使用上一秒数值补齐。
 
+系统采集任务频率使用秒为单位并支持小数，例如在 Windows 设置界面填写
+`0.8`，或使用 `--collection-task-intervals '{"cpu_memory": 0.8}'`，表示每
+0.8 秒调度一次对应任务。旧版整数配置保持兼容。
+
 开启并配置 qBittorrent Web UI 后，程序会在后台通过 Web API 采集 `qbittorrent` 顶层指标，不会阻塞系统指标发送。字段包括实时上传下载速度及历史、会话与历史流量、历史分享率、会话丢弃、连接用户、下载目录剩余空间和种子状态数量。完整配置与字段说明见 [qbittorrent_config.md](qbittorrent_config.md)。
 
 ## 主要功能

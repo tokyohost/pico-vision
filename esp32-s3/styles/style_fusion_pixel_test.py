@@ -18,6 +18,7 @@ class FusionPixelTestStyle:
     zh_name = "融合像素中文测试"
     type = "builtin"
     idle = False
+    sync_visible_frame_to_second = False
     width = SCREEN_WIDTH
     height = SCREEN_HEIGHT
     landscape = False

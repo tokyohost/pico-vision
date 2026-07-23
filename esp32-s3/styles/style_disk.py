@@ -31,6 +31,7 @@ class DiskStyle:
     zh_name = "磁盘概览"
     type = "builtin"
     idle = False
+    sync_visible_frame_to_second = True
     font_name = "native"
 
     def __init__(self):

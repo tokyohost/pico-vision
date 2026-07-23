@@ -246,6 +246,12 @@ class LcdDevice:
         """返回当前 LCD 像素传输后端的累计运行统计。"""
         return self._transfer_backend.stats()
 
+    def set_visible_frame_second_sync(self, enabled):
+        """把当前 Style 的整秒同步策略下发给像素传输后端。"""
+        return self._transfer_backend.set_visible_frame_second_sync(
+            bool(enabled)
+        )
+
     def rotation(self):
         """返回当前生效的屏幕旋转角度。"""
         return self._rotation

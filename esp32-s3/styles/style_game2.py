@@ -23,6 +23,7 @@ class Game2Style:
     zh_name = "游戏监控2"
     type = "builtin"
     idle = False
+    sync_visible_frame_to_second = False
     width = 320
     height = 240
     landscape = True

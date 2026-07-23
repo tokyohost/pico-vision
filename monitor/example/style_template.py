@@ -29,6 +29,9 @@ class TemplateStyle:
     name = "template"
     zh_name = "标准模板"
     type = "custom"
+    idle = False
+    # True 由 ESP32-S3 原生 LCD/DMA 层把可见帧对齐整秒；高帧率样式应设为 False。
+    sync_visible_frame_to_second = False
 
     # 竖屏默认 240 x 320；横屏改为 width=320、height=240、landscape=True。
     # Portrait defaults to 240 x 320. For landscape use 320 x 240 and landscape=True.

@@ -24,6 +24,7 @@ class FpsSimpleStyle:
     zh_name = "FPS 监控简约"
     type = "builtin"
     idle = False
+    sync_visible_frame_to_second = False
     width = 320
     height = 240
     landscape = True

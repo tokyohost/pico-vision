@@ -17,6 +17,7 @@ class Wqy8x16TestStyle:
     zh_name = "文泉驿清晰点阵测试"
     type = "builtin"
     idle = False
+    sync_visible_frame_to_second = False
     width = SCREEN_WIDTH
     height = SCREEN_HEIGHT
     landscape = False

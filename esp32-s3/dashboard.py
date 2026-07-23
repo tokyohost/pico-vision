@@ -126,6 +126,15 @@ class DashboardRenderer:
         self._width = width
         self._height = height
         self.canvas.set_font(getattr(self._style, "font_name", "native"))
+        self.lcd.set_visible_frame_second_sync(
+            bool(
+                getattr(
+                    self._style,
+                    "sync_visible_frame_to_second",
+                    False,
+                )
+            )
+        )
 
     def set_rotation(self, rotation):
         """切换扫描方向、清空显示并强制下一帧建立新的脏区基线。"""

@@ -7,6 +7,7 @@ import threading
 from build_info import MONITOR_VERSION
 
 from ..constants import APPLICATION_NAME
+from .idea_theme import IDEA_COLORS
 
 LOGGER = logging.getLogger("pico-monitor.windows-update")
 
@@ -83,7 +84,13 @@ class AboutWindowMixin:
             qr_image = source.convert("RGB").resize((220, 220), Image.Resampling.LANCZOS)
         # 显式绑定当前窗口的 Tcl 解释器，避免其他 Tk 线程创建过默认根窗口后跨线程复用。
         photo = ImageTk.PhotoImage(qr_image, master=root)
-        image_label = tk.Label(frame, image=photo)
+        image_label = tk.Label(
+            frame,
+            image=photo,
+            background=IDEA_COLORS["panel"],
+            padx=8,
+            pady=8,
+        )
         image_label.image = photo
         image_label.pack()
         button_frame = tk.Frame(frame)

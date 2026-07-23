@@ -13,6 +13,30 @@ from ..settings import (
     style_label,
     style_names,
 )
+from .idea_theme import IDEA_COLORS
+
+
+def is_decimal_interval_input(value):
+    """校验采集间隔输入过程中的文本，允许空值和未输入小数部分的中间状态。"""
+    if value == "":
+        return True
+    integer_part, separator, decimal_part = value.partition(".")
+    if separator and "." in decimal_part:
+        return False
+    return (
+        (integer_part == "" or integer_part.isascii() and integer_part.isdigit())
+        and (decimal_part == "" or decimal_part.isascii() and decimal_part.isdigit())
+    )
+
+
+def insert_decimal_point(entry):
+    """在采集间隔输入框的光标位置插入小数点，并避免出现多个小数点。"""
+    if "." in entry.get():
+        return "break"
+    if entry.selection_present():
+        entry.delete("sel.first", "sel.last")
+    entry.insert("insert", ".")
+    return "break"
 
 
 class SettingsWindowMixin:
@@ -44,7 +68,7 @@ class SettingsWindowMixin:
                 self.settings_window_open = False
 
     def _run_settings_window(self):
-        """使用原生控件绘制接近 Element Plus 的分组配置对话框。"""
+        """使用原生控件绘制 IntelliJ IDEA 风格的分组配置窗口。"""
         self._configure_tk_runtime()
         import tkinter as tk
         from tkinter import messagebox, ttk
@@ -52,12 +76,10 @@ class SettingsWindowMixin:
         root = tk.Tk()
         root.withdraw()
         self.settings_window = root
-        root.title("OmniWatch 配置")
+        root.title("OmniWatch — 设置")
         self._set_tk_window_icon(root)
         root.geometry("680x700")
         root.minsize(620, 620)
-        root.configure(bg="#f5f7fa")
-        root.option_add("*Font", ("Microsoft YaHei UI", 10))
 
         def restore_when_requested():
             """处理托盘重复点击产生的窗口恢复请求。"""
@@ -69,16 +91,6 @@ class SettingsWindowMixin:
             root.after(100, restore_when_requested)
 
         root.after(100, restore_when_requested)
-        style = ttk.Style(root)
-        style.theme_use("vista")
-        style.configure("Title.TLabel", font=("Microsoft YaHei UI", 18, "bold"), foreground="#303133", background="#f5f7fa")
-        style.configure("Hint.TLabel", foreground="#909399", background="#f5f7fa")
-        style.configure("Card.TLabelframe", background="#ffffff", borderwidth=1, relief="solid")
-        style.configure("Card.TLabelframe.Label", font=("Microsoft YaHei UI", 11, "bold"), foreground="#303133", background="#ffffff")
-        style.configure("Card.TLabel", foreground="#606266", background="#ffffff")
-        style.configure("Primary.TButton", foreground="#ffffff", background="#409eff", padding=(18, 8))
-        style.configure("Footer.TButton", foreground="#303133", padding=(18, 8))
-
         root.rowconfigure(0, weight=1)
         root.columnconfigure(0, weight=1)
         content_area = ttk.Frame(root)
@@ -86,7 +98,11 @@ class SettingsWindowMixin:
         content_area.rowconfigure(0, weight=1)
         content_area.columnconfigure(0, weight=1)
 
-        canvas = tk.Canvas(content_area, bg="#f5f7fa", highlightthickness=0)
+        canvas = tk.Canvas(
+            content_area,
+            bg=IDEA_COLORS["window"],
+            highlightthickness=0,
+        )
         scrollbar = ttk.Scrollbar(content_area, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.grid(row=0, column=0, sticky="nsew")
@@ -113,8 +129,17 @@ class SettingsWindowMixin:
         canvas.bind("<Configure>", resize_scroll_body)
         root.bind("<MouseWheel>", scroll_with_mouse)
 
-        ttk.Label(body, text="配置", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(body, text="显示设置可即时应用，其他配置保存后会重启监控服务", style="Hint.TLabel").pack(anchor="w", pady=(2, 18))
+        ttk.Label(body, text="设置", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(
+            body,
+            text="OmniWatch  /  系统监控",
+            style="Hint.TLabel",
+        ).pack(anchor="w", pady=(2, 4))
+        ttk.Label(
+            body,
+            text="显示设置可即时应用，其他配置保存后会重启监控服务",
+            style="Hint.TLabel",
+        ).pack(anchor="w", pady=(0, 18))
 
         variables = {
             "port": tk.StringVar(master=root, value=self.settings["port"]),
@@ -173,6 +198,26 @@ class SettingsWindowMixin:
             ttk.Label(parent, text=label, style="Card.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 16), pady=6)
             widget.grid(row=row, column=1, sticky="ew", pady=6)
 
+        decimal_interval_validator = root.register(is_decimal_interval_input)
+
+        def decimal_interval_entry(parent, variable):
+            """创建允许键盘主区和数字小键盘输入小数点的采集间隔输入框。"""
+            entry = ttk.Entry(
+                parent,
+                textvariable=variable,
+                validate="key",
+                validatecommand=(decimal_interval_validator, "%P"),
+            )
+
+            def handle_decimal_key(event):
+                """统一处理英文句点、中文句号和数字小键盘小数点按键。"""
+                if event.char in (".", "。") or event.keysym in ("decimal", "KP_Decimal"):
+                    return insert_decimal_point(entry)
+                return None
+
+            entry.bind("<KeyPress>", handle_decimal_key)
+            return entry
+
         display = card("显示设置")
         styles = [style_label(name, self.settings) for name in style_names(self.settings, idle=False)]
         idle_styles = [style_label(name, self.settings) for name in style_names(self.settings, idle=True)]
@@ -180,7 +225,7 @@ class SettingsWindowMixin:
         field(display, 1, "待机样式", ttk.Combobox(display, textvariable=variables["idle_style"], values=idle_styles, state="readonly"))
         field(display, 2, "空闲进入待机（秒）", ttk.Entry(display, textvariable=variables["idle_timeout"]))
         field(display, 3, "屏幕旋转", ttk.Combobox(display, textvariable=variables["screen_rotation"], values=("0", "180"), state="readonly"))
-        brightness_control = ttk.Frame(display)
+        brightness_control = ttk.Frame(display, style="Card.TFrame")
         brightness_control.columnconfigure(0, weight=1)
         brightness_slider = tk.Scale(
             brightness_control,
@@ -190,7 +235,11 @@ class SettingsWindowMixin:
             orient="horizontal",
             showvalue=True,
             resolution=1,
-            bg="#ffffff",
+            bg=IDEA_COLORS["panel"],
+            fg=IDEA_COLORS["text"],
+            troughcolor=IDEA_COLORS["field"],
+            activebackground=IDEA_COLORS["accent"],
+            highlightbackground=IDEA_COLORS["panel"],
             highlightthickness=0,
         )
         brightness_slider.grid(row=0, column=0, sticky="ew")
@@ -287,8 +336,10 @@ class SettingsWindowMixin:
             field(
                 collection_tasks,
                 row,
-                "{}（{}，默认 {:g} 秒）".format(task_label, task_name, default_interval),
-                ttk.Entry(collection_tasks, textvariable=variable),
+                "{}（{}，默认 {:g} 秒，支持小数）".format(
+                    task_label, task_name, default_interval
+                ),
+                decimal_interval_entry(collection_tasks, variable),
             )
 
         qb = card("qBittorrent")
@@ -422,7 +473,8 @@ class SettingsWindowMixin:
             except (ValueError, StopIteration):
                 messagebox.showerror(
                     "配置错误",
-                    "请检查设备名称、地址和时间间隔；JSON 采集间隔不得低于 0.3 秒。",
+                    "请检查设备名称、地址和时间间隔；JSON 采集间隔不得低于 "
+                    "0.3 秒，系统采集任务支持 0.8 这类小数且必须大于 0。",
                     parent=root,
                 )
                 return
@@ -448,7 +500,7 @@ class SettingsWindowMixin:
             text="保存配置",
             command=save,
             width=12,
-            style="Footer.TButton",
+            style="Primary.TButton",
         ).pack(side="right", padx=(0, 10))
 
         def closed():

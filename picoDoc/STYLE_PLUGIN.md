@@ -14,6 +14,9 @@ LCD 渲染由 `dashboard.py` 统一调度，具体布局由 `styles/style_<名�
 6. 样式的 `font_name` 定义该样式自己的默认字体。可选择 `native`、
    `screen_2inch`、`screen_2inch_compact`、`wqy_8x16` 或
    `fusion_pixel_8x16`。其中两个 8×16 字体来自已编译双语字模的 MicroPython 固件。
+7. ESP32-S3 样式可声明 `sync_visible_frame_to_second = True`，让当前样式的
+   可见帧由 `fn_lcd` 原生 DMA 层自动对齐下一整秒。FPS、游戏等高帧率样式应设为
+   `False`；未声明的旧自定义样式默认关闭。
 
 `create_dirty_regions()` 返回 `(key, x, y, width, height)` 列表。首次显示由
 `draw_visible(canvas, snapshot)` 按条带完整绘制；后续刷新由

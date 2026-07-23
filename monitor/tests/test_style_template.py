@@ -60,6 +60,10 @@ class StyleTemplateTest(unittest.TestCase):
         validated = StyleFileValidator().validate(path)
 
         self.assertEqual(validated.name, "template")
+        self.assertIsInstance(
+            self.template.sync_visible_frame_to_second,
+            bool,
+        )
         self.assertLessEqual(len(validated.source), MAX_STYLE_FILE_SIZE)
 
 

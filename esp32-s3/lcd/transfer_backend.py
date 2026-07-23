@@ -21,7 +21,7 @@ LCD_TRANSFER_BACKENDS = (
     LCD_TRANSFER_BACKEND_LEGACY,
     LCD_TRANSFER_BACKEND_NATIVE_DMA,
 )
-NATIVE_DMA_API_VERSION = 2
+NATIVE_DMA_API_VERSION = 3
 DEFAULT_DMA_CHUNK_SIZE = 4092
 
 
@@ -46,6 +46,11 @@ class LegacySpiTransferBackend:
     def configure(self, configuration):
         """接受统一画布配置接口，兼容后端无需分配固件缓冲。"""
         del configuration
+
+    def set_visible_frame_second_sync(self, enabled):
+        """兼容 SPI 后端不支持整秒门控，始终返回未改变。"""
+        del enabled
+        return False
 
     def write(self, spi, pixels):
         """通过 MicroPython 标准 SPI 接口同步写入像素缓冲区。"""
@@ -92,6 +97,12 @@ class NativeDmaTransferBackend:
         self._chunk_size = int(self._native.init(next_configuration))
         self._configuration = next_configuration
         return True
+
+    def set_visible_frame_second_sync(self, enabled):
+        """把当前 Style 的整秒同步策略立即下发给原生 DMA 层。"""
+        return bool(
+            self._native.set_visible_frame_second_sync(bool(enabled))
+        )
 
     def write(self, spi, pixels):
         """保留启动清屏等旧局部刷新所需的连续像素 DMA 写入。"""

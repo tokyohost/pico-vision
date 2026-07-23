@@ -52,10 +52,7 @@ class TimeIncrease:
         """按照校准后经过的整秒数更新快照中的两个时间字段。"""
         if not isinstance(snapshot, dict) or self._base_ticks is None:
             return snapshot
-        elapsed_seconds = max(
-            0,
-            time.ticks_diff(time.ticks_ms(), self._base_ticks) // 1000,
-        )
+        elapsed_seconds = self.elapsed_seconds()
         if elapsed_seconds == self._last_elapsed_seconds:
             if self._last_timestamp is not None:
                 snapshot["timestamp"] = self._last_timestamp
@@ -70,6 +67,14 @@ class TimeIncrease:
             snapshot["uptime_seconds"] = self._last_uptime_seconds
         self._last_elapsed_seconds = elapsed_seconds
         return snapshot
+
+    def elapsed_seconds(self, now_ms=None):
+        """返回相对当前校准基准经过的完整秒数，尚未校准时返回空值。"""
+        if self._base_ticks is None:
+            return None
+        if now_ms is None:
+            now_ms = time.ticks_ms()
+        return max(0, time.ticks_diff(now_ms, self._base_ticks) // 1000)
 
     def next_refresh_ms(self, interval_ms=1000, now_ms=None):
         """返回相对校准基准对齐的下一次绝对刷新时刻。"""

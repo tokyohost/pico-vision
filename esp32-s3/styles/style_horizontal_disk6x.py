@@ -32,6 +32,7 @@ class HorizontalDisk6xStyle:
     zh_name = "六盘均衡版"
     type = "builtin"
     idle = False
+    sync_visible_frame_to_second = True
     width = 320
     height = 240
     landscape = True
