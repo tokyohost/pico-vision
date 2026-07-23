@@ -29,7 +29,7 @@ class FakeSpi:
 class FakeNativeLcd:
     """模拟接口版本正确的 fn_lcd 原生模块。"""
 
-    def __init__(self, api_version=3, init_error=None):
+    def __init__(self, api_version=4, init_error=None):
         """保存接口版本、初始化异常和调用记录。"""
         self._api_version = api_version
         self._init_error = init_error
@@ -39,6 +39,7 @@ class FakeNativeLcd:
         self.committed = 0
         self.discarded = 0
         self.visible_frame_second_sync = False
+        self.queued_frames = []
 
     def api_version(self):
         """返回测试指定的原生模块接口版本。"""
@@ -66,6 +67,11 @@ class FakeNativeLcd:
     def write(self, spi, pixels):
         """记录兼容局部刷新接口收到的连续像素。"""
         return len(pixels)
+
+    def queue_synchronized_frame(self, spi, frame, force=False):
+        """记录复制进原生最新帧邮箱的完整画布。"""
+        self.queued_frames.append((spi, bytes(frame), bool(force)))
+        return len(self.queued_frames)
 
     def write_region(self, spi, frame, x, y, width, height):
         """记录 C 固件从完整画布提取并发送的脏矩形。"""
@@ -124,15 +130,22 @@ class LcdTransferBackendTest(unittest.TestCase):
         )
 
         frame = b"\xAB\xCD\x12\x34"
+        self.assertFalse(backend.visible_frame_second_sync_enabled())
         self.assertEqual(backend.dirty_regions(frame), [(0, 0, 2, 1)])
         self.assertEqual(backend.write_region(spi, frame, 0, 0, 2, 1), 4)
         self.assertTrue(backend.set_visible_frame_second_sync(True))
         self.assertFalse(backend.set_visible_frame_second_sync(True))
+        self.assertTrue(backend.visible_frame_second_sync_enabled())
+        self.assertEqual(
+            backend.queue_synchronized_frame(spi, frame, True),
+            1,
+        )
         backend.commit_frame()
         self.assertEqual(native.initialized, [configuration])
         self.assertEqual(native.writes, [(spi, frame, 0, 0, 2, 1)])
         self.assertEqual(native.committed, 1)
         self.assertTrue(native.visible_frame_second_sync)
+        self.assertEqual(native.queued_frames, [(spi, frame, True)])
         self.assertEqual(backend.stats()["backend"], "native_dma")
 
     def test_auto_backend_falls_back_when_native_module_is_missing(self):
@@ -167,8 +180,8 @@ class LcdTransferBackendTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "未知 LCD 传输后端"):
             transfer_backend.create_lcd_transfer_backend("fastest")
 
-    def test_native_source_uses_two_internal_dma_buffers(self):
-        """原生实现必须使用内部 DMA RAM，并在首笔事务门控整秒。"""
+    def test_native_source_uses_async_latest_frame_mailbox(self):
+        """原生实现必须异步消费最新帧，并在首笔像素事务门控整秒。"""
         repository_root = ESP32_ROOT.parents[1]
         dma_source = (
             repository_root
@@ -188,20 +201,28 @@ class LcdTransferBackendTest(unittest.TestCase):
 
         self.assertIn("FN_LCD_DMA_BUFFER_COUNT (2)", dma_header)
         self.assertIn("FN_LCD_STRIP_BUFFER_COUNT (2)", dma_header)
+        self.assertIn("FN_LCD_ASYNC_FRAME_BUFFER_COUNT (2)", dma_header)
         self.assertIn("MALLOC_CAP_INTERNAL", dma_source)
         self.assertIn("MALLOC_CAP_DMA", dma_source)
+        self.assertIn("MALLOC_CAP_SPIRAM", dma_source)
         self.assertIn("spi_device_queue_trans", dma_source)
+        self.assertIn("spi_device_polling_transmit", dma_source)
         self.assertIn("fn_lcd_dma_scan_dirty", dma_source)
         self.assertIn("context->next_strip_buffer", dma_source)
-        self.assertIn("fn_lcd_dma_wait_next_second", dma_source)
+        self.assertIn("fn_lcd_dma_async_task", dma_source)
+        self.assertIn("fn_lcd_dma_queue_synchronized_frame", dma_source)
+        self.assertIn("fn_lcd_dma_next_wall_second_target_us", dma_source)
+        self.assertNotIn("fn_lcd_dma_wait_next_second", dma_source)
         self.assertIn("esp_timer_get_time", dma_source)
         self.assertIn("sync_visible_frame_to_second", dma_header)
         self.assertNotIn("MP_THREAD_GIL_EXIT", dma_source)
         self.assertIn("MP_THREAD_GIL_EXIT", binding_source)
+        self.assertIn("queue_synchronized_frame", binding_source)
         self.assertIn(
             "set_visible_frame_second_sync",
             lcd_base_source,
         )
+        self.assertIn("queue_synchronized_frame", lcd_base_source)
 
 
 if __name__ == "__main__":

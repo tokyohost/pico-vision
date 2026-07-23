@@ -143,6 +143,7 @@ class QbittorrentMonitor:
         self.lock = threading.Lock()
         self.value = self._empty_snapshot()
         self.started = False
+        self.stopping = threading.Event()
         self.failure_count = 0
         self.next_retry_at = 0.0
 
@@ -173,10 +174,15 @@ class QbittorrentMonitor:
         """启动唯一的守护采集线程。"""
         if self.started:
             return
+        self.stopping.clear()
         self.started = True
         threading.Thread(
             target=self._run, name="qBittorrent 指标采集", daemon=True
         ).start()
+
+    def close(self):
+        """通知后台采集线程退出，供运行时关闭或替换配置。"""
+        self.stopping.set()
 
     def snapshot(self):
         """返回最近一次 qBittorrent 指标的独立副本。"""
@@ -256,10 +262,10 @@ class QbittorrentMonitor:
 
     def _run(self):
         """循环采集 API，异常时发布离线状态并按退避周期重试。"""
-        while True:
+        while not self.stopping.is_set():
             now = time.monotonic()
             if now < self.next_retry_at:
-                time.sleep(max(0.1, self.next_retry_at - now))
+                self.stopping.wait(max(0.1, self.next_retry_at - now))
                 continue
             started = time.monotonic()
             failed = False
@@ -280,4 +286,7 @@ class QbittorrentMonitor:
             with self.lock:
                 self.value = value
             if not failed:
-                time.sleep(max(0.1, self.interval - (time.monotonic() - started)))
+                self.stopping.wait(
+                    max(0.1, self.interval - (time.monotonic() - started))
+                )
+        self.started = False

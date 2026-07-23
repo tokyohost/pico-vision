@@ -24,18 +24,9 @@ from windows_update import WindowsReleaseUpdater
 from .constants import APPLICATION_NAME, MONITOR_DIRECTORY, WINDOWS_APP_USER_MODEL_ID
 from .autostart import AutostartMixin
 from .log_service import LogServiceMixin
+from .ui_web import WebUiMixin
 from .worker_controller import WorkerControllerMixin
-from .ui import (
-    AboutWindowMixin,
-    CustomDataWindowMixin,
-    CustomStyleWindowMixin,
-    DeviceWindowMixin,
-    WifiWindowMixin,
-    WebSocketClientsWindowMixin,
-    LogWindowMixin,
-    SettingsWindowMixin,
-    TkSupportMixin,
-)
+from .ui import TkSupportMixin
 
 from .settings import (
     DEFAULT_SETTINGS,
@@ -58,14 +49,7 @@ class WindowsTrayApplication(
     WorkerControllerMixin,
     LogServiceMixin,
     AutostartMixin,
-    SettingsWindowMixin,
-    DeviceWindowMixin,
-    WifiWindowMixin,
-    WebSocketClientsWindowMixin,
-    LogWindowMixin,
-    AboutWindowMixin,
-    CustomDataWindowMixin,
-    CustomStyleWindowMixin,
+    WebUiMixin,
     TkSupportMixin,
 ):
     """管理 Windows 托盘图标、配置界面和无窗口监控工作进程。"""
@@ -117,6 +101,7 @@ class WindowsTrayApplication(
         self.device_connection_messages = queue.Queue()
         self.wifi_messages = queue.Queue()
         self.websocket_client_messages = queue.Queue()
+        self.runtime_config_messages = queue.Queue()
         self.device_connection_lock = threading.Lock()
         self.current_device_connection = {"connected": None}
         self.custom_style_messages = queue.Queue()
@@ -411,6 +396,9 @@ class WindowsTrayApplication(
         self.stopping.set()
         self._stop_worker()
         icon.stop()
+        window = getattr(self, "webview_window", None)
+        if window is not None:
+            window.destroy()
 
     @staticmethod
     def _create_image():
@@ -563,7 +551,9 @@ class WindowsTrayApplication(
                 return 0
             self._start_worker()
             self.icon = pystray.Icon("pico-monitor", self._create_image(), APPLICATION_NAME, self._build_menu())
-            self.icon.run()
+            self._initialize_webview()
+            self.icon.run_detached()
+            self._start_webview_loop()
             return 0
         except Exception:
             exception_type, exception, traceback_object = sys.exc_info()

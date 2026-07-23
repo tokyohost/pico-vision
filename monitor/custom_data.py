@@ -482,6 +482,17 @@ class CustomDataCollectionCoordinator:
         if self.task_logs_enabled:
             logging.getLogger("pico-monitor.custom-data").info("自定义数据采集线程池已关闭：%s", self._pool_state_text())
 
+    def update_runtime_settings(self, task_intervals, task_logs_enabled):
+        """热更新自定义数据任务频率和常规日志开关。"""
+        self.task_intervals = dict(task_intervals or {})
+        self.task_logs_enabled = bool(task_logs_enabled)
+        self._sync_tasks()
+        logging.getLogger("pico-monitor.custom-data").info(
+            "自定义数据运行时配置已更新：日志=%s，频率=%s",
+            "开启" if self.task_logs_enabled else "关闭",
+            self._task_interval_text() or "无",
+        )
+
     def _sync_tasks(self):
         """根据插件目录最新定义同步采集任务列表。"""
         existing = {task.plugin_name: task for task in self.tasks}

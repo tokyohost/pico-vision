@@ -76,6 +76,18 @@ class CollectionCoordinator:
         if self.task_logs_enabled:
             LOGGER.info("采集线程池已关闭：%s", self._pool_state_text())
 
+    def update_runtime_settings(self, task_intervals, task_logs_enabled):
+        """热更新全部系统采集任务频率和常规日志开关。"""
+        self._apply_task_intervals(task_intervals or {})
+        self.task_logs_enabled = bool(task_logs_enabled)
+        LOGGER.info(
+            "采集任务运行时配置已更新：日志=%s，频率=%s",
+            "开启" if self.task_logs_enabled else "关闭",
+            self._task_interval_text(),
+        )
+        if self.task_logs_enabled:
+            LOGGER.info("采集线程池运行状态：%s", self._pool_state_text())
+
     @staticmethod
     def _create_callback_task(collector, item):
         """把额外采集配置转换为回调采集任务。"""

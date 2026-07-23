@@ -448,6 +448,14 @@ class RuntimeOperationsMixin:
             wait_time = min(remaining, 0.1)
             if self._transmit_error_event.wait(wait_time):
                 self._raise_transmit_error_if_any()
+            runtime_reconnect_requested = getattr(
+                self, "runtime_reconnect_requested", None
+            )
+            if (
+                runtime_reconnect_requested is not None
+                and runtime_reconnect_requested.is_set()
+            ):
+                return
             if self.stopping.is_set():
                 return
 
@@ -511,7 +519,16 @@ class RuntimeOperationsMixin:
 
     def _collect_qbittorrent_fragment(self):
         """读取 qBittorrent 后台采样结果并返回独立快照片段。"""
-        return {"qbittorrent": self.qbittorrent_monitor.snapshot()}
+        monitor = self.qbittorrent_monitor
+        if monitor is None:
+            return {
+                "qbittorrent": {
+                    "enabled": False,
+                    "online": False,
+                    "connection_status": "disabled",
+                }
+            }
+        return {"qbittorrent": monitor.snapshot()}
 
     def _complete_collection_fragment(self, fragment):
         """处理单项采样结果，不混入发送层配置字段。"""

@@ -1,0 +1,600 @@
+"""pywebview 界面桥接层，统一承载 Windows 桌面端全部页面。"""
+
+import base64
+import json
+import logging
+import queue
+import subprocess
+import time
+
+import custom_data
+from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
+from qbittorrent_monitor import QbittorrentApiClient
+
+from .constants import APPLICATION_NAME
+from .settings import (
+    COLLECTION_TASK_ZH_NAMES,
+    DEFAULT_COLLECTION_TASK_INTERVALS,
+    normalize_collection_task_intervals,
+    style_names,
+)
+from .ui.device_window import parse_device_information_line
+from .ui.wifi_window import (
+    merge_wifi_networks,
+    wifi_security_label,
+    wifi_state_label,
+)
+
+
+LOGGER = logging.getLogger("pico-monitor.web-ui")
+
+
+class WebViewBridge:
+    """向 Vue 界面公开单一 action 调用入口，不创建任何 HTTP 服务。"""
+
+    __slots__ = ("_application",)
+
+    def __init__(self, application):
+        """保存托盘应用引用，供桥接动作复用现有业务能力。"""
+        # pywebview 会递归暴露公开属性；宿主对象必须保持私有，避免扫描到
+        # settings_window.native.browser.webview 并跨线程读取 WebView2 COM 属性。
+        self._application = application
+
+    def invoke(self, action, payload=None):
+        """按动作名称调用受控业务方法，并返回可 JSON 序列化结果。"""
+        payload = payload if isinstance(payload, dict) else {}
+        handlers = {
+            "app.bootstrap": self._bootstrap,
+            "settings.save": self._save_settings,
+            "settings.verifyQbittorrent": self._verify_qbittorrent,
+            "device.status": self._device_status,
+            "device.probe": self._probe_device,
+            "device.screenshot": self._take_screenshot,
+            "device.reboot": self._reboot_device,
+            "wifi.list": self._wifi_list,
+            "wifi.connect": self._wifi_connect,
+            "wifi.forget": self._wifi_forget,
+            "websocket.list": self._websocket_list,
+            "websocket.update": self._websocket_update,
+            "style.list": self._style_list,
+            "style.upload": self._style_upload,
+            "style.delete": self._style_delete,
+            "data.list": self._custom_data_list,
+            "data.import": self._custom_data_import,
+            "data.activate": self._custom_data_activate,
+            "data.test": self._custom_data_test,
+            "data.delete": self._custom_data_delete,
+            "log.read": self._read_log,
+            "log.clear": self._clear_log,
+            "log.export": self._export_log,
+            "system.openDataDirectory": self._open_data_directory,
+        }
+        handler = handlers.get(str(action))
+        if handler is None:
+            return self._error("不支持的界面动作：{}".format(action))
+        try:
+            result = handler(payload)
+            if isinstance(result, dict) and "ok" in result:
+                return result
+            return {"ok": True, "data": result}
+        except Exception as error:
+            LOGGER.exception("执行界面动作失败：%s", action)
+            return self._error(str(error) or "操作失败")
+
+    @staticmethod
+    def _error(message):
+        """构造统一的桥接错误响应。"""
+        return {"ok": False, "message": str(message)}
+
+    @staticmethod
+    def _drain_queue(target):
+        """读取队列中最新一条结果，丢弃已经过时的历史结果。"""
+        latest = None
+        while True:
+            try:
+                latest = target.get_nowait()
+            except queue.Empty:
+                return latest
+
+    def _bootstrap(self, payload):
+        """返回首屏所需配置、样式、任务名称和设备状态。"""
+        del payload
+        application = self._application
+        settings = dict(application.settings)
+        settings["collection_task_intervals"] = normalize_collection_task_intervals(
+            settings.get("collection_task_intervals")
+        )
+        qr_path = application._resource_path("assert", "fishQr.png")
+        qr_data_url = ""
+        if qr_path.is_file():
+            qr_data_url = "data:image/png;base64," + base64.b64encode(
+                qr_path.read_bytes()
+            ).decode("ascii")
+        return {
+            "applicationName": APPLICATION_NAME,
+            "version": MONITOR_VERSION,
+            "settings": settings,
+            "styles": application.settings.get("styles", []),
+            "taskNames": COLLECTION_TASK_ZH_NAMES,
+            "defaultTasks": list(DEFAULT_COLLECTION_TASK_INTERVALS),
+            "device": application._get_device_connection(),
+            "dataDirectory": str(application.data_directory),
+            "about": {
+                "author": "tokyohost",
+                "wechat": "hi2024FL",
+                "repository": GITHUB_REPOSITORY,
+                "qrDataUrl": qr_data_url,
+            },
+        }
+
+    def _save_settings(self, payload):
+        """校验并保存 Vue 表单提交的完整设置。"""
+        incoming = payload.get("settings")
+        if not isinstance(incoming, dict):
+            raise ValueError("缺少有效配置")
+        current = self._application.settings
+        updated = dict(current)
+        allowed = set(current)
+        updated.update({key: incoming[key] for key in incoming if key in allowed})
+        updated["port"] = str(updated.get("port") or "").strip()
+        updated["websocket_client_name"] = str(
+            updated.get("websocket_client_name") or ""
+        ).strip()[:64]
+        updated["ping_target"] = str(updated.get("ping_target") or "").strip()
+        updated["interval"] = float(updated["interval"])
+        updated["reconnect_interval"] = float(updated["reconnect_interval"])
+        updated["serial_probe_interval"] = float(updated["serial_probe_interval"])
+        updated["qbittorrent_interval"] = float(updated["qbittorrent_interval"])
+        if updated.get("network_unit") == "Mb":
+            updated["network_unit"] = "Mbps"
+        if updated.get("network_unit") not in ("MB", "Mbps"):
+            raise ValueError("网络速率单位无效")
+        updated["idle_timeout"] = int(updated["idle_timeout"])
+        updated["screen_rotation"] = int(updated["screen_rotation"])
+        updated["lcd_brightness"] = int(updated["lcd_brightness"])
+        updated["adaptive_transmit"] = bool(updated["adaptive_transmit"])
+        updated["collection_task_logs"] = bool(updated["collection_task_logs"])
+        updated["qbittorrent_enabled"] = bool(updated["qbittorrent_enabled"])
+        updated["collection_task_intervals"] = normalize_collection_task_intervals(
+            updated.get("collection_task_intervals")
+        )
+        if updated["lcd_style"] not in style_names(updated, idle=False):
+            raise ValueError("界面样式无效")
+        if updated["idle_style"] not in style_names(updated, idle=True):
+            raise ValueError("待机样式无效")
+        intervals = (
+            updated["interval"],
+            updated["reconnect_interval"],
+            updated["serial_probe_interval"],
+            updated["qbittorrent_interval"],
+        )
+        if (
+            not updated["websocket_client_name"]
+            or not updated["ping_target"]
+            or updated["interval"] < 0.3
+            or min(intervals[1:]) <= 0
+            or updated["idle_timeout"] <= 0
+            or not 1 <= updated["lcd_brightness"] <= 100
+        ):
+            raise ValueError("请检查设备名称、地址、亮度和时间间隔")
+        if updated["qbittorrent_enabled"] and not all(
+            (
+                updated.get("qbittorrent_address"),
+                updated.get("qbittorrent_username"),
+                updated.get("qbittorrent_password"),
+            )
+        ):
+            raise ValueError("启用 qBittorrent 后必须填写地址、用户名和密码")
+        self._application.settings = updated
+        self._application.settings_store.save(updated)
+        if not self._application._apply_runtime_settings(wait=True):
+            raise RuntimeError("后台监控未运行，配置将在下次启动时生效")
+        if self._application.icon is not None:
+            self._application.icon.update_menu()
+            self._application.icon.notify("配置已保存并生效", APPLICATION_NAME)
+        return {"saved": True}
+
+    def _verify_qbittorrent(self, payload):
+        """验证 qBittorrent WebUI 账号配置。"""
+        client = QbittorrentApiClient(
+            str(payload.get("address") or "").strip(),
+            str(payload.get("username") or "").strip(),
+            str(payload.get("password") or ""),
+        )
+        client.login()
+        return {"verified": True}
+
+    def _device_status(self, payload):
+        """返回当前工作进程维护的设备连接快照。"""
+        del payload
+        return self._application._get_device_connection()
+
+    def _probe_device(self, payload):
+        """运行一次独立设备探测，并解析为结构化字段。"""
+        websocket_url = payload.get("websocketUrl")
+        result = subprocess.run(
+            self._application._device_probe_command(websocket_url),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=0x08000000,
+            timeout=35,
+        )
+        information = {}
+        output = "\n".join(filter(None, (result.stdout, result.stderr)))
+        for line in output.splitlines():
+            parsed = parse_device_information_line(line)
+            if parsed is not None:
+                information[parsed[0]] = parsed[1]
+        if result.returncode != 0 or not information:
+            detail = output.strip().splitlines()
+            raise RuntimeError(detail[-1] if detail else "未发现 OmniWatch 设备")
+        return {"device": information, "log": output[-5000:]}
+
+    def _take_screenshot(self, payload):
+        """向工作进程发送 LCD 截图命令。"""
+        del payload
+        self._application._take_screenshot(self._application.icon)
+        return {"requested": True}
+
+    def _reboot_device(self, payload):
+        """请求工作进程重启当前连接设备。"""
+        del payload
+        self._drain_queue(self._application.device_management_messages)
+        if not self._application._write_worker_command("EXIT_REBOOT\n"):
+            raise RuntimeError("后台监控未运行")
+        return self._wait_worker_result(
+            self._application.device_management_messages, 20
+        )
+
+    def _wait_worker_result(self, target, timeout=12, expected_action=None):
+        """等待匹配 action 的异步结果，并忽略队列中的陈旧响应。"""
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("等待设备响应超时，请确认设备连接和固件功能")
+            try:
+                result = target.get(timeout=remaining)
+            except queue.Empty as error:
+                raise RuntimeError(
+                    "等待设备响应超时，请确认设备连接和固件功能"
+                ) from error
+            if (
+                expected_action is not None
+                and result.get("action") != expected_action
+            ):
+                continue
+            if result.get("status") != "ok":
+                raise RuntimeError(result.get("message") or "设备操作失败")
+            return result
+
+    def _wifi_list(self, payload):
+        """扫描并返回设备附近 Wi-Fi 列表。"""
+        del payload
+        self._drain_queue(self._application.wifi_messages)
+        if not self._application._request_wifi_list():
+            raise RuntimeError("后台监控未运行")
+        result = self._wait_worker_result(
+            self._application.wifi_messages, 22, "list"
+        )
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        networks = merge_wifi_networks(data.get("networks"), data.get("wifi"))
+        for network in networks:
+            network["state_label"] = wifi_state_label(network)
+            network["security_label"] = wifi_security_label(
+                network.get("security")
+            )
+        return {
+            "action": "list",
+            "networks": networks,
+            "wifi": data.get("wifi") or {},
+        }
+
+    def _wifi_connect(self, payload):
+        """请求设备连接指定 Wi-Fi。"""
+        self._drain_queue(self._application.wifi_messages)
+        if not self._application._request_wifi_connect(
+            str(payload.get("ssid") or ""), str(payload.get("password") or "")
+        ):
+            raise RuntimeError("后台监控未运行")
+        result = self._wait_worker_result(
+            self._application.wifi_messages, 25, "connect"
+        )
+        return result.get("data") or {}
+
+    def _wifi_forget(self, payload):
+        """请求设备忘记指定 Wi-Fi。"""
+        self._drain_queue(self._application.wifi_messages)
+        if not self._application._request_wifi_forget(str(payload.get("ssid") or "")):
+            raise RuntimeError("后台监控未运行")
+        result = self._wait_worker_result(
+            self._application.wifi_messages, 15, "forget"
+        )
+        return result.get("data") or {}
+
+    def _websocket_list(self, payload):
+        """读取设备保存的 WebSocket 客户端策略。"""
+        del payload
+        self._drain_queue(self._application.websocket_client_messages)
+        if not self._application._request_websocket_client_list():
+            raise RuntimeError("后台监控未运行")
+        result = self._wait_worker_result(
+            self._application.websocket_client_messages, 12, "list"
+        )
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        clients = []
+        for client in data.get("clients", ()):
+            if not isinstance(client, dict) or not client.get("id"):
+                continue
+            normalized = dict(client)
+            normalized["enabled"] = bool(client.get("enabled", True))
+            normalized["active"] = bool(client.get("active", False))
+            try:
+                normalized["priority"] = int(client.get("priority", 0))
+            except (TypeError, ValueError):
+                normalized["priority"] = 0
+            try:
+                normalized["connections"] = int(client.get("connections", 0))
+            except (TypeError, ValueError):
+                normalized["connections"] = 0
+            clients.append(normalized)
+        return {"action": "list", "clients": clients}
+
+    def _websocket_update(self, payload):
+        """更新一个 WebSocket 客户端的启用状态和优先级。"""
+        self._drain_queue(self._application.websocket_client_messages)
+        if not self._application._request_websocket_client_update(
+            payload.get("id"),
+            payload.get("enabled"),
+            payload.get("priority"),
+        ):
+            raise RuntimeError("后台监控未运行")
+        result = self._wait_worker_result(
+            self._application.websocket_client_messages, 12, "update"
+        )
+        return result.get("data") or {}
+
+    def _style_list(self, payload):
+        """刷新并返回设备样式目录。"""
+        del payload
+        self._drain_queue(self._application.custom_style_messages)
+        if not self._application.request_custom_style_catalog():
+            raise RuntimeError("后台监控未运行")
+        result = self._wait_worker_result(
+            self._application.custom_style_messages, 10
+        )
+        self._application._reload_style_catalog()
+        result["catalog"] = self._application.settings.get("styles", [])
+        return result
+
+    def _select_file(self, file_types):
+        """通过 pywebview 原生文件选择器选择单个文件。"""
+        import webview
+
+        window = getattr(self._application, "webview_window", None)
+        if window is None:
+            raise RuntimeError("界面窗口尚未就绪")
+        dialog_enum = getattr(webview, "FileDialog", None)
+        dialog_type = (
+            dialog_enum.OPEN
+            if dialog_enum is not None
+            else webview.OPEN_DIALOG
+        )
+        result = window.create_file_dialog(
+            dialog_type,
+            allow_multiple=False,
+            file_types=file_types,
+        )
+        return result[0] if result else None
+
+    def _style_upload(self, payload):
+        """选择、校验并上传一个自定义屏幕样式文件。"""
+        path = self._select_file(("Python 样式文件 (*.py)",))
+        if not path:
+            return {"cancelled": True}
+        self._drain_queue(self._application.custom_style_upload_messages)
+        validated = self._application.request_custom_style_upload(
+            path,
+            set(payload.get("existingNames") or ()),
+            bool(payload.get("overwrite")),
+        )
+        result = self._wait_worker_result(
+            self._application.custom_style_upload_messages, 90
+        )
+        result["filename"] = validated.filename
+        self._application._reload_style_catalog()
+        return result
+
+    def _style_delete(self, payload):
+        """删除设备中的指定自定义屏幕样式。"""
+        self._drain_queue(self._application.custom_style_delete_messages)
+        self._application.request_custom_style_delete(
+            str(payload.get("name") or ""),
+            str(payload.get("filename") or ""),
+        )
+        return self._wait_worker_result(
+            self._application.custom_style_delete_messages, 30
+        )
+
+    def _custom_data_list(self, payload):
+        """返回自定义数据插件、运行状态和加载错误。"""
+        del payload
+        manager = custom_data.get_manager()
+        states, errors = manager.list_items()
+        items = []
+        for state in states:
+            definition = state.definition
+            items.append(
+                {
+                    "name": definition.name,
+                    "key": definition.key,
+                    "taskName": definition.task_name,
+                    "chineseName": definition.zh_name,
+                    "interval": definition.interval,
+                    "path": str(definition.plugin_directory),
+                    "environment": manager.environment_status(definition),
+                    "enabled": bool(state.runtime_enabled),
+                    "error": state.error or state.environment_error,
+                }
+            )
+        return {
+            "items": items,
+            "errors": [
+                {"path": str(path), "message": str(error)}
+                for path, error in errors.items()
+            ],
+        }
+
+    def _custom_data_import(self, payload):
+        """选择 ZIP 插件包并导入自定义数据插件。"""
+        path = self._select_file(("自定义数据插件 (*.zip)",))
+        if not path:
+            return {"cancelled": True}
+        definition = custom_data.get_manager().import_plugin(
+            path, bool(payload.get("overwrite"))
+        )
+        return {"name": definition.name, "chineseName": definition.zh_name}
+
+    def _custom_data_activate(self, payload):
+        """激活指定插件并同步通知后台工作进程。"""
+        name = str(payload.get("name") or "")
+        custom_data.get_manager().activate_plugin(name)
+        applied = self._application._activate_custom_data_plugin(name)
+        return {"activated": True, "applied": applied}
+
+    def _custom_data_test(self, payload):
+        """测试执行指定自定义数据插件。"""
+        result = custom_data.get_manager().test_plugin(
+            str(payload.get("name") or "")
+        )
+        return {"output": result}
+
+    def _custom_data_delete(self, payload):
+        """删除指定自定义数据插件目录和独立环境。"""
+        custom_data.get_manager().delete_plugin(str(payload.get("path") or ""))
+        return {"deleted": True}
+
+    def _read_log(self, payload):
+        """读取最近日志并按 UTF-8 解码。"""
+        maximum = min(max(int(payload.get("maximum", 300000)), 1000), 1048576)
+        return {
+            "content": self._application._read_recent_log(maximum).decode(
+                "utf-8", errors="replace"
+            )
+        }
+
+    def _clear_log(self, payload):
+        """清空应用运行日志。"""
+        del payload
+        self._application._clear_log()
+        return {"cleared": True}
+
+    def _export_log(self, payload):
+        """导出包含脱敏配置快照的日志。"""
+        del payload
+        path = self._application._export_log(self._application.icon)
+        return {"path": str(path)}
+
+    def _open_data_directory(self, payload):
+        """使用资源管理器打开用户数据目录。"""
+        del payload
+        self._application.data_directory.mkdir(parents=True, exist_ok=True)
+        subprocess.Popen(
+            ["explorer.exe", str(self._application.data_directory)],
+            creationflags=0x08000000,
+        )
+        return {"opened": True}
+
+
+class WebUiMixin:
+    """把原有多个 Tk 窗口替换为单一 pywebview Vue 应用。"""
+
+    def _initialize_webview(self):
+        """在主线程创建常驻隐藏窗口，保证 Windows GUI 消息循环合法。"""
+        import webview
+
+        entry = self._resource_path("win", "ui-web", "dist", "index.html")
+        if not entry.is_file():
+            raise FileNotFoundError("Web 界面构建产物不存在：{}".format(entry))
+        bridge = WebViewBridge(self)
+        window = webview.create_window(
+            "{} — 控制中心".format(APPLICATION_NAME),
+            entry.resolve().as_uri(),
+            js_api=bridge,
+            width=1120,
+            height=760,
+            min_size=(920, 640),
+            background_color="#0b1020",
+            confirm_close=False,
+            hidden=True,
+        )
+
+        def hide_instead_of_closing():
+            """把用户关闭操作转换为隐藏，保持托盘和主 GUI 循环运行。"""
+            if self.stopping.is_set():
+                return True
+            window.hide()
+            return False
+
+        window.events.closing += hide_instead_of_closing
+        self.webview_window = window
+        self.settings_window = window
+        return window
+
+    @staticmethod
+    def _start_webview_loop():
+        """在应用主线程启动 Edge WebView2 消息循环。"""
+        import webview
+
+        webview.start(gui="edgechromium", debug=False, private_mode=False)
+
+    def _show_web_page(self, page="settings"):
+        """恢复常驻 Web 窗口并导航到指定页面。"""
+        window = getattr(self, "webview_window", None)
+        if window is None:
+            if self.icon is not None:
+                self.icon.notify("界面尚未就绪，请稍后重试", APPLICATION_NAME)
+            return
+        try:
+            window.evaluate_js(
+                "window.dispatchEvent(new CustomEvent('omniwatch:navigate',"
+                " {detail: %s}))" % json.dumps(page)
+            )
+            window.show()
+            window.restore()
+        except Exception as error:
+            LOGGER.exception("恢复 Web 界面失败：%s", error)
+            if self.icon is not None:
+                self.icon.notify("界面恢复失败：{}".format(error), APPLICATION_NAME)
+
+    def _show_settings(self, icon=None, item=None):
+        """打开 Web 设置页。"""
+        del icon, item
+        self._show_web_page("settings")
+
+    def _show_device_probe(self, icon=None, item=None):
+        """打开 Web 设备管理页。"""
+        del icon, item
+        self._show_web_page("device")
+
+    def _show_custom_style(self, icon=None, item=None):
+        """打开 Web 屏幕样式页。"""
+        del icon, item
+        self._show_web_page("styles")
+
+    def _show_custom_data(self, icon=None, item=None):
+        """打开 Web 自定义数据页。"""
+        del icon, item
+        self._show_web_page("data")
+
+    def _show_log(self, icon=None, item=None):
+        """打开 Web 日志页。"""
+        del icon, item
+        self._show_web_page("logs")
+
+    def _show_about(self, icon=None, item=None):
+        """打开 Web 关于页。"""
+        del icon, item
+        self._show_web_page("about")

@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import queue
 import re
 import subprocess
 import sys
@@ -180,6 +181,35 @@ class WorkerControllerMixin:
         except (BrokenPipeError, OSError):
             return False
 
+    def _apply_runtime_settings(self, wait=False, timeout=10.0):
+        """向工作进程下发完整配置，并可等待热更新确认。"""
+        messages = self.runtime_config_messages
+        while True:
+            try:
+                messages.get_nowait()
+            except queue.Empty:
+                break
+        payload = json.dumps(
+            self.settings,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if not self._write_worker_command(
+            "RUNTIME_CONFIG:{}\n".format(payload)
+        ):
+            return False
+        if not wait:
+            return True
+        try:
+            result = messages.get(timeout=max(0.1, float(timeout)))
+        except queue.Empty as error:
+            raise RuntimeError("等待后台监控热更新确认超时") from error
+        if result.get("status") != "ok":
+            raise RuntimeError(
+                result.get("message") or "后台监控热更新配置失败"
+            )
+        return True
+
     def _apply_dev_settings(self):
         """向运行中的 Monitor 下发开发模式配置，避免重启后台进程。"""
         process = self.worker_process
@@ -239,6 +269,13 @@ class WorkerControllerMixin:
                                 line, "DEVICE_REBOOT_RESULT:", "设备返回了无效响应",
                             )
                             self.device_management_messages.put(result)
+                        if line.startswith("RUNTIME_CONFIG_RESULT:"):
+                            result = self._parse_worker_result(
+                                line,
+                                "RUNTIME_CONFIG_RESULT:",
+                                "后台监控返回了无效的热更新响应",
+                            )
+                            self.runtime_config_messages.put(result)
                         if line.startswith("SDK_BOOTLOADER_RESULT:"):
                             result = self._parse_worker_result(
                                 line,

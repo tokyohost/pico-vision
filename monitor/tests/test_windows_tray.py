@@ -33,6 +33,7 @@ from win.ui.settings_window import (
     insert_decimal_point,
     is_decimal_interval_input,
 )
+from win.ui_web import WebViewBridge
 from style_validator import ValidatedStyle
 
 
@@ -128,6 +129,60 @@ class WindowsTraySettingsTest(unittest.TestCase):
 
         self.assertFalse(should_stop)
         service.activate_custom_data_plugin.assert_called_once_with("weather")
+
+    @mock.patch("builtins.print")
+    def test_tray_command_dispatch_applies_complete_runtime_config(self, print_mock):
+        """确认完整设置通过命令管道热更新并返回成功结果。"""
+        service = mock.Mock()
+        payload = {"interval": 1.5, "ping_target": "1.1.1.1"}
+
+        should_stop = _dispatch_tray_command(
+            service,
+            "RUNTIME_CONFIG:" + json.dumps(payload),
+        )
+
+        self.assertFalse(should_stop)
+        service.apply_runtime_config.assert_called_once_with(payload)
+        output = print_mock.call_args.args[0]
+        self.assertEqual(
+            json.loads(output.removeprefix("RUNTIME_CONFIG_RESULT:"))["status"],
+            "ok",
+        )
+
+    def test_complete_runtime_settings_are_sent_without_restarting_worker(self):
+        """确认保存设置只热更新工作进程，不执行后台进程重启。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.settings = dict(DEFAULT_SETTINGS, interval=1.5)
+        application.runtime_config_messages = queue.Queue()
+        application._write_worker_command = mock.Mock(return_value=True)
+        application._restart_worker = mock.Mock()
+
+        self.assertTrue(application._apply_runtime_settings())
+
+        command = application._write_worker_command.call_args.args[0]
+        payload = json.loads(command.removeprefix("RUNTIME_CONFIG:"))
+        self.assertEqual(payload["interval"], 1.5)
+        application._restart_worker.assert_not_called()
+
+    def test_web_bridge_reboot_uses_supported_exit_reboot_action(self):
+        """确认 Web 界面的重启设备动作发送后台支持的退出重启命令。"""
+        application = mock.Mock()
+        application.device_management_messages = queue.Queue()
+
+        def write_command(command):
+            """模拟后台收到命令后返回设备重启结果。"""
+            application.device_management_messages.put({
+                "status": "ok",
+                "message": "设备重启命令已发送",
+            })
+            return True
+
+        application._write_worker_command.side_effect = write_command
+
+        result = WebViewBridge(application)._reboot_device({})
+
+        self.assertEqual(result["status"], "ok")
+        application._write_worker_command.assert_called_once_with("EXIT_REBOOT\n")
 
     def test_tray_command_dispatch_requests_wifi_scan(self):
         """确认后台进程能解析 Wi-Fi 扫描命令。"""

@@ -46,7 +46,8 @@ class StyleSecondSyncTest(unittest.TestCase):
         lcd = RecordingLcd()
         renderer = DashboardRenderer(lcd, style_name="boot")
 
-        self.assertEqual(lcd.sync_policies, [False])
+        self.assertTrue(lcd.sync_policies)
+        self.assertTrue(all(policy is False for policy in lcd.sync_policies))
         self.assertTrue(renderer.set_style("idle"))
         self.assertEqual(lcd.sync_policies[-1], True)
         self.assertTrue(renderer.set_style("fps_simple"))

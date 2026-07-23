@@ -108,6 +108,15 @@ class DashboardRenderer:
         width = int(getattr(self._style, "width", panel_profile.width))
         height = int(getattr(self._style, "height", panel_profile.height))
         landscape = bool(getattr(self._style, "landscape", False))
+        self.lcd.set_visible_frame_second_sync(
+            bool(
+                getattr(
+                    self._style,
+                    "sync_visible_frame_to_second",
+                    False,
+                )
+            )
+        )
         self.lcd.set_landscape(landscape)
         self.lcd.configure_canvas(width, height)
         required_pixels = width * height
@@ -126,6 +135,7 @@ class DashboardRenderer:
         self._width = width
         self._height = height
         self.canvas.set_font(getattr(self._style, "font_name", "native"))
+        # configure_canvas 可能重建原生任务，因此必须再次恢复当前样式策略。
         self.lcd.set_visible_frame_second_sync(
             bool(
                 getattr(
@@ -141,12 +151,21 @@ class DashboardRenderer:
         normalized = 180 if rotation == 180 else 0
         if normalized == self.lcd.rotation():
             return False
+        second_sync = bool(
+            getattr(
+                self._style,
+                "sync_visible_frame_to_second",
+                False,
+            )
+        )
+        self.lcd.set_visible_frame_second_sync(False)
         self.lcd.set_display_enabled(False)
         try:
             changed = self.lcd.set_rotation(normalized)
             self._clear_screen()
         finally:
             self.lcd.set_display_enabled(True)
+            self.lcd.set_visible_frame_second_sync(second_sync)
         self._force_frame = bool(changed)
         return changed
 

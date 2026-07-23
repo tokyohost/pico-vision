@@ -21,7 +21,7 @@ LCD_TRANSFER_BACKENDS = (
     LCD_TRANSFER_BACKEND_LEGACY,
     LCD_TRANSFER_BACKEND_NATIVE_DMA,
 )
-NATIVE_DMA_API_VERSION = 3
+NATIVE_DMA_API_VERSION = 4
 DEFAULT_DMA_CHUNK_SIZE = 4092
 
 
@@ -50,6 +50,10 @@ class LegacySpiTransferBackend:
     def set_visible_frame_second_sync(self, enabled):
         """兼容 SPI 后端不支持整秒门控，始终返回未改变。"""
         del enabled
+        return False
+
+    def visible_frame_second_sync_enabled(self):
+        """兼容 SPI 后端始终使用立即发送模式。"""
         return False
 
     def write(self, spi, pixels):
@@ -88,6 +92,7 @@ class NativeDmaTransferBackend:
             )
         self._configuration = dict(configuration)
         self._chunk_size = int(self._native.init(self._configuration))
+        self._visible_frame_second_sync = False
 
     def configure(self, configuration):
         """在横竖屏或样式尺寸变化后重建匹配的 C 固件缓冲。"""
@@ -96,12 +101,26 @@ class NativeDmaTransferBackend:
             return False
         self._chunk_size = int(self._native.init(next_configuration))
         self._configuration = next_configuration
+        self._visible_frame_second_sync = False
         return True
 
     def set_visible_frame_second_sync(self, enabled):
         """把当前 Style 的整秒同步策略立即下发给原生 DMA 层。"""
-        return bool(
-            self._native.set_visible_frame_second_sync(bool(enabled))
+        enabled = bool(enabled)
+        changed = bool(
+            self._native.set_visible_frame_second_sync(enabled)
+        )
+        self._visible_frame_second_sync = enabled
+        return changed
+
+    def visible_frame_second_sync_enabled(self):
+        """返回当前是否由原生异步任务在整秒提交最新帧。"""
+        return self._visible_frame_second_sync
+
+    def queue_synchronized_frame(self, spi, frame, force=False):
+        """复制最新画布到原生单槽邮箱，不等待目标整秒。"""
+        return self._native.queue_synchronized_frame(
+            spi, frame, bool(force)
         )
 
     def write(self, spi, pixels):

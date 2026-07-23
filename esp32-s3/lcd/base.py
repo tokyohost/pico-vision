@@ -276,6 +276,11 @@ class LcdDevice:
                 frame,
             )
             return 1
+        if self._transfer_backend.visible_frame_second_sync_enabled():
+            self._transfer_backend.queue_synchronized_frame(
+                self.spi, frame, force
+            )
+            return 0
         regions = self._transfer_backend.dirty_regions(frame, force)
         try:
             for x, y, width, height in regions:

@@ -73,6 +73,7 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
             websocket_client_id=getattr(arguments, "websocket_client_id", None),
         )
         self.stopping = threading.Event()
+        self.runtime_reconnect_requested = threading.Event()
         self.reboot_requested = threading.Event()
         self.sdk_bootloader_requested = threading.Event()
         self.custom_style_catalog_requested = threading.Event()
@@ -96,9 +97,9 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
         self._transmit_dropped_snapshots = 0
         self.custom_data_manager = get_custom_data_manager()
         self.custom_data_manager.prepare_environments_async()
-        extra_collection_tasks = []
-        if self.qbittorrent_monitor is not None:
-            extra_collection_tasks.append(("qbittorrent", self._collect_qbittorrent_fragment, 1.0, "qBittorrent"))
+        extra_collection_tasks = [
+            ("qbittorrent", self._collect_qbittorrent_fragment, 1.0, "qBittorrent")
+        ]
         self._collection_coordinator = CollectionCoordinator(
             self.collector,
             self._snapshot_store,
@@ -124,6 +125,171 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
             definition.task_name,
         )
         return definition
+
+    def apply_runtime_config(self, payload):
+        """校验并热更新托盘管理的完整运行配置。"""
+        if not isinstance(payload, dict):
+            raise ValueError("运行时配置必须是对象")
+        numeric_fields = {
+            "interval": float,
+            "reconnect_interval": float,
+            "serial_probe_interval": float,
+            "lan_probe_port": int,
+            "lan_probe_timeout": float,
+            "lan_probe_max_workers": int,
+            "qbittorrent_interval": float,
+        }
+        text_fields = (
+            "port",
+            "websocket_url",
+            "websocket_client_name",
+            "websocket_client_id",
+            "ping_target",
+            "lan_probe_path",
+            "qbittorrent_address",
+            "qbittorrent_username",
+            "qbittorrent_password",
+        )
+        updated = {}
+        for name, converter in numeric_fields.items():
+            if name in payload:
+                updated[name] = converter(payload[name])
+        for name in text_fields:
+            if name in payload:
+                updated[name] = str(payload[name] or "").strip()
+        if (
+            updated.get("interval", self.arguments.interval) < 0.3
+            or updated.get("reconnect_interval", self.arguments.reconnect_interval) <= 0
+            or updated.get("serial_probe_interval", self.arguments.serial_probe_interval) <= 0
+            or updated.get("lan_probe_timeout", self.arguments.lan_probe_timeout) <= 0
+            or updated.get("qbittorrent_interval", self.arguments.qbittorrent_interval) <= 0
+        ):
+            raise ValueError("运行时配置中的时间间隔无效")
+        lan_port = updated.get("lan_probe_port", self.arguments.lan_probe_port)
+        lan_workers = updated.get(
+            "lan_probe_max_workers", self.arguments.lan_probe_max_workers
+        )
+        if not 1 <= lan_port <= 65535 or lan_workers <= 0:
+            raise ValueError("局域网探测端口或并发数无效")
+        task_intervals = payload.get(
+            "collection_task_intervals",
+            self.arguments.collection_task_intervals,
+        )
+        if (
+            not isinstance(task_intervals, dict)
+            or any(float(interval) <= 0 for interval in task_intervals.values())
+        ):
+            raise ValueError("采集任务频率必须是大于零的对象")
+
+        connection_before = (
+            self.arguments.port,
+            getattr(self.arguments, "websocket_url", ""),
+            getattr(self.arguments, "websocket_client_name", ""),
+            getattr(self.arguments, "websocket_client_id", ""),
+            self.arguments.serial_probe_interval,
+        )
+        for name, value in updated.items():
+            setattr(self.arguments, name, value)
+        self.arguments.adaptive_transmit = bool(
+            payload.get("adaptive_transmit", self.arguments.adaptive_transmit)
+        )
+        self.arguments.collection_task_logs = bool(
+            payload.get(
+                "collection_task_logs", self.arguments.collection_task_logs
+            )
+        )
+        self.arguments.collection_task_intervals = {
+            str(name): float(interval)
+            for name, interval in task_intervals.items()
+        }
+        self.collector.ping_monitor.target = self.arguments.ping_target
+        self._collection_coordinator.update_runtime_settings(
+            self.arguments.collection_task_intervals,
+            self.arguments.collection_task_logs,
+        )
+        self._custom_data_coordinator.update_runtime_settings(
+            self.arguments.collection_task_intervals,
+            self.arguments.collection_task_logs,
+        )
+        self._apply_runtime_qbittorrent(payload)
+        self.apply_display_config(payload)
+        self.apply_dev_config(
+            {"enabled": bool(payload.get("dev", self.arguments.dev))}
+        )
+        self._reset_adaptive_transmit_negotiation()
+
+        self.client.configured_port = self.arguments.port or None
+        self.client.websocket_url = self.arguments.websocket_url or None
+        self.client.websocket_client_name = self.arguments.websocket_client_name
+        self.client.websocket_client_id = self.arguments.websocket_client_id
+        self.client.probe_interval = self.arguments.serial_probe_interval
+        connection_after = (
+            self.arguments.port,
+            self.arguments.websocket_url,
+            self.arguments.websocket_client_name,
+            self.arguments.websocket_client_id,
+            self.arguments.serial_probe_interval,
+        )
+        if connection_after != connection_before:
+            self.runtime_reconnect_requested.set()
+        LOGGER.info("完整运行配置已热更新，不重启 Monitor 工作进程")
+
+    def _apply_runtime_qbittorrent(self, payload):
+        """根据最新配置启动、停止或替换 qBittorrent 采集器。"""
+        enabled = bool(
+            payload.get(
+                "qbittorrent_enabled", self.arguments.qbittorrent_enabled
+            )
+        )
+        address = str(
+            payload.get(
+                "qbittorrent_address", self.arguments.qbittorrent_address
+            )
+            or ""
+        ).strip().rstrip("/")
+        username = str(
+            payload.get(
+                "qbittorrent_username", self.arguments.qbittorrent_username
+            )
+            or ""
+        )
+        password = str(
+            payload.get(
+                "qbittorrent_password", self.arguments.qbittorrent_password
+            )
+            or ""
+        )
+        interval = float(
+            payload.get(
+                "qbittorrent_interval", self.arguments.qbittorrent_interval
+            )
+        )
+        desired = (enabled, address, username, password, interval)
+        current_monitor = self.qbittorrent_monitor
+        current = (
+            current_monitor is not None,
+            current_monitor.client.address if current_monitor is not None else "",
+            current_monitor.client.username if current_monitor is not None else "",
+            current_monitor.client.password if current_monitor is not None else "",
+            current_monitor.interval if current_monitor is not None else interval,
+        )
+        self.arguments.qbittorrent_enabled = enabled
+        self.arguments.qbittorrent_address = address
+        self.arguments.qbittorrent_username = username
+        self.arguments.qbittorrent_password = password
+        self.arguments.qbittorrent_interval = interval
+        if desired == current:
+            return
+        previous = current_monitor
+        if previous is not None:
+            previous.close()
+        self.qbittorrent_monitor = None
+        if enabled:
+            monitor = QbittorrentMonitor(
+                address, username, password, interval
+            )
+            monitor.start()
+            self.qbittorrent_monitor = monitor
 
     @staticmethod
     def _create_initial_snapshot(arguments):
@@ -203,6 +369,9 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
         custom_data_manager = getattr(self, "custom_data_manager", None)
         if custom_data_manager is not None:
             custom_data_manager.close()
+        qbittorrent_monitor = getattr(self, "qbittorrent_monitor", None)
+        if qbittorrent_monitor is not None:
+            qbittorrent_monitor.close()
         self._stop_transmit_worker(wait=True)
         self.collector.close()
 
@@ -314,9 +483,11 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
             WINDOWS_WEBSOCKET_NETWORK_SCAN_INTERVAL,
         )
         while not self.stopping.is_set():
+            if self.runtime_reconnect_requested.is_set():
+                return False
             now = time.monotonic()
             wait_seconds = max(0.0, min(next_direct_probe, next_network_scan) - now)
-            if self.stopping.wait(wait_seconds):
+            if self._wait_for_runtime_interrupt(wait_seconds):
                 return False
             now = time.monotonic()
             if now >= next_direct_probe:
@@ -334,6 +505,27 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
                 ):
                     return True
         return False
+
+    def _wait_for_runtime_interrupt(self, timeout):
+        """等待停止或连接配置热更新信号，并避免长间隔阻塞配置生效。"""
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        while not self.stopping.is_set():
+            if self.runtime_reconnect_requested.is_set():
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            self.stopping.wait(min(remaining, 0.1))
+        return True
+
+    def _apply_pending_runtime_reconnect(self):
+        """由监控主线程关闭旧连接，使串口与 WebSocket 配置安全切换。"""
+        if not self.runtime_reconnect_requested.is_set():
+            return
+        self.runtime_reconnect_requested.clear()
+        self._stop_transmit_worker(wait=True)
+        self.client.close()
+        LOGGER.info("连接参数已热更新，正在使用新配置重新连接设备")
 
     def _complete_websocket_recovery(self):
         """重新同步设备状态并恢复发送线程，失败时保持服务继续自恢复。"""
@@ -365,6 +557,7 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
         self._start_thread_diagnostics()
         self._start_collection_worker()
         while not self.stopping.is_set():
+            self._apply_pending_runtime_reconnect()
             probing = not self.client.is_connected
             ports_before_probe = self.client.available_ports()
             try:
@@ -433,7 +626,9 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
                 ):
                     continue
                 if isinstance(error, PicoRestartingError):
-                    self.stopping.wait(self.arguments.reconnect_interval)
+                    self._wait_for_runtime_interrupt(
+                        self.arguments.reconnect_interval
+                    )
                     continue
                 # 探测失败和已连接后的通信异常都按固定间隔重新握手，避免同名 COM 口常驻时卡在等待新增端口。
                 if not probing:
@@ -441,7 +636,9 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
                         "串口连接已断开，%.1f 秒后重新探测 Pico LCD",
                         self.arguments.reconnect_interval,
                     )
-                self.stopping.wait(self.arguments.reconnect_interval)
+                self._wait_for_runtime_interrupt(
+                    self.arguments.reconnect_interval
+                )
                 continue
         # 设备控制命令必须独占协议流，先等待发送线程完全退出再发送最终命令。
         self._stop_transmit_worker(wait=True)

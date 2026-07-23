@@ -20,6 +20,20 @@ def _dispatch_tray_command(service, command):
         return True
     if command.startswith("DEV_CONFIG:"):
         service.apply_dev_config(json.loads(command[len("DEV_CONFIG:"):]))
+    elif command.startswith("RUNTIME_CONFIG:"):
+        try:
+            service.apply_runtime_config(
+                json.loads(command[len("RUNTIME_CONFIG:"):])
+            )
+            result = {"status": "ok", "message": "完整配置已热更新"}
+        except Exception as error:
+            LOGGER.exception("运行时配置热更新失败：%s", error)
+            result = {"status": "error", "message": str(error)}
+        print(
+            "RUNTIME_CONFIG_RESULT:"
+            + json.dumps(result, ensure_ascii=False, separators=(",", ":")),
+            flush=True,
+        )
     elif command.startswith("DISPLAY_CONFIG:"):
         service.apply_display_config(json.loads(command[len("DISPLAY_CONFIG:"):]))
     elif command == "CUSTOM_STYLE_LIST":
