@@ -11,6 +11,7 @@ IDLE_GREEN = 0x47F5
 PANEL_BORDER = 0x31A8
 DIM_TEXT = 0x632C
 GHOST_TEXT = 0x18E4
+LOG_FONT_NAME = "screen_2inch"
 WEEKDAYS = ("星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六")
 
 
@@ -153,12 +154,12 @@ class IdleStyle:
         canvas.line(0, SCREEN_HEIGHT - 1, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 1, PANEL_BORDER)
         canvas.line(0, top, 0, SCREEN_HEIGHT - 1, PANEL_BORDER)
         canvas.line(SCREEN_WIDTH - 1, top, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 1, PANEL_BORDER)
-        canvas.text(12, 169, "SYSTEM LOG", DIM_TEXT)
+        canvas.text(12, 169, "SYSTEM LOG", DIM_TEXT, font_name=LOG_FONT_NAME)
         if has_time:
             rows = (
-                (IDLE_GREEN, clock + "  Snapshot received", WHITE),
-                (IDLE_GREEN, "Clock running locally", DIM_TEXT),
-                (IDLE_GREEN, "Waiting next JSON", DIM_TEXT),
+                (IDLE_GREEN, clock + "  SNAPSHOT RECEIVED", WHITE),
+                (IDLE_GREEN, "CLOCK RUNNING LOCALLY", DIM_TEXT),
+                (IDLE_GREEN, "WAITING NEXT JSON", DIM_TEXT),
             )
         else:
             rows = (
@@ -169,8 +170,8 @@ class IdleStyle:
         for index, (bullet_color, text, text_color) in enumerate(rows):
             y = 187 + index * 16
             canvas.fill_rect(12, y + 2, 6, 6, bullet_color)
-            canvas.text(25, y, text, text_color,font_name="wqy_8x16")
-        canvas.text(286, 224, "IDLE", IDLE_GREEN)
+            canvas.text(25, y, text, text_color, font_name=LOG_FONT_NAME)
+        canvas.text(286, 224, "IDLE", IDLE_GREEN, font_name=LOG_FONT_NAME)
 
     @classmethod
     def _draw(cls, canvas, snapshot):
