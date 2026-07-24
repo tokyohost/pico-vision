@@ -78,6 +78,7 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
         )
         self.stopping = threading.Event()
         self.runtime_reconnect_requested = threading.Event()
+        self.active_probe_requested = threading.Event()
         self.reboot_requested = threading.Event()
         self.sdk_bootloader_requested = threading.Event()
         self.custom_style_catalog_requested = threading.Event()
@@ -453,6 +454,34 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
         LOGGER.warning("重新扫描局域网未发现可连接的 Pico LCD")
         return False
 
+    def request_active_probe(self):
+        """请求主循环立即探测设备，已有连接时保持当前传输不变。"""
+        if self.client.is_connected:
+            LOGGER.info("主动探测复用当前连接，不关闭已握手成功的传输")
+            return
+        LOGGER.info("收到主动探测请求，正在唤醒主循环立即搜索设备")
+        self.active_probe_requested.set()
+        self.runtime_reconnect_requested.set()
+
+    def _connect_for_active_probe(self):
+        """优先连接 USB，失败后扫描局域网，并保留成功建立的连接。"""
+        original_url = self.client.websocket_url
+        self.client.close()
+        self.client.websocket_url = None
+        try:
+            self.client.connect()
+            LOGGER.info("主动探测已连接 USB CDC，连接将由常驻监控继续使用")
+            return
+        except (OSError, RuntimeError, serial.SerialException) as usb_error:
+            self.client.close()
+            if self._force_usb_cdc_enabled():
+                raise RuntimeError("主动探测未发现 USB CDC 设备：{}".format(usb_error))
+        self.client.websocket_url = original_url
+        if self._rediscover_websocket_device():
+            LOGGER.info("主动探测已连接 WebSocket，连接将由常驻监控继续使用")
+            return
+        raise RuntimeError("主动探测未发现 USB CDC 或局域网 WebSocket 设备")
+
     def _maybe_discover_linux_websocket(self, now=None):
         """Linux 未连接时按三十秒节流执行一次低影响局域网设备发现。"""
         if (
@@ -567,6 +596,18 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
         """由监控主线程关闭旧连接，使串口与 WebSocket 配置安全切换。"""
         if not self.runtime_reconnect_requested.is_set():
             return
+        active_probe_requested = getattr(self, "active_probe_requested", None)
+        if (
+            active_probe_requested is not None
+            and active_probe_requested.is_set()
+            and self.client.is_connected
+        ):
+            # 主动探测请求可能恰好到达正在进行的握手阶段；若握手随后成功，
+            # 直接采用该连接，不能再按普通配置热更新流程把它关闭。
+            active_probe_requested.clear()
+            self.runtime_reconnect_requested.clear()
+            LOGGER.info("主动探测期间握手已成功，保留当前连接")
+            return
         self.runtime_reconnect_requested.clear()
         self._stop_transmit_worker(wait=True)
         self.client.close()
@@ -608,17 +649,27 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
             try:
                 if not self.client.is_connected:
                     LOGGER.info("正在搜索 Pico LCD 设备")
-                    try:
-                        self.client.connect()
-                    except (OSError, RuntimeError, serial.SerialException):
-                        if self.arguments.dev:
-                            self.client.close()
-                            result = self._run_development_loop()
-                            if result is not None:
-                                return result
-                            continue
-                        if not self._maybe_discover_linux_websocket():
-                            raise
+                    active_probe_requested = getattr(
+                        self, "active_probe_requested", None
+                    )
+                    if (
+                        active_probe_requested is not None
+                        and active_probe_requested.is_set()
+                    ):
+                        active_probe_requested.clear()
+                        self._connect_for_active_probe()
+                    else:
+                        try:
+                            self.client.connect()
+                        except (OSError, RuntimeError, serial.SerialException):
+                            if self.arguments.dev:
+                                self.client.close()
+                                result = self._run_development_loop()
+                                if result is not None:
+                                    return result
+                                continue
+                            if not self._maybe_discover_linux_websocket():
+                                raise
                     LOGGER.info("Pico LCD 已连接：%s", self.client.port_name)
                     self._synchronize_style_catalog()
                     self._start_transmit_worker()

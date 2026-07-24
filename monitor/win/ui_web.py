@@ -30,7 +30,6 @@ from .settings import (
 )
 from .ui.device_window import (
     format_connection_method,
-    parse_device_information_line,
 )
 from .ui.wifi_window import (
     merge_wifi_networks,
@@ -393,6 +392,9 @@ class WebViewBridge:
             image_path = updater.download(asset, ".bin")
             self._set_update_state("sdk", "running", 30, "SDK 镜像下载完成，正在校验")
             information = inspect_sdk_image(image_path)
+            # 在线下载可能持续数秒，期间后台监控可能重连并更换 COM 号。
+            # 必须丢弃点击“立即更新”时的旧快照，使用刷写前的当前 USB 身份。
+            connection = self._current_sdk_usb_connection()
             with self._sdk_lock:
                 self._sdk_state.update({
                     "busy": True,
@@ -531,27 +533,29 @@ class WebViewBridge:
         return self._application._get_device_connection()
 
     def _probe_device(self, payload):
-        """运行一次独立设备探测，并解析为结构化字段。"""
-        websocket_url = payload.get("websocketUrl")
-        result = subprocess.run(
-            self._application._device_probe_command(websocket_url),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            creationflags=0x08000000,
-            timeout=35,
-        )
-        information = {}
-        output = "\n".join(filter(None, (result.stdout, result.stderr)))
-        for line in output.splitlines():
-            parsed = parse_device_information_line(line)
-            if parsed is not None:
-                information[parsed[0]] = parsed[1]
-        if result.returncode != 0 or not information:
-            detail = output.strip().splitlines()
-            raise RuntimeError(detail[-1] if detail else "未发现 OmniWatch 设备")
-        return {"device": information, "log": output[-5000:]}
+        """请求常驻工作进程立即探测，并返回持续保持的连接快照。"""
+        del payload
+        connection = self._application._get_device_connection()
+        if connection.get("connected"):
+            return {
+                "device": connection,
+                "log": "设备已由常驻监控完成握手，保留当前连接。",
+            }
+        if not self._application._request_device_probe():
+            raise RuntimeError("后台监控未运行，无法主动探测设备")
+        deadline = time.monotonic() + 35.0
+        while time.monotonic() < deadline:
+            time.sleep(0.1)
+            connection = self._application._get_device_connection()
+            if connection.get("connected"):
+                return {
+                    "device": connection,
+                    "log": "主动探测握手成功，连接已交由常驻监控持续使用。",
+                }
+            worker = self._application.worker_process
+            if worker is None or worker.poll() is not None:
+                raise RuntimeError("主动探测期间后台监控异常退出")
+        raise RuntimeError("主动探测超时，未发现 OmniWatch 设备")
 
     def _take_screenshot(self, payload):
         """向工作进程发送 LCD 截图命令。"""
@@ -583,6 +587,15 @@ class WebViewBridge:
             and connection.get("sdk_update_supported")
             and is_espressif_usb_port(connection.get("address"))
         )
+
+    def _current_sdk_usb_connection(self):
+        """重新读取并返回可执行受控 SDK 刷写的当前 USB 连接。"""
+        connection = self._application._get_device_connection()
+        if not self._sdk_flash_allowed(connection):
+            raise RuntimeError(
+                "受控刷写前设备 USB 连接已变化，请保持 USB CDC 连接后重试"
+            )
+        return connection
 
     @staticmethod
     def _sdk_image_payload(information):
@@ -697,12 +710,19 @@ class WebViewBridge:
 
     def _run_controlled_sdk_flash(self, information, connection):
         """让已连接设备进入 ROM USB 模式后执行受控 SDK 刷写。"""
+        # 发送退出应用 USB 命令前再次读取连接，避免在线下载或线程调度期间
+        # COM 号发生变化后仍使用旧地址匹配 ROM 重新枚举结果。
+        del connection
+        connection = self._current_sdk_usb_connection()
         worker = self._application.worker_process
         if worker is None or worker.poll() is not None or worker.stdin is None:
             raise RuntimeError("当前没有可控制的 USB 设备连接")
         source_device = str(connection.get("address") or "").strip()
         if not source_device:
             raise RuntimeError("无法确定当前 USB 设备的串口")
+        self._append_sdk_log(
+            "受控刷写已刷新当前 USB 串口：{}".format(source_device)
+        )
         previous_ports = tuple(list_ports.comports())
         self._drain_queue(self._application.sdk_flash_messages)
 

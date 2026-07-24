@@ -82,6 +82,10 @@ class WorkerControllerMixin:
                 command.extend(("--websocket-url", str(websocket_url)))
         return command + ["--pico-info"]
 
+    def _request_device_probe(self):
+        """通知常驻工作进程立即探测设备并保留成功建立的连接。"""
+        return self._write_worker_command("PROBE_NOW\n")
+
     def _sdk_flasher_command(self, port, image_path, before=None):
         """构造复用当前 EXE 或 Python 入口的隔离 SDK 刷写子进程命令。"""
         arguments = [

@@ -942,6 +942,52 @@ class PicoClientTest(unittest.TestCase):
         service.stopping.set.assert_called_once_with()
         service.client.close.assert_not_called()
 
+    def test_active_probe_keeps_existing_handshake_connection(self):
+        """已有连接时主动探测不得触发关闭或运行时重连。"""
+        service = MonitorService.__new__(MonitorService)
+        service.client = mock.Mock()
+        service.client.is_connected = True
+        service.active_probe_requested = threading.Event()
+        service.runtime_reconnect_requested = threading.Event()
+
+        service.request_active_probe()
+
+        self.assertFalse(service.active_probe_requested.is_set())
+        self.assertFalse(service.runtime_reconnect_requested.is_set())
+        service.client.close.assert_not_called()
+
+    def test_active_probe_wakes_disconnected_service(self):
+        """未连接时主动探测应唤醒主循环而不是创建一次性客户端。"""
+        service = MonitorService.__new__(MonitorService)
+        service.client = mock.Mock()
+        service.client.is_connected = False
+        service.active_probe_requested = threading.Event()
+        service.runtime_reconnect_requested = threading.Event()
+
+        service.request_active_probe()
+
+        self.assertTrue(service.active_probe_requested.is_set())
+        self.assertTrue(service.runtime_reconnect_requested.is_set())
+        service.client.close.assert_not_called()
+
+    def test_handshake_race_cancels_active_probe_reconnect(self):
+        """主动探测到达握手阶段时，随后成功的连接不得再被重连流程关闭。"""
+        service = MonitorService.__new__(MonitorService)
+        service.client = mock.Mock()
+        service.client.is_connected = True
+        service.active_probe_requested = threading.Event()
+        service.active_probe_requested.set()
+        service.runtime_reconnect_requested = threading.Event()
+        service.runtime_reconnect_requested.set()
+        service._stop_transmit_worker = mock.Mock()
+
+        service._apply_pending_runtime_reconnect()
+
+        self.assertFalse(service.active_probe_requested.is_set())
+        self.assertFalse(service.runtime_reconnect_requested.is_set())
+        service.client.close.assert_not_called()
+        service._stop_transmit_worker.assert_not_called()
+
     def test_sending_uses_latest_snapshot_without_waiting_for_next_collection(self):
         """确认后台采集尚未发布新结果时，发送链路立即复用最近成功快照。"""
         service = MonitorService.__new__(MonitorService)

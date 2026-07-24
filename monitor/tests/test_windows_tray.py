@@ -208,6 +208,47 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertEqual("正在写入固件", result["logs"])
         self.assertFalse(result["busy"])
 
+    @mock.patch("win.ui_web.inspect_sdk_image")
+    def test_sdk_release_update_refreshes_usb_connection_after_download(
+        self, inspect_image
+    ):
+        """在线 SDK 下载完成后必须使用最新 USB 串口快照进入刷写流程。"""
+        stale_connection = {
+            "connected": True,
+            "board_model": "ESP32-S3",
+            "transport": "串口",
+            "address": "COM11",
+            "sdk_update_supported": True,
+        }
+        current_connection = dict(stale_connection, address="COM15")
+        application = mock.Mock()
+        application._get_device_connection.return_value = current_connection
+        application.update_lock = threading.Lock()
+        application.update_lock.acquire()
+        bridge = WebViewBridge(application)
+        updater = mock.Mock()
+        updater.download.return_value = str(
+            Path(self.temporary_directory.name) / "downloaded-sdk.bin"
+        )
+        information = mock.Mock()
+        information.path.name = "downloaded-sdk.bin"
+        information.sdk_version = "v1.0.66-fnProcotolV1"
+        information.size = 1024
+        information.sha256 = "a" * 64
+        inspect_image.return_value = information
+
+        with mock.patch.object(
+            WebViewBridge, "_sdk_flash_allowed", return_value=True
+        ), mock.patch.object(WebViewBridge, "_run_sdk_flash_task") as flash_task:
+            bridge._run_sdk_release_update(
+                updater, {"name": "downloaded-sdk.bin"}, stale_connection
+            )
+
+        flash_task.assert_called_once_with(
+            information, current_connection, False, ""
+        )
+        application._get_device_connection.assert_called_once_with()
+
     def test_web_bridge_sdk_file_filter_avoids_invalid_punctuation(self):
         """确认 SDK 文件过滤器描述符合 pywebview 仅允许单词和空格的格式。"""
         description = SDK_IMAGE_FILE_TYPES[0].split("(", 1)[0].rstrip()
@@ -232,6 +273,28 @@ class WindowsTraySettingsTest(unittest.TestCase):
 
         self.assertTrue(should_stop)
         service.request_sdk_bootloader_and_stop.assert_called_once_with()
+
+    def test_tray_command_dispatch_keeps_worker_alive_for_active_probe(self):
+        """确认主动探测由常驻服务执行且不会要求工作进程退出。"""
+        service = mock.Mock()
+
+        should_stop = _dispatch_tray_command(service, "PROBE_NOW")
+
+        self.assertFalse(should_stop)
+        service.request_active_probe.assert_called_once_with()
+
+    def test_connected_web_probe_reuses_persistent_connection(self):
+        """已有握手连接时 Web 主动探测不得启动一次性查询进程。"""
+        connection = {"connected": True, "address": "COM11"}
+        application = mock.Mock()
+        application._get_device_connection.return_value = connection
+        bridge = WebViewBridge(application)
+
+        result = bridge._probe_device({})
+
+        self.assertEqual(connection, result["device"])
+        self.assertIn("保留当前连接", result["log"])
+        application._request_device_probe.assert_not_called()
 
     def test_tray_command_dispatch_requests_wifi_connection(self):
         """确认 Wi-Fi 名称和密钥会作为结构化参数交给监控服务。"""

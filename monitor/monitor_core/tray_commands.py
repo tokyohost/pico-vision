@@ -18,6 +18,9 @@ def _dispatch_tray_command(service, command):
     if command == "EXIT":
         service.stop()
         return True
+    if command == "PROBE_NOW":
+        service.request_active_probe()
+        return False
     if command.startswith("DEV_CONFIG:"):
         service.apply_dev_config(json.loads(command[len("DEV_CONFIG:"):]))
     elif command.startswith("RUNTIME_CONFIG:"):
