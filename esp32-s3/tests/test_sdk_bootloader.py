@@ -12,7 +12,10 @@ if str(ESP32_ROOT) not in sys.path:
     sys.path.insert(0, str(ESP32_ROOT))
 
 from command.base import CommandError  # noqa: E402
-from command.sdk_bootloader import SdkBootloaderCommand  # noqa: E402
+from command.sdk_bootloader import (  # noqa: E402
+    SdkBootloaderCommand,
+    SdkBootloaderController,
+)
 
 
 class SdkBootloaderCommandTest(unittest.TestCase):
@@ -24,13 +27,19 @@ class SdkBootloaderCommandTest(unittest.TestCase):
         transport = mock.Mock()
         transport.active_mode.return_value = mode
         led = mock.Mock()
+        controller = mock.Mock()
         context = mock.Mock()
         context.request_id = "sdk-test"
         context.service.side_effect = lambda name, required=True: (
-            transport if name == "transport" else led
+            transport
+            if name == "transport"
+            else controller
+            if name == "sdk_bootloader"
+            else led
         )
         context.test_transport = transport
         context.test_led = led
+        context.test_controller = controller
         return context
 
     def test_websocket_request_is_rejected_before_bootloader_call(self):
@@ -42,19 +51,12 @@ class SdkBootloaderCommandTest(unittest.TestCase):
 
         context.respond.assert_not_called()
 
-    def test_usb_request_is_acknowledged_before_entering_bootloader(self):
-        """物理 USB 请求应先刷新 ACK，再调度 SDK 的 bootloader 能力。"""
+    def test_usb_request_is_acknowledged_before_main_loop_switch(self):
+        """物理 USB 请求应先刷新 ACK，再登记主循环切换请求。"""
         context = self.context("usb")
         machine = types.SimpleNamespace(bootloader=mock.Mock())
-        scheduled = []
-        micropython = types.SimpleNamespace(
-            schedule=lambda callback, argument: scheduled.append((callback, argument))
-        )
 
-        with mock.patch.dict(
-            sys.modules,
-            {"machine": machine, "micropython": micropython},
-        ):
+        with mock.patch.dict(sys.modules, {"machine": machine}):
             SdkBootloaderCommand().execute({}, context)
 
         context.respond.assert_called_once_with(
@@ -64,16 +66,29 @@ class SdkBootloaderCommandTest(unittest.TestCase):
             "sdk-test",
         )
         context.test_transport.flush.assert_called_once_with()
+        context.test_controller.request.assert_called_once_with()
         machine.bootloader.assert_not_called()
-        self.assertEqual(1, len(scheduled))
 
-        with mock.patch.dict(sys.modules, {"machine": machine}):
-            with mock.patch("command.sdk_bootloader.time.sleep"):
+    def test_controller_switches_only_after_returning_to_main_loop(self):
+        """主循环安全点应停止后台服务后再调用 bootloader。"""
+        controller = SdkBootloaderController(delay_ms=300)
+        renderer = mock.Mock()
+        transport = mock.Mock()
+        led = mock.Mock()
+        machine = types.SimpleNamespace(bootloader=mock.Mock())
+
+        with mock.patch("command.sdk_bootloader._ticks_ms", side_effect=[1000, 1200, 1300]):
+            controller.request()
+            self.assertFalse(controller.process(renderer, transport, led))
+            with mock.patch.dict(sys.modules, {"machine": machine}):
                 with self.assertRaises(SystemExit):
-                    scheduled[0][0](scheduled[0][1])
+                    controller.process(renderer, transport, led)
 
-        context.test_led.off.assert_called_once_with()
+        renderer.stop.assert_called_once_with()
+        transport.close.assert_called_once_with()
+        led.off.assert_called_once_with()
         machine.bootloader.assert_called_once_with()
+        self.assertFalse(controller.pending())
 
     def test_sdk_without_bootloader_capability_is_rejected(self):
         """旧 SDK 缺少 machine.bootloader 时必须返回明确的不支持错误。"""

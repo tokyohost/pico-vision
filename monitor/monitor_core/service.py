@@ -79,6 +79,9 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
         self.stopping = threading.Event()
         self.runtime_reconnect_requested = threading.Event()
         self.active_probe_requested = threading.Event()
+        # 应用启动后执行且仅执行一次完整主动探测：USB 优先，失败后再检查
+        # 已保存的 WebSocket 地址及局域网候选。成功连接后该事件由主循环清除。
+        self.active_probe_requested.set()
         self.reboot_requested = threading.Event()
         self.sdk_bootloader_requested = threading.Event()
         self.custom_style_catalog_requested = threading.Event()
@@ -477,6 +480,13 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
             if self._force_usb_cdc_enabled():
                 raise RuntimeError("主动探测未发现 USB CDC 设备：{}".format(usb_error))
         self.client.websocket_url = original_url
+        if (
+            isinstance(original_url, str)
+            and original_url
+            and self._probe_and_reconnect_saved_websocket(original_url)
+        ):
+            LOGGER.info("主动探测已连接保存的 WebSocket，连接将由常驻监控继续使用")
+            return
         if self._rediscover_websocket_device():
             LOGGER.info("主动探测已连接 WebSocket，连接将由常驻监控继续使用")
             return

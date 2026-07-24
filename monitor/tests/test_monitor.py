@@ -970,6 +970,23 @@ class PicoClientTest(unittest.TestCase):
         self.assertTrue(service.runtime_reconnect_requested.is_set())
         service.client.close.assert_not_called()
 
+    def test_startup_active_probe_prefers_saved_websocket_before_network_scan(self):
+        """启动 USB 探测失败后应先尝试保存地址，再决定是否扫描局域网。"""
+        service = MonitorService.__new__(MonitorService)
+        service.client = mock.Mock()
+        service.client.websocket_url = "ws://192.168.1.20:8765/pv1"
+        service.client.connect.side_effect = RuntimeError("未发现 USB CDC")
+        service._force_usb_cdc_enabled = mock.Mock(return_value=False)
+        service._probe_and_reconnect_saved_websocket = mock.Mock(return_value=True)
+        service._rediscover_websocket_device = mock.Mock()
+
+        service._connect_for_active_probe()
+
+        service._probe_and_reconnect_saved_websocket.assert_called_once_with(
+            "ws://192.168.1.20:8765/pv1"
+        )
+        service._rediscover_websocket_device.assert_not_called()
+
     def test_handshake_race_cancels_active_probe_reconnect(self):
         """主动探测到达握手阶段时，随后成功的连接不得再被重连流程关闭。"""
         service = MonitorService.__new__(MonitorService)

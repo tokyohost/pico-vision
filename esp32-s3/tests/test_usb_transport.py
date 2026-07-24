@@ -145,9 +145,11 @@ class UsbTransportTest(unittest.TestCase):
         function_source = usb_source[function_start:]
 
         disconnect_offset = function_source.index("tud_disconnect();")
+        clear_offset = function_source.index("tud_cdc_n_write_clear(interface);")
         delay_offset = function_source.index("mp_hal_delay_ms(50);")
         release_offset = function_source.index("usb_del_phy(phy_hdl);")
 
+        self.assertLess(clear_offset, disconnect_offset)
         self.assertLess(disconnect_offset, delay_offset)
         self.assertLess(delay_offset, release_offset)
 

@@ -67,7 +67,7 @@ def configure_garbage_collection():
 class Application:
     """以通信主循环编排接收，并把 LCD 刷新委托给渲染服务。"""
 
-    def __init__(self, protocol, transport=None):
+    def __init__(self, protocol, transport=None, sdk_bootloader=None):
         """按通信、LED、LCD 的顺序初始化各组件。"""
         gc_threshold = configure_garbage_collection()
         from dashboard import DashboardRenderer
@@ -79,6 +79,7 @@ class Application:
 
         self._protocol = protocol
         self._transport = transport
+        self._sdk_bootloader = sdk_bootloader
         self._protocol.write(b"BOOT:PROTOCOL_READY\n")
         if gc_threshold is not None:
             self._protocol.write(
@@ -534,6 +535,12 @@ class Application:
         )
         while True:
             received_json = self._receiver.update()
+            if self._sdk_bootloader is not None:
+                self._sdk_bootloader.process(
+                    renderer=self._renderer,
+                    transport=self._transport,
+                    led=self._led,
+                )
             if received_json:
                 self._idle_active = False
             self._led.update()
@@ -714,6 +721,7 @@ def main():
     protocol = None
     try:
         from upgrade_manager import UpgradeManager
+        from command.sdk_bootloader import SdkBootloaderController
 
         from config import WIFI_ENABLED, WEBSOCKET_PATH, WEBSOCKET_PORT
         from net import TransportManager
@@ -726,11 +734,17 @@ def main():
             websocket_path=WEBSOCKET_PATH,
         )
         protocol = JsonProtocol(stream=transport)
-        application = Application(protocol, transport=transport)
+        sdk_bootloader = SdkBootloaderController()
+        application = Application(
+            protocol,
+            transport=transport,
+            sdk_bootloader=sdk_bootloader,
+        )
         protocol.set_command_services({
             "transport": transport,
             "wifi": transport.wifi,
             "led": application._led,
+            "sdk_bootloader": sdk_bootloader,
         })
         protocol._upgrade_manager = UpgradeManager(protocol.write_upgrade_response)
         application.run()

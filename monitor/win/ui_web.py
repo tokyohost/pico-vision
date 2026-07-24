@@ -748,7 +748,9 @@ class WebViewBridge:
 
         self._append_sdk_log("正在等待 ESP32-S3 ROM USB 串口重新枚举……")
         bootloader_port = wait_for_esp32s3_bootloader_port(
-            source_device, previous_ports, timeout=15.0
+            source_device,
+            previous_ports,
+            timeout=15.0,
         )
         self._append_sdk_log(
             "设备已重新枚举并进入 ROM USB 下载模式：{}".format(bootloader_port)
