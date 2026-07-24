@@ -21,7 +21,7 @@ LCD_TRANSFER_BACKENDS = (
     LCD_TRANSFER_BACKEND_LEGACY,
     LCD_TRANSFER_BACKEND_NATIVE_DMA,
 )
-NATIVE_DMA_API_VERSION = 4
+NATIVE_DMA_API_VERSION = 2
 DEFAULT_DMA_CHUNK_SIZE = 4092
 
 
@@ -105,23 +105,18 @@ class NativeDmaTransferBackend:
         return True
 
     def set_visible_frame_second_sync(self, enabled):
-        """把当前 Style 的整秒同步策略立即下发给原生 DMA 层。"""
-        enabled = bool(enabled)
-        changed = bool(
-            self._native.set_visible_frame_second_sync(enabled)
-        )
-        self._visible_frame_second_sync = enabled
-        return changed
+        """兼容旧样式策略接口；无 TE 模式始终立即刷新。"""
+        del enabled
+        return False
 
     def visible_frame_second_sync_enabled(self):
-        """返回当前是否由原生异步任务在整秒提交最新帧。"""
-        return self._visible_frame_second_sync
+        """无 TE 模式不等待整秒，始终返回未启用。"""
+        return False
 
     def queue_synchronized_frame(self, spi, frame, force=False):
-        """复制最新画布到原生单槽邮箱，不等待目标整秒。"""
-        return self._native.queue_synchronized_frame(
-            spi, frame, bool(force)
-        )
+        """拒绝已移除的整秒邮箱路径，防止静默恢复分段刷新。"""
+        del spi, frame, force
+        raise RuntimeError("当前固件已禁用整秒同步刷新")
 
     def write(self, spi, pixels):
         """保留启动清屏等旧局部刷新所需的连续像素 DMA 写入。"""
