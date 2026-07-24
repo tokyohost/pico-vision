@@ -1,8 +1,10 @@
 """验证 USB CDC 底层读写线程框架。"""
 
+import json
 import queue
 import threading
 import unittest
+from types import SimpleNamespace
 
 import serial
 
@@ -132,6 +134,54 @@ class UsbCdcFrameworkTest(unittest.TestCase):
             framework.close()
 
         self.assertIn(b"PV1:JSONZ:", bytes(serial_port.written))
+
+    def test_handshake_splits_full_usb_endpoint_packet(self):
+        """确认 64 字节 PING 拆成短包发送，避免 CDC 设备端一直等待后续数据。"""
+        pong = build_frame("PONG", json.dumps({
+            "board_model": "rp2040_usb",
+            "lcd_device_type": "st7789",
+        }).encode("utf-8"))
+        serial_port = ThreadedSerial([pong])
+        writes = []
+        original_write = serial_port.write
+
+        def record_write(data):
+            """记录每次物理写入长度，并复用串口模拟器保存字节。"""
+            writes.append(len(data))
+            return original_write(data)
+
+        serial_port.write = record_write
+        client = PicoJsonClient(probe_interval=0)
+
+        self.assertTrue(client._handshake(serial_port))
+        self.assertEqual([63, 1], writes)
+        self.assertEqual(2, serial_port.flush_count)
+
+    def test_esp32_data_cdc_is_ranked_before_repl(self):
+        """确认自动发现优先探测 FN Vision Data/MI_02，而不是 REPL/MI_00。"""
+        repl = SimpleNamespace(
+            device="COM7",
+            description="USB 串行设备",
+            interface="MicroPython REPL",
+            hwid="USB VID:PID=303A:4002 MI_00",
+            location="1-2:x.0",
+            vid=0x303A,
+        )
+        data = SimpleNamespace(
+            device="COM8",
+            description="USB 串行设备",
+            interface="FN Vision Data",
+            hwid="USB VID:PID=303A:4002 MI_02",
+            location="1-2:x.2",
+            vid=0x303A,
+        )
+
+        ordered = sorted([repl, data], key=PicoJsonClient._serial_port_priority)
+
+        self.assertEqual(["COM8", "COM7"], [item.device for item in ordered])
+        self.assertTrue(PicoJsonClient._is_probable_repl_port(repl))
+        self.assertFalse(PicoJsonClient._is_probable_repl_port(data))
+        self.assertTrue(PicoJsonClient._is_espressif_composite([repl, data]))
 
 
 if __name__ == "__main__":

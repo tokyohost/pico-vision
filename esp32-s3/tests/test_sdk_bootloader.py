@@ -23,9 +23,14 @@ class SdkBootloaderCommandTest(unittest.TestCase):
         """构造带活动传输模式和响应记录的命令上下文替身。"""
         transport = mock.Mock()
         transport.active_mode.return_value = mode
+        led = mock.Mock()
         context = mock.Mock()
         context.request_id = "sdk-test"
-        context.service.return_value = transport
+        context.service.side_effect = lambda name, required=True: (
+            transport if name == "transport" else led
+        )
+        context.test_transport = transport
+        context.test_led = led
         return context
 
     def test_websocket_request_is_rejected_before_bootloader_call(self):
@@ -38,14 +43,19 @@ class SdkBootloaderCommandTest(unittest.TestCase):
         context.respond.assert_not_called()
 
     def test_usb_request_is_acknowledged_before_entering_bootloader(self):
-        """物理 USB 请求应先返回 ACK，再调用 SDK 的 bootloader 能力。"""
+        """物理 USB 请求应先刷新 ACK，再调度 SDK 的 bootloader 能力。"""
         context = self.context("usb")
         machine = types.SimpleNamespace(bootloader=mock.Mock())
+        scheduled = []
+        micropython = types.SimpleNamespace(
+            schedule=lambda callback, argument: scheduled.append((callback, argument))
+        )
 
-        with mock.patch.dict(sys.modules, {"machine": machine}):
-            with mock.patch("command.sdk_bootloader.time.sleep"):
-                with self.assertRaises(SystemExit):
-                    SdkBootloaderCommand().execute({}, context)
+        with mock.patch.dict(
+            sys.modules,
+            {"machine": machine, "micropython": micropython},
+        ):
+            SdkBootloaderCommand().execute({}, context)
 
         context.respond.assert_called_once_with(
             "ok",
@@ -53,6 +63,16 @@ class SdkBootloaderCommandTest(unittest.TestCase):
             {"restarting": True, "mode": "rom-usb"},
             "sdk-test",
         )
+        context.test_transport.flush.assert_called_once_with()
+        machine.bootloader.assert_not_called()
+        self.assertEqual(1, len(scheduled))
+
+        with mock.patch.dict(sys.modules, {"machine": machine}):
+            with mock.patch("command.sdk_bootloader.time.sleep"):
+                with self.assertRaises(SystemExit):
+                    scheduled[0][0](scheduled[0][1])
+
+        context.test_led.off.assert_called_once_with()
         machine.bootloader.assert_called_once_with()
 
     def test_sdk_without_bootloader_capability_is_rejected(self):

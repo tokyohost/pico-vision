@@ -713,7 +713,7 @@ class PicoClientTest(unittest.TestCase):
         ])
 
         self.assertTrue(PicoJsonClient()._handshake(device))
-        self.assertEqual(device.write_calls, 1)
+        self.assertEqual(device.write_calls, 2)
         self.assertEqual(device.written, PING_COMMAND)
 
     @mock.patch("pico_client.time.sleep")
@@ -726,8 +726,14 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertFalse(PicoJsonClient(probe_interval=3.0)._handshake(device))
 
-        self.assertEqual(sleep.call_args_list, [mock.call(3.0), mock.call(3.0)])
-        self.assertEqual(device.write_calls, 3)
+        self.assertEqual(sleep.call_args_list, [
+            mock.call(0.002),
+            mock.call(3.0),
+            mock.call(0.002),
+            mock.call(3.0),
+            mock.call(0.002),
+        ])
+        self.assertEqual(device.write_calls, 6)
 
     def test_parse_pico_hardware_and_firmware_information(self):
         """确认 Monitor 能从新版握手读取板型、屏幕方案和固件版本。"""
@@ -1074,8 +1080,8 @@ class PicoClientTest(unittest.TestCase):
         service.client.connect.assert_called_once_with()
         service._run_development_loop.assert_called_once_with()
 
-    def test_connection_failure_retries_when_port_already_exists(self):
-        """确认首次探测过早时，不要求 COM 口再次增加也会延迟重试。"""
+    def test_connection_failure_waits_for_usb_addition_before_retry(self):
+        """确认首次探测失败后不会按固定间隔反复扫描现有 COM 口。"""
         service = MonitorService.__new__(MonitorService)
         service.arguments = SimpleNamespace(
             port=None,
@@ -1089,8 +1095,19 @@ class PicoClientTest(unittest.TestCase):
             upgrade_pico=False,
             once=False,
         )
+        stopped = {"value": False}
         service.stopping = mock.Mock()
-        service.stopping.is_set.side_effect = [False, False, False, True]
+        service.stopping.is_set.side_effect = lambda: stopped["value"]
+
+        def stop_during_usb_wait(timeout):
+            """模拟服务在等待 USB 变化期间收到停止请求。"""
+            if timeout == 0.5:
+                stopped["value"] = True
+            return stopped["value"]
+
+        service.stopping.wait.side_effect = stop_during_usb_wait
+        service.runtime_reconnect_requested = mock.Mock()
+        service.runtime_reconnect_requested.is_set.return_value = False
         service.client = mock.Mock()
         service.client.is_connected = False
         service.client.available_ports.return_value = frozenset({"COM1"})
@@ -1101,8 +1118,12 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertEqual(service.run(), 0)
 
-        self.assertEqual(service.client.connect.call_count, 3)
-        service.stopping.wait.assert_any_call(3.0)
+        service.client.connect.assert_called_once_with()
+        service.stopping.wait.assert_any_call(0.5)
+        self.assertNotIn(
+            mock.call(service.arguments.reconnect_interval),
+            service.stopping.wait.mock_calls,
+        )
 
     @mock.patch("monitor_core.service.platform.system", return_value="Linux")
     def test_linux_websocket_discovery_is_throttled_to_thirty_seconds(self, system):
@@ -1135,6 +1156,36 @@ class PicoClientTest(unittest.TestCase):
         self.assertFalse(service._maybe_discover_linux_websocket(now=100.0))
 
         service._rediscover_websocket_device.assert_not_called()
+
+    @mock.patch("monitor_core.service.platform.system", return_value="Linux")
+    def test_force_usb_cdc_stops_linux_websocket_discovery(self, system):
+        """强制 USB-CDC 后不得主动扫描局域网 WebSocket 设备。"""
+        del system
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(force_usb_cdc=True)
+        service.client = mock.Mock()
+        service.client.is_connected = False
+        service._rediscover_websocket_device = mock.Mock(return_value=True)
+
+        self.assertFalse(service._maybe_discover_linux_websocket(now=100.0))
+
+        service._rediscover_websocket_device.assert_not_called()
+
+    def test_force_usb_cdc_stops_saved_websocket_probe(self):
+        """强制 USB-CDC 后不得探测或连接已保存的 WebSocket 地址。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(force_usb_cdc=True)
+        service.client = mock.Mock()
+        service._create_lan_scanner = mock.Mock()
+
+        self.assertFalse(
+            service._probe_and_reconnect_saved_websocket(
+                "ws://192.168.1.20:8765/pv1"
+            )
+        )
+
+        service._create_lan_scanner.assert_not_called()
+        service.client.connect.assert_not_called()
 
     @mock.patch("monitor_core.service.LanWebSocketScanner")
     def test_linux_periodic_scanner_uses_low_network_concurrency(self, scanner_class):
@@ -1257,8 +1308,8 @@ class PicoClientTest(unittest.TestCase):
         scanner_class.return_value.probe_safely.assert_not_called()
         service.client.connect.assert_not_called()
 
-    def test_connected_send_failure_retries_without_usb_addition(self):
-        """确认已连接后的通信异常不再等待新增 COM 口才重连。"""
+    def test_connected_send_failure_waits_for_usb_addition(self):
+        """确认已连接后的通信异常也不会按固定间隔扫描现有 COM 口。"""
         service = MonitorService.__new__(MonitorService)
         service.arguments = SimpleNamespace(
             port=None,
@@ -1274,20 +1325,23 @@ class PicoClientTest(unittest.TestCase):
         )
         service.stopping = mock.Mock()
         service.stopping.is_set.return_value = False
+        service.runtime_reconnect_requested = mock.Mock()
+        service.runtime_reconnect_requested.is_set.return_value = False
 
-        def stop_after_reconnect_wait(timeout):
-            """在首次重连等待后结束服务，避免依赖内部停止检查次数。"""
-            if timeout == service.arguments.reconnect_interval:
-                service.stopping.is_set.return_value = True
-            return service.stopping.is_set.return_value
-
-        service.stopping.wait.side_effect = stop_after_reconnect_wait
         service.client = mock.Mock()
         service.client.is_connected = True
         service.client.available_ports.return_value = frozenset({"COM11"})
         service.client.send.side_effect = RuntimeError("等待 Pico JSON 接收确认超时")
         service._collect_snapshot = mock.Mock(return_value={"version": 1})
-        service._wait_for_usb_addition = mock.Mock(return_value=False)
+
+        def stop_while_waiting_for_usb(_ports):
+            """模拟等待 USB 重新枚举期间收到停止请求。"""
+            service.stopping.is_set.return_value = True
+            return False
+
+        service._wait_for_usb_addition = mock.Mock(
+            side_effect=stop_while_waiting_for_usb
+        )
         service.custom_style_catalog_requested = mock.Mock()
         service.custom_style_catalog_requested.is_set.return_value = False
         service.screenshot_requested = mock.Mock()
@@ -1304,8 +1358,9 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertEqual(service.run(), 0)
 
-        service._wait_for_usb_addition.assert_not_called()
-        service.stopping.wait.assert_any_call(3.0)
+        service._wait_for_usb_addition.assert_called_once_with(
+            frozenset({"COM11"})
+        )
 
     def test_transmit_worker_drops_snapshot_when_previous_send_is_busy(self):
         """确认上一帧仍在串口发送时，新快照会被直接丢弃而不排队。"""
@@ -1363,6 +1418,8 @@ class PicoClientTest(unittest.TestCase):
         service = MonitorService.__new__(MonitorService)
         service.stopping = mock.Mock()
         service.stopping.is_set.side_effect = [False, False, False]
+        service.runtime_reconnect_requested = mock.Mock()
+        service.runtime_reconnect_requested.is_set.return_value = False
         service.client = mock.Mock()
         service.client.available_ports.side_effect = [
             frozenset({"COM1"}),

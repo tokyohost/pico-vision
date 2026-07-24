@@ -6,7 +6,9 @@ import { invoke } from '../bridge'
 const props = defineProps({
   device: { type: Object, required: true },
   settings: { type: Object, required: true },
+  saving: { type: Boolean, required: true },
 })
+const emit = defineEmits(['save'])
 
 const probe = reactive({ loading: false, log: '', detail: {} })
 const liveDevice = reactive({})
@@ -20,6 +22,8 @@ const sdk = reactive({
   selectedPort: '',
 })
 const sdkLogView = ref(null)
+const deviceLogView = ref(null)
+const deviceLogs = ref('')
 let refreshTimer = null
 
 const currentDevice = computed(() => ({
@@ -59,7 +63,9 @@ async function probeDevice() {
   probe.loading = true
   probe.log = ''
   try {
-    const result = await invoke('device.probe', { websocketUrl: props.settings.websocket_url })
+    const result = await invoke('device.probe', {
+      websocketUrl: props.settings.force_usb_cdc ? '' : props.settings.websocket_url,
+    })
     probe.detail = result.device || {}
     probe.log = result.log || ''
     ElMessage.success('设备探测完成')
@@ -71,20 +77,34 @@ async function probeDevice() {
 }
 
 /**
+ * 保存连接策略，并让后台立即按新的传输方式重新连接。
+ */
+function saveConnectionPolicy() {
+  emit('save')
+}
+
+/**
  * 刷新设备连接和 SDK 后台任务状态。
  */
 async function refreshRuntimeState(showError = false) {
   try {
-    const [deviceResult, sdkResult] = await Promise.all([
+    const shouldFollowDeviceLog = !deviceLogView.value
+      || deviceLogView.value.scrollHeight - deviceLogView.value.scrollTop - deviceLogView.value.clientHeight < 32
+    const [deviceResult, sdkResult, logResult] = await Promise.all([
       invoke('device.status'),
       invoke('device.sdk.status'),
+      invoke('log.read', { maximum: 160000 }),
     ])
     Object.keys(liveDevice).forEach((key) => delete liveDevice[key])
     Object.assign(liveDevice, deviceResult || {})
     Object.assign(sdk, sdkResult || {})
+    deviceLogs.value = logResult?.content || ''
     await nextTick()
     if (sdkLogView.value && sdk.busy) {
       sdkLogView.value.scrollTop = sdkLogView.value.scrollHeight
+    }
+    if (deviceLogView.value && shouldFollowDeviceLog) {
+      deviceLogView.value.scrollTop = deviceLogView.value.scrollHeight
     }
   } catch (error) {
     if (showError) ElMessage.error(error?.message || String(error))
@@ -205,6 +225,21 @@ onBeforeUnmount(() => {
       <el-button type="danger" plain @click="rebootDevice">重启设备</el-button>
     </div>
   </div>
+  <el-card shadow="never" class="section-gap connection-policy-card">
+    <div class="connection-policy-row">
+      <div>
+        <strong>强制切换 USB-CDC</strong>
+        <p>开启后断开当前 WebSocket，不再主动搜索 Wi-Fi 设备，并持续优先探测 USB 串口。</p>
+      </div>
+      <el-switch
+        v-model="settings.force_usb_cdc"
+        :loading="saving"
+        active-text="仅使用 USB-CDC"
+        inactive-text="允许 Wi-Fi / USB"
+        @change="saveConnectionPolicy"
+      />
+    </div>
+  </el-card>
   <el-card shadow="never" class="section-gap">
     <template #header><span>设备详情</span></template>
     <el-descriptions :column="2" border>
@@ -272,5 +307,16 @@ onBeforeUnmount(() => {
     <p v-if="sdk.message" class="sdk-status">{{ sdk.message }}</p>
     <pre v-if="sdk.logs" ref="sdkLogView" class="terminal sdk-log-view">{{ sdk.logs }}</pre>
   </el-card>
-  <pre v-if="probe.log" class="terminal">{{ probe.log }}</pre>
+  <el-card shadow="never" class="section-gap">
+    <template #header>
+      <div class="card-header">
+        <span>设备实时日志</span>
+      </div>
+    </template>
+    <pre ref="deviceLogView" class="terminal device-log-view">{{ deviceLogs || '暂无设备通信日志' }}</pre>
+    <template v-if="probe.log">
+      <p class="probe-log-title">最近一次主动探测输出</p>
+      <pre class="terminal probe-log-view">{{ probe.log }}</pre>
+    </template>
+  </el-card>
 </template>

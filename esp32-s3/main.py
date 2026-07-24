@@ -726,12 +726,14 @@ def main():
             websocket_path=WEBSOCKET_PATH,
         )
         protocol = JsonProtocol(stream=transport)
+        application = Application(protocol, transport=transport)
         protocol.set_command_services({
             "transport": transport,
             "wifi": transport.wifi,
+            "led": application._led,
         })
         protocol._upgrade_manager = UpgradeManager(protocol.write_upgrade_response)
-        Application(protocol, transport=transport).run()
+        application.run()
     except Exception as error:
         message = "FATAL:{}:{}\n".format(type(error).__name__, error)
         if protocol is not None:

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, reactive } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '../bridge'
 
@@ -9,10 +9,12 @@ const props = defineProps({
 })
 
 const checks = reactive({
-  firmware: { loading: false, installing: false, result: null, error: '' },
-  sdk: { loading: false, installing: false, result: null, error: '' },
-  application: { loading: false, installing: false, result: null, error: '' },
+  firmware: { loading: false, installing: false, result: null, error: '', progress: 0, status: 'idle', message: '', logs: '' },
+  sdk: { loading: false, installing: false, result: null, error: '', progress: 0, status: 'idle', message: '', logs: '' },
+  application: { loading: false, installing: false, result: null, error: '', progress: 0, status: 'idle', message: '', logs: '' },
 })
+let statusTimer = null
+const logElements = {}
 
 const updateItems = computed(() => [
   {
@@ -110,13 +112,49 @@ async function installUpdate(category) {
   state.installing = true
   try {
     await invoke('update.install', { category })
+    await refreshUpdateStatus()
     ElMessage.success(category === 'application' ? '已打开应用更新流程' : '更新任务已启动')
   } catch (error) {
     ElMessage.error(error?.message || String(error))
   } finally {
-    state.installing = false
+    state.installing = state.status === 'running'
   }
 }
+
+/**
+ * 保存各更新类别的日志容器，供轮询刷新后自动滚动到底部。
+ */
+function setLogElement(category, element) {
+  if (element) logElements[category] = element
+  else delete logElements[category]
+}
+
+/**
+ * 拉取全部在线更新任务的最新进度和日志快照。
+ */
+async function refreshUpdateStatus() {
+  try {
+    const states = await invoke('update.status')
+    for (const [category, updateState] of Object.entries(states)) {
+      Object.assign(checks[category], updateState, { installing: updateState.busy })
+    }
+    await nextTick()
+    for (const element of Object.values(logElements)) {
+      element.scrollTop = element.scrollHeight
+    }
+  } catch {
+    // 短暂的桥接失败不打断更新，下一轮轮询会继续同步。
+  }
+}
+
+onMounted(() => {
+  refreshUpdateStatus()
+  statusTimer = window.setInterval(refreshUpdateStatus, 700)
+})
+
+onBeforeUnmount(() => {
+  if (statusTimer !== null) window.clearInterval(statusTimer)
+})
 </script>
 
 <template>
@@ -140,11 +178,15 @@ async function installUpdate(category) {
         <div class="update-version-list">
           <div class="update-version-row">
             <span>当前版本</span>
-            <strong>{{ checks[item.key].result?.currentVersion || item.current }}</strong>
+            <strong :title="checks[item.key].result?.currentVersion || item.current">
+              {{ checks[item.key].result?.currentVersion || item.current }}
+            </strong>
           </div>
           <div class="update-version-row">
             <span>最新版本</span>
-            <strong>{{ checks[item.key].result?.latestVersion || '--' }}</strong>
+            <strong :title="checks[item.key].result?.latestVersion || '--'">
+              {{ checks[item.key].result?.latestVersion || '--' }}
+            </strong>
           </div>
         </div>
 
@@ -200,6 +242,22 @@ async function installUpdate(category) {
           <pre>{{ checks[item.key].result.notes }}</pre>
         </details>
       </template>
+      <div v-if="checks[item.key].status !== 'idle'" class="update-runtime">
+        <div class="update-runtime-heading">
+          <span>{{ checks[item.key].message || '正在准备更新' }}</span>
+          <strong>{{ checks[item.key].progress }}%</strong>
+        </div>
+        <el-progress
+          :percentage="checks[item.key].progress"
+          :status="checks[item.key].status === 'success' ? 'success' : checks[item.key].status === 'error' ? 'exception' : ''"
+          :stroke-width="10"
+        />
+        <pre
+          v-if="checks[item.key].logs"
+          :ref="(element) => setLogElement(item.key, element)"
+          class="update-live-log"
+        >{{ checks[item.key].logs }}</pre>
+      </div>
     </el-card>
   </div>
 </template>

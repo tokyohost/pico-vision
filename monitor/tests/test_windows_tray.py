@@ -606,6 +606,21 @@ class WindowsTraySettingsTest(unittest.TestCase):
         index = arguments.index("--websocket-url")
         self.assertEqual("ws://192.168.1.20:8765/pv1", arguments[index + 1])
 
+    def test_force_usb_cdc_is_persisted_and_applied_to_worker(self):
+        """确认强制 USB-CDC 策略可以持久化并覆盖旧启动参数。"""
+        path = Path(self.temporary_directory.name) / "settings.json"
+        store = TraySettingsStore(path)
+        settings = dict(DEFAULT_SETTINGS, force_usb_cdc=True)
+
+        store.save(settings)
+        arguments = apply_worker_arguments(
+            ["--worker", "--no-force-usb-cdc"],
+            store.load(),
+        )
+
+        self.assertIn("--force-usb-cdc", arguments)
+        self.assertNotIn("--no-force-usb-cdc", arguments)
+
     def test_decimal_collection_interval_is_persisted_and_applied(self):
         """确认零点八秒任务频率经过托盘持久化和启动参数后保持小数。"""
         path = Path(self.temporary_directory.name) / "settings.json"

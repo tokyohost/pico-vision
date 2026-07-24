@@ -42,6 +42,7 @@ COLLECTION_TASK_ZH_NAMES.update(custom_data_task_zh_names())
 DEFAULT_SETTINGS = {
     "port": "",
     "websocket_url": "",
+    "force_usb_cdc": False,
     "websocket_client_name": platform.node() or "Monitor",
     "websocket_client_id": "{}-{:012x}".format(platform.node() or "Monitor", uuid.getnode()),
     "ping_target": "www.baidu.com",
@@ -195,6 +196,7 @@ class TraySettingsStore:
         if not 1 <= settings["lcd_brightness"] <= 100:
             settings["lcd_brightness"] = DEFAULT_SETTINGS["lcd_brightness"]
         settings["adaptive_transmit"] = bool(settings.get("adaptive_transmit", True))
+        settings["force_usb_cdc"] = bool(settings.get("force_usb_cdc", False))
         settings["websocket_client_name"] = str(
             settings.get("websocket_client_name") or DEFAULT_SETTINGS["websocket_client_name"]
         ).strip()[:64]
@@ -249,6 +251,7 @@ def apply_worker_arguments(arguments, settings):
                 "--dev", "--no-dev", "--qbittorrent-enabled", "--no-qbittorrent",
                 "--adaptive-transmit", "--no-adaptive-transmit",
                 "--collection-task-logs", "--no-collection-task-logs",
+                "--force-usb-cdc", "--no-force-usb-cdc",
         ):
             index += 1
             continue
@@ -267,6 +270,7 @@ def apply_worker_arguments(arguments, settings):
     retained.append("--qbittorrent-enabled" if settings["qbittorrent_enabled"] else "--no-qbittorrent")
     retained.append("--adaptive-transmit" if settings["adaptive_transmit"] else "--no-adaptive-transmit")
     retained.append("--collection-task-logs" if settings["collection_task_logs"] else "--no-collection-task-logs")
+    retained.append("--force-usb-cdc" if settings["force_usb_cdc"] else "--no-force-usb-cdc")
     if settings["dev"]:
         retained.append("--dev")
     return retained
@@ -305,6 +309,10 @@ def settings_from_arguments(arguments, base=None):
             settings["collection_task_logs"] = True
         elif argument == "--no-collection-task-logs":
             settings["collection_task_logs"] = False
+        elif argument == "--force-usb-cdc":
+            settings["force_usb_cdc"] = True
+        elif argument == "--no-force-usb-cdc":
+            settings["force_usb_cdc"] = False
         elif argument == "--dev":
             settings["dev"] = True
         elif argument == "--no-dev":

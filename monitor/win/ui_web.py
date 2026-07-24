@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -46,7 +47,7 @@ SDK_RELEASE_REPOSITORY = "tokyohost/pico-vision-micropython-sdk"
 class WebViewBridge:
     """向 Vue 界面公开单一 action 调用入口，不创建任何 HTTP 服务。"""
 
-    __slots__ = ("_application", "_sdk_lock", "_sdk_state")
+    __slots__ = ("_application", "_sdk_lock", "_sdk_state", "_update_states")
 
     def __init__(self, application):
         """保存托盘应用引用，供桥接动作复用现有业务能力。"""
@@ -62,6 +63,16 @@ class WebViewBridge:
             "image": None,
             "logs": [],
         }
+        self._update_states = {
+            category: {
+                "busy": False,
+                "status": "idle",
+                "message": "",
+                "progress": 0,
+                "logs": [],
+            }
+            for category in ("firmware", "sdk", "application")
+        }
 
     def invoke(self, action, payload=None):
         """按动作名称调用受控业务方法，并返回可 JSON 序列化结果。"""
@@ -72,6 +83,7 @@ class WebViewBridge:
             "settings.verifyQbittorrent": self._verify_qbittorrent,
             "update.check": self._check_update,
             "update.install": self._install_update,
+            "update.status": self._update_status,
             "device.status": self._device_status,
             "device.probe": self._probe_device,
             "device.screenshot": self._take_screenshot,
@@ -184,6 +196,7 @@ class WebViewBridge:
         updated["screen_rotation"] = int(updated["screen_rotation"])
         updated["lcd_brightness"] = int(updated["lcd_brightness"])
         updated["adaptive_transmit"] = bool(updated["adaptive_transmit"])
+        updated["force_usb_cdc"] = bool(updated.get("force_usb_cdc", False))
         updated["collection_task_logs"] = bool(updated["collection_task_logs"])
         updated["qbittorrent_enabled"] = bool(updated["qbittorrent_enabled"])
         updated["collection_task_intervals"] = normalize_collection_task_intervals(
@@ -338,11 +351,28 @@ class WebViewBridge:
         """下载并安装设备固件发布包，结束后恢复常驻监控。"""
         package_path = None
         try:
+            self._set_update_state(
+                "firmware", "running", 10, "正在下载设备固件", True
+            )
             package_path = updater.download(asset, ".zip")
+            self._set_update_state("firmware", "running", 45, "固件下载完成，正在暂停监控")
             self._application._stop_worker()
+            self._set_update_state("firmware", "running", 65, "正在安装设备固件")
             self._application._upgrade_pico_from_package(package_path)
+            self._set_update_state(
+                "firmware",
+                "success",
+                100,
+                "设备固件已更新至 {}".format(latest_version),
+            )
             LOGGER.info("设备固件已立即更新至 %s", latest_version)
         except Exception as error:
+            self._set_update_state(
+                "firmware",
+                "error",
+                None,
+                "设备固件立即更新失败：{}".format(error),
+            )
             LOGGER.exception("设备固件立即更新失败：%s", error)
         finally:
             if package_path is not None:
@@ -359,7 +389,9 @@ class WebViewBridge:
         image_path = None
         delegated = False
         try:
+            self._set_update_state("sdk", "running", 10, "正在下载 SDK 镜像", True)
             image_path = updater.download(asset, ".bin")
+            self._set_update_state("sdk", "running", 30, "SDK 镜像下载完成，正在校验")
             information = inspect_sdk_image(image_path)
             with self._sdk_lock:
                 self._sdk_state.update({
@@ -373,6 +405,9 @@ class WebViewBridge:
             delegated = True
             self._run_sdk_flash_task(information, connection, False, "")
         except Exception as error:
+            self._set_update_state(
+                "sdk", "error", None, "SDK 立即更新失败：{}".format(error)
+            )
             LOGGER.exception("SDK 立即更新失败：%s", error)
             with self._sdk_lock:
                 self._sdk_state.update({
@@ -393,7 +428,9 @@ class WebViewBridge:
         """按更新类别立即启动应用、设备固件或 SDK 更新。"""
         category = str(payload.get("category") or "").strip()
         if category == "application":
+            self._set_update_state("application", "running", 10, "正在打开应用更新流程", True)
             self._application._check_for_updates(self._application.icon)
+            self._set_update_state("application", "success", 100, "应用更新流程已打开")
             return {"category": category, "started": True}
 
         connection = self._application._get_device_connection()
@@ -438,6 +475,9 @@ class WebViewBridge:
                 arguments = (updater, asset, connection)
             else:
                 raise ValueError("不支持的立即更新类别：{}".format(category))
+            self._set_update_state(
+                category, "running", 1, "更新任务已启动，正在准备", True
+            )
             threading.Thread(
                 target=target,
                 args=arguments,
@@ -448,6 +488,42 @@ class WebViewBridge:
         except Exception:
             self._application.update_lock.release()
             raise
+
+    def _set_update_state(
+        self, category, status, progress, message, reset_logs=False
+    ):
+        """更新指定在线更新任务的进度，并把阶段消息追加到实时日志。"""
+        with self._sdk_lock:
+            state = self._update_states[category]
+            if reset_logs:
+                state["logs"] = []
+            state["status"] = status
+            state["busy"] = status == "running"
+            if progress is not None:
+                state["progress"] = max(0, min(100, int(progress)))
+            state["message"] = str(message)
+            if message:
+                state["logs"].append(str(message))
+                del state["logs"][:-1000]
+
+    def _update_status(self, payload):
+        """返回全部或指定类别在线更新任务的进度与实时日志快照。"""
+        category = str(payload.get("category") or "").strip()
+        with self._sdk_lock:
+            categories = (category,) if category else tuple(self._update_states)
+            result = {}
+            for name in categories:
+                if name not in self._update_states:
+                    raise ValueError("不支持的更新状态类别：{}".format(name))
+                state = self._update_states[name]
+                result[name] = {
+                    "busy": state["busy"],
+                    "status": state["status"],
+                    "message": state["message"],
+                    "progress": state["progress"],
+                    "logs": "\n".join(state["logs"]),
+                }
+            return result[category] if category else result
 
     def _device_status(self, payload):
         """返回当前工作进程维护的设备连接快照。"""
@@ -527,6 +603,17 @@ class WebViewBridge:
         with self._sdk_lock:
             self._sdk_state["logs"].append(line)
             del self._sdk_state["logs"][:-1000]
+            state = self._update_states["sdk"]
+            state["logs"].append(line)
+            del state["logs"][:-1000]
+            percentage = re.search(
+                r"(?:Writing|写入).*?\(?\s*(\d{1,3})\s*%",
+                line,
+                re.IGNORECASE,
+            )
+            if percentage:
+                state["progress"] = min(95, 35 + int(percentage.group(1)) * 3 // 5)
+            state["message"] = line
 
     def _select_sdk_image(self, payload):
         """选择并严格校验 ESP32-S3 完整合并 SDK 镜像。"""
@@ -643,7 +730,9 @@ class WebViewBridge:
         bootloader_port = wait_for_esp32s3_bootloader_port(
             source_device, previous_ports, timeout=15.0
         )
-        self._append_sdk_log("已识别 ROM 下载端口：{}".format(bootloader_port))
+        self._append_sdk_log(
+            "设备已重新枚举并进入 ROM USB 下载模式：{}".format(bootloader_port)
+        )
         self._run_sdk_flash_process(bootloader_port, information)
 
     def _run_forced_sdk_flash(self, information, port):
@@ -671,6 +760,7 @@ class WebViewBridge:
             with self._sdk_lock:
                 self._sdk_state["status"] = "success"
                 self._sdk_state["message"] = message
+            self._set_update_state("sdk", "success", 100, message)
         except Exception as error:
             LOGGER.exception("Web 设备管理 SDK 刷写失败：%s", error)
             message = "SDK 刷写失败：{}".format(error)
@@ -678,6 +768,7 @@ class WebViewBridge:
             with self._sdk_lock:
                 self._sdk_state["status"] = "error"
                 self._sdk_state["message"] = message
+            self._set_update_state("sdk", "error", None, message)
         finally:
             with self._sdk_lock:
                 self._sdk_state["busy"] = False

@@ -315,10 +315,18 @@ body {
 .hero-card h2 { margin: 13px 0 5px; font-size: 26px; }
 .hero-card p { margin: 0; color: var(--muted); }
 .hero-actions { display: flex; gap: 10px; }
+.connection-policy-card .el-card__body { padding: 18px 20px; }
+.connection-policy-row { display: flex; align-items: center; justify-content: space-between; gap: 28px; }
+.connection-policy-row strong { color: #edf3fc; font-size: 14px; }
+.connection-policy-row p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.connection-policy-row .el-switch { flex: 0 0 auto; }
 .sdk-toolbar { display: flex; align-items: center; gap: 10px; }
 .sdk-port-select { min-width: 280px; flex: 1; }
 .sdk-status { margin: 14px 0 0; color: #b8c5d8; }
 .sdk-log-view { max-height: 260px; }
+.device-log-view { height: 320px; margin-top: 0; white-space: pre; }
+.probe-log-title { margin: 16px 0 8px; color: var(--muted); font-size: 12px; }
+.probe-log-view { max-height: 180px; margin-top: 0; white-space: pre; }
 .hash-value { overflow-wrap: anywhere; font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; }
 .terminal {
   overflow: auto; margin: 18px 0 0; padding: 18px; border: 1px solid var(--border); border-radius: 12px;
@@ -393,22 +401,36 @@ body {
 }
 .update-card .el-card__body { display: flex; flex-direction: column; gap: 12px; padding: 18px 20px; }
 .update-card-main {
-  display: grid; grid-template-columns: minmax(210px, 1.2fr) minmax(190px, .85fr) minmax(250px, auto);
-  align-items: center; gap: 24px;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center; gap: 16px 24px;
 }
 .update-card-heading { display: flex; min-width: 0; align-items: center; gap: 14px; }
 .update-card-heading h3 { margin: 2px 0 5px; color: #f3f6fc; font-size: 17px; }
 .update-card-heading p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .update-icon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border-radius: 12px; color: #a9bdff; background: rgba(91, 140, 255, .14); font-size: 20px; }
-.update-version-list { display: grid; gap: 7px; padding: 0 22px; border-right: 1px solid var(--border); border-left: 1px solid var(--border); }
-.update-version-row { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 14px; color: var(--muted); font-size: 12px; }
-.update-version-row strong { overflow-wrap: anywhere; color: #e6edf8; text-align: right; font-size: 13px; }
+.update-version-list {
+  display: grid; grid-column: 1 / -1; gap: 0;
+  padding-top: 4px; border-top: 1px solid var(--border);
+}
+.update-version-row {
+  display: grid; min-width: 0; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 14px;
+  min-height: 32px; color: var(--muted); font-size: 12px;
+}
+.update-version-row + .update-version-row { border-top: 1px solid rgba(135, 157, 194, .1); }
+.update-version-row strong {
+  min-width: 0; overflow: hidden; color: #e6edf8; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; font-family: Consolas, "Microsoft YaHei", monospace;
+}
 .update-card-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .update-action-buttons { display: flex; flex: 0 0 auto; align-items: center; }
 .update-asset { overflow-wrap: anywhere; margin: 0; color: var(--muted); font-size: 11px; }
 .update-notes { color: #bec9da; font-size: 12px; }
 .update-notes summary { color: #9eb7ff; cursor: pointer; }
 .update-notes pre { max-height: 180px; overflow: auto; margin: 10px 0 0; white-space: pre-wrap; font: inherit; }
+.update-runtime { display: grid; gap: 8px; padding-top: 4px; border-top: 1px solid rgba(135, 157, 194, .16); }
+.update-runtime-heading { display: flex; justify-content: space-between; gap: 12px; color: #c8d4e8; font-size: 12px; }
+.update-runtime-heading span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.update-live-log { max-height: 220px; overflow: auto; margin: 0; padding: 12px; border: 1px solid rgba(135, 157, 194, .18); border-radius: 8px; color: #b8c8df; background: #09101d; white-space: pre-wrap; word-break: break-all; font: 12px/1.55 Consolas, "Microsoft YaHei", monospace; }
 .qr-card { text-align: center; }
 .qr-card img {
   display: block; width: min(240px, 100%); aspect-ratio: 1; object-fit: contain;
@@ -417,8 +439,7 @@ body {
 
 @media (max-width: 1050px) {
   .page-grid, .two-columns { grid-template-columns: 1fr; }
-  .update-card-main { grid-template-columns: minmax(190px, 1fr) minmax(170px, .85fr) minmax(210px, auto); gap: 16px; }
-  .update-version-list { padding: 0 16px; }
+  .update-card-main { gap: 16px; }
   .style-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .about-layout { grid-template-columns: 1fr; }
 }

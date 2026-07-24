@@ -15,7 +15,9 @@ from sdk_flash import (
     is_espressif_usb_port,
     run_esptool_flash,
     select_esp32s3_bootloader_port,
+    serial_port_physical_location,
     serial_port_signature,
+    wait_for_esp32s3_bootloader_port,
 )
 
 
@@ -127,6 +129,44 @@ class SdkImageValidationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "不支持"):
             run_esptool_flash("COM11", image, before="unsafe-reset")
 
+    def test_verified_watchdog_reset_disconnect_is_successful(self):
+        """校验成功后的 watchdog 复位移除串口不应误报刷写失败。"""
+        image = self.write_image(build_sdk_image())
+
+        def reset_after_verified_flash(_arguments):
+            """模拟设备完成校验并在 watchdog 复位时从 Windows 消失。"""
+            print("Hash of data verified.")
+            print("Hard resetting with a watchdog...")
+            raise OSError(
+                "Cannot configure port, something went wrong. Original message: "
+                "OSError(22, '指定不存在的设备。', None, 433)"
+            )
+
+        esptool = SimpleNamespace(main=mock.Mock(side_effect=reset_after_verified_flash))
+        with mock.patch.dict(sys.modules, {"esptool": esptool}):
+            with mock.patch("sys.stdout") as standard_output:
+                self.assertEqual(0, run_esptool_flash("COM11", image))
+
+        written_text = "".join(
+            str(call.args[0])
+            for call in standard_output.write.call_args_list
+            if call.args
+        )
+        self.assertIn("SDK_FLASH_COMPLETE", written_text)
+
+    def test_port_error_before_verified_reset_remains_failure(self):
+        """写入校验完成前发生的同类串口错误仍必须报告失败。"""
+        image = self.write_image(build_sdk_image())
+        error = OSError(
+            "Cannot configure port, something went wrong. Original message: "
+            "OSError(22, '指定不存在的设备。', None, 433)"
+        )
+        esptool = SimpleNamespace(main=mock.Mock(side_effect=error))
+
+        with mock.patch.dict(sys.modules, {"esptool": esptool}):
+            with self.assertRaises(OSError):
+                run_esptool_flash("COM11", image)
+
 
 class SdkBootloaderPortSelectionTest(unittest.TestCase):
     """验证多串口环境按物理位置选择目标 ROM USB 端口。"""
@@ -155,6 +195,44 @@ class SdkBootloaderPortSelectionTest(unittest.TestCase):
         )
 
         self.assertEqual("COM11", selected.device)
+
+    def test_composite_usb_interfaces_share_one_physical_location(self):
+        """同一复合 USB 设备的两个 CDC 接口应归入同一物理位置。"""
+        console = self.port("COM7", 0x303A, 0x1001, location="1-3:x.0")
+        data = self.port("COM8", 0x303A, 0x1001, location="1-3:x.2")
+
+        self.assertEqual(
+            serial_port_physical_location(console),
+            serial_port_physical_location(data),
+        )
+
+    def test_source_com_is_preferred_when_rom_exposes_two_ports(self):
+        """ROM 同位置出现两个候选时应优先选择原连接使用的 COM 口。"""
+        source = self.port("COM7", 0x303A, 0x1001, location="1-3:x.0")
+        auxiliary = self.port("COM8", 0x303A, 0x1001, location="1-3:x.2")
+        selected = select_esp32s3_bootloader_port(
+            [auxiliary, source],
+            source,
+            (),
+        )
+
+        self.assertEqual("COM7", selected.device)
+
+    def test_wait_accepts_reused_com_after_dual_port_group_changes(self):
+        """双 CDC 设备进入 ROM 后复用旧 COM 签名时也应完成识别。"""
+        source = self.port("COM7", 0x303A, 0x1001, location="1-3:x.0")
+        reused = self.port("COM8", 0x303A, 0x1001, location="1-3:x.2")
+        enumerations = iter(([], [source, reused]))
+
+        selected = wait_for_esp32s3_bootloader_port(
+            "COM7",
+            [source, reused],
+            timeout=0.2,
+            poll_interval=0,
+            port_provider=lambda: next(enumerations),
+        )
+
+        self.assertEqual("COM7", selected)
 
     def test_only_espressif_native_usb_port_is_eligible(self):
         """CH343 等 USB-UART 串口不能进入仅支持原生 USB 的刷写流程。"""

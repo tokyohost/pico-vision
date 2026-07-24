@@ -135,6 +135,22 @@ class UsbTransportTest(unittest.TestCase):
         self.assertIn("--undefined=tud_descriptor_configuration_cb", esp32_cmake)
         self.assertIn("--undefined=tud_descriptor_string_cb", esp32_cmake)
 
+    def test_bootloader_disconnects_tinyusb_before_switching_usb_phy(self):
+        """进入 ROM 前必须先断开双 CDC，不能带着活动端点释放 OTG PHY。"""
+        repository_root = ESP32_ROOT.parents[1]
+        usb_source = (
+            repository_root / "micropython/ports/esp32/usb.c"
+        ).read_text(encoding="utf-8")
+        function_start = usb_source.index("void usb_usj_mode(void)")
+        function_source = usb_source[function_start:]
+
+        disconnect_offset = function_source.index("tud_disconnect();")
+        delay_offset = function_source.index("mp_hal_delay_ms(50);")
+        release_offset = function_source.index("usb_del_phy(phy_hdl);")
+
+        self.assertLess(disconnect_offset, delay_offset)
+        self.assertLess(delay_offset, release_offset)
+
     def test_dedicated_cdc_uses_firmware_native_backend(self):
         """独立数据通道必须使用固件内置 CDC，不能运行期重配 USB。"""
         initialized = []

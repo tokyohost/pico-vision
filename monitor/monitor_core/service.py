@@ -16,7 +16,7 @@ import serial
 from collectTask import CollectionCoordinator, LockFreeSnapshotStore
 from custom_data import CustomDataCollectionCoordinator
 from custom_data import get_manager as get_custom_data_manager
-from pico_client import PicoJsonClient, PicoRestartingError
+from pico_client import PicoJsonClient
 from net import LanWebSocketScanner
 from qbittorrent_monitor import QbittorrentMonitor
 from system_monitor import SystemInformationCollector
@@ -68,7 +68,11 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
         self.client = PicoJsonClient(
             arguments.port,
             arguments.serial_probe_interval,
-            websocket_url=getattr(arguments, "websocket_url", None),
+            websocket_url=(
+                None
+                if getattr(arguments, "force_usb_cdc", False)
+                else getattr(arguments, "websocket_url", None)
+            ),
             websocket_client_name=getattr(arguments, "websocket_client_name", None),
             websocket_client_id=getattr(arguments, "websocket_client_id", None),
         )
@@ -184,6 +188,7 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
         connection_before = (
             self.arguments.port,
             getattr(self.arguments, "websocket_url", ""),
+            bool(getattr(self.arguments, "force_usb_cdc", False)),
             getattr(self.arguments, "websocket_client_name", ""),
             getattr(self.arguments, "websocket_client_id", ""),
             self.arguments.serial_probe_interval,
@@ -196,6 +201,12 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
         self.arguments.collection_task_logs = bool(
             payload.get(
                 "collection_task_logs", self.arguments.collection_task_logs
+            )
+        )
+        self.arguments.force_usb_cdc = bool(
+            payload.get(
+                "force_usb_cdc",
+                getattr(self.arguments, "force_usb_cdc", False),
             )
         )
         self.arguments.collection_task_intervals = {
@@ -219,13 +230,18 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
         self._reset_adaptive_transmit_negotiation()
 
         self.client.configured_port = self.arguments.port or None
-        self.client.websocket_url = self.arguments.websocket_url or None
+        self.client.websocket_url = (
+            None
+            if self.arguments.force_usb_cdc
+            else self.arguments.websocket_url or None
+        )
         self.client.websocket_client_name = self.arguments.websocket_client_name
         self.client.websocket_client_id = self.arguments.websocket_client_id
         self.client.probe_interval = self.arguments.serial_probe_interval
         connection_after = (
             self.arguments.port,
             self.arguments.websocket_url,
+            self.arguments.force_usb_cdc,
             self.arguments.websocket_client_name,
             self.arguments.websocket_client_id,
             self.arguments.serial_probe_interval,
@@ -375,6 +391,11 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
         self._stop_transmit_worker(wait=True)
         self.collector.close()
 
+    def _force_usb_cdc_enabled(self):
+        """返回是否启用仅使用 USB-CDC 的连接策略。"""
+        arguments = getattr(self, "arguments", None)
+        return bool(getattr(arguments, "force_usb_cdc", False))
+
     def _create_lan_scanner(self, port=None, path=None, fast=False, low_impact=False):
         """创建局域网扫描器；自恢复模式使用更短超时和更低并发以保护局域网。"""
         configured_timeout = getattr(self.arguments, "lan_probe_timeout", 0.3)
@@ -407,6 +428,8 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
 
     def _rediscover_websocket_device(self, fast=False, low_impact=False):
         """扫描局域网候选地址，并通过 PV1 握手切换到可用 Wi-Fi 设备。"""
+        if self._force_usb_cdc_enabled():
+            return False
         scanner = self._create_lan_scanner(fast=fast, low_impact=low_impact)
         original_url = self.client.websocket_url
         LOGGER.info("开始快速扫描局域网中的 Wi-Fi 设备")
@@ -432,7 +455,11 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
 
     def _maybe_discover_linux_websocket(self, now=None):
         """Linux 未连接时按三十秒节流执行一次低影响局域网设备发现。"""
-        if platform.system() != "Linux" or self.client.is_connected:
+        if (
+            self._force_usb_cdc_enabled()
+            or platform.system() != "Linux"
+            or self.client.is_connected
+        ):
             return False
         current = time.monotonic() if now is None else float(now)
         next_scan = getattr(self, "_next_linux_network_scan", 0.0)
@@ -447,6 +474,8 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
 
     def _probe_and_reconnect_saved_websocket(self, websocket_url):
         """快速探测保存的 WebSocket 地址，并仅在端口可用时执行完整 PV1 重连。"""
+        if self._force_usb_cdc_enabled():
+            return False
         parsed = urlsplit(websocket_url)
         if parsed.scheme != "ws" or not parsed.hostname:
             LOGGER.warning("保存的 WebSocket 地址无法用于快速探测：%s", websocket_url)
@@ -483,6 +512,8 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
             WINDOWS_WEBSOCKET_NETWORK_SCAN_INTERVAL,
         )
         while not self.stopping.is_set():
+            if self._force_usb_cdc_enabled():
+                return False
             if self.runtime_reconnect_requested.is_set():
                 return False
             now = time.monotonic()
@@ -517,6 +548,20 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
                 return False
             self.stopping.wait(min(remaining, 0.1))
         return True
+
+    def _wait_for_usb_addition(self, previous_ports):
+        """等待串口拔出后重新插入，期间不打开端口或发送探测命令。"""
+        baseline = frozenset(previous_ports)
+        while not self.stopping.is_set():
+            if self.runtime_reconnect_requested.is_set():
+                return False
+            current_ports = self.client.available_ports()
+            if current_ports - baseline:
+                return True
+            # 拔出只更新基线；设备使用相同 COM 号重新枚举时，相对空基线仍是新增。
+            baseline = current_ports
+            self.stopping.wait(0.5)
+        return False
 
     def _apply_pending_runtime_reconnect(self):
         """由监控主线程关闭旧连接，使串口与 WebSocket 配置安全切换。"""
@@ -620,22 +665,29 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
                 self.client.close()
                 if (
                     platform.system() == "Windows"
+                    and not self._force_usb_cdc_enabled()
                     and isinstance(websocket_url, str)
                     and websocket_url
                     and self._recover_windows_websocket(websocket_url)
                 ):
                     continue
-                if isinstance(error, PicoRestartingError):
+                if isinstance(websocket_url, str) and websocket_url:
                     self._wait_for_runtime_interrupt(
                         self.arguments.reconnect_interval
                     )
                     continue
-                # 探测失败和已连接后的通信异常都按固定间隔重新握手，避免同名 COM 口常驻时卡在等待新增端口。
+                # USB CDC 只在端口拔出并重新枚举后再次握手，避免断线期间
+                # 每隔数秒打开系统全部 COM 口并重复发送 PING。
                 if not probing:
                     LOGGER.info(
-                        "串口连接已断开，%.1f 秒后重新探测 Pico LCD",
-                        self.arguments.reconnect_interval,
+                        "串口连接已断开，正在等待 USB CDC 端口重新枚举",
                     )
+                if not self._wait_for_usb_addition(ports_before_probe):
+                    continue
+                LOGGER.info(
+                    "检测到 USB CDC 端口新增，%.1f 秒后探测 Pico LCD",
+                    self.arguments.reconnect_interval,
+                )
                 self._wait_for_runtime_interrupt(
                     self.arguments.reconnect_interval
                 )
@@ -664,7 +716,7 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
                 data = self.client.enter_sdk_bootloader()
                 sdk_bootloader_result = {
                     "status": "ok",
-                    "message": "设备已确认进入 ROM USB 下载模式",
+                    "message": "设备已确认 ROM USB 下载模式切换请求",
                     "data": data,
                 }
             except (OSError, RuntimeError, serial.SerialException) as error:

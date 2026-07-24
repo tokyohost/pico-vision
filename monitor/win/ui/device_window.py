@@ -780,7 +780,12 @@ class DeviceWindowMixin:
                     previous_ports,
                     timeout=15.0,
                 )
-                messages.put(("sdk_log", "已识别 ROM 下载端口：{}".format(bootloader_port)))
+                messages.put((
+                    "sdk_log",
+                    "设备已重新枚举并进入 ROM USB 下载模式：{}".format(
+                        bootloader_port
+                    ),
+                ))
 
                 run_sdk_flash_process(bootloader_port, information)
                 result = (

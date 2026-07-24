@@ -5,7 +5,9 @@ import hashlib
 import json
 import re
 import struct
+import sys
 import time
+from contextlib import redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,6 +47,58 @@ class SdkImageInformation:
     sha256: str
     sdk_version: str
     partitions: tuple
+
+
+class _ForwardingTextRecorder:
+    """实时转发 esptool 标准输出，并保留用于判断收尾状态的文本。"""
+
+    def __init__(self, target):
+        """保存输出目标并初始化本次刷写的文本片段。"""
+        self._target = target
+        self._parts = []
+
+    def write(self, content):
+        """记录并立即转发一段文本，保持界面刷写日志实时更新。"""
+        text = str(content)
+        self._parts.append(text)
+        return self._target.write(text)
+
+    def flush(self):
+        """立即刷新真实输出目标。"""
+        return self._target.flush()
+
+    def isatty(self):
+        """返回真实输出目标的终端能力。"""
+        method = getattr(self._target, "isatty", None)
+        return bool(method()) if method is not None else False
+
+    def getvalue(self):
+        """合并并返回已经记录的全部输出。"""
+        return "".join(self._parts)
+
+    def __getattr__(self, name):
+        """把编码等其他文本流属性转发给真实输出目标。"""
+        return getattr(self._target, name)
+
+
+def _is_verified_watchdog_reset_disconnect(error, output):
+    """判断异常是否仅由校验成功后的 watchdog 复位移除串口引起。"""
+    normalized_output = str(output).lower()
+    if (
+        "hash of data verified" not in normalized_output
+        or "hard resetting with a watchdog" not in normalized_output
+    ):
+        return False
+
+    normalized_error = str(error).lower()
+    device_missing = (
+        getattr(error, "winerror", None) == 433
+        or "指定不存在的设备" in normalized_error
+        or "winerror 433" in normalized_error
+        or "none, 433" in normalized_error
+        or "device does not exist" in normalized_error
+    )
+    return device_missing and "cannot configure port" in normalized_error
 
 
 def _image_chip_id(content, offset):
@@ -145,6 +199,16 @@ def serial_port_signature(port):
     )
 
 
+def serial_port_physical_location(port):
+    """返回忽略复合 USB 接口编号后的稳定物理连接位置。"""
+    location = str(getattr(port, "location", "") or "").strip().lower()
+    if not location:
+        return ""
+    # Windows 上同一复合 USB 设备的多个 CDC 接口通常分别显示为
+    # “1-3:x.0”和“1-3:x.2”，冒号前的部分才代表实际 USB 插口。
+    return location.split(":", 1)[0]
+
+
 def is_espressif_usb_port(device, ports=None):
     """判断指定串口是否由 Espressif 原生 USB 接口枚举。"""
     target = str(device or "").strip().upper()
@@ -160,7 +224,8 @@ def is_espressif_usb_port(device, ports=None):
 
 def select_esp32s3_bootloader_port(ports, source_port=None, previous_signatures=()):
     """仅在目标可被唯一识别时返回 ESP32-S3 ROM 下载端口。"""
-    source_location = str(getattr(source_port, "location", "") or "")
+    source_device = str(getattr(source_port, "device", "") or "").upper()
+    source_location = serial_port_physical_location(source_port)
     source_serial = str(getattr(source_port, "serial_number", "") or "")
     previous = set(previous_signatures)
     candidates = [
@@ -174,12 +239,20 @@ def select_esp32s3_bootloader_port(ports, source_port=None, previous_signatures=
     if source_location:
         location_matches = [
             port for port in candidates
-            if str(getattr(port, "location", "") or "") == source_location
+            if serial_port_physical_location(port) == source_location
         ]
         if len(location_matches) == 1:
             return location_matches[0]
         if len(location_matches) > 1:
             candidates = location_matches
+
+    if source_device:
+        device_matches = [
+            port for port in candidates
+            if str(getattr(port, "device", "") or "").upper() == source_device
+        ]
+        if len(device_matches) == 1:
+            return device_matches[0]
 
     if source_serial:
         serial_matches = [
@@ -209,15 +282,45 @@ def wait_for_esp32s3_bootloader_port(
         if str(getattr(item, "device", "")).upper() == str(source_device).upper()
     ), None)
     previous_signatures = tuple(serial_port_signature(item) for item in previous_ports)
+    source_location = serial_port_physical_location(source_port)
+    previous_source_signatures = {
+        serial_port_signature(item)
+        for item in previous_ports
+        if source_location
+        and serial_port_physical_location(item) == source_location
+    }
+    source_group_changed = False
     deadline = time.monotonic() + max(0.1, float(timeout))
     # 给设备留出退出 TinyUSB 应用 CDC 并完成 Windows PnP 重枚举的时间。
     time.sleep(min(0.5, max(0.0, float(poll_interval))))
     while time.monotonic() < deadline:
+        current_ports = tuple(provider())
         selected = select_esp32s3_bootloader_port(
-            provider(), source_port, previous_signatures
+            current_ports, source_port, previous_signatures
         )
         if selected is not None:
             return str(selected.device)
+
+        # ESP32-S3 应用固件可同时暴露两个 CDC COM 口。进入 ROM 后，Windows
+        # 可能把 ROM 串口重新绑定到其中一个旧 COM 号，完整签名因此没有变化。
+        # 只有确认同一物理 USB 位置的端口组已经改变后，才允许复用旧签名；
+        # 这样既兼容双 COM 口，也不会把一直存在的其他开发板误当成目标。
+        if source_location:
+            current_source_signatures = {
+                serial_port_signature(item)
+                for item in current_ports
+                if serial_port_physical_location(item) == source_location
+            }
+            source_group_changed = (
+                source_group_changed
+                or current_source_signatures != previous_source_signatures
+            )
+            if source_group_changed:
+                selected = select_esp32s3_bootloader_port(
+                    current_ports, source_port, ()
+                )
+                if selected is not None:
+                    return str(selected.device)
         time.sleep(max(0.05, float(poll_interval)))
     raise RuntimeError("设备未在 15 秒内重新枚举为 ESP32-S3 ROM USB 端口")
 
@@ -240,14 +343,26 @@ def run_esptool_flash(port, image_path, baud=460800, before="no-reset"):
     )
     import esptool
 
-    esptool.main([
-        "--chip", "esp32s3",
-        "--port", str(port),
-        "--baud", str(int(baud)),
-        "--before", reset_policy,
-        "--after", "watchdog-reset",
-        "write-flash", "0x0", str(information.path),
-    ])
+    output_recorder = _ForwardingTextRecorder(sys.stdout)
+    try:
+        with redirect_stdout(output_recorder):
+            esptool.main([
+                "--chip", "esp32s3",
+                "--port", str(port),
+                "--baud", str(int(baud)),
+                "--before", reset_policy,
+                "--after", "watchdog-reset",
+                "write-flash", "0x0", str(information.path),
+            ])
+    except OSError as error:
+        if not _is_verified_watchdog_reset_disconnect(
+            error, output_recorder.getvalue()
+        ):
+            raise
+        print(
+            "SDK_FLASH_RESET_DISCONNECT:镜像校验成功，设备已在 watchdog 复位后移除原串口",
+            flush=True,
+        )
     print("SDK_FLASH_COMPLETE", flush=True)
     return 0
 

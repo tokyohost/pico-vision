@@ -169,6 +169,8 @@ onBeforeUnmount(() => {
           v-else-if="activePage === 'device'"
           :device="device"
           :settings="settings"
+          :saving="saving"
+          @save="saveSettings"
         />
         <NetworkPage v-else-if="activePage === 'network'" />
         <StylesPage

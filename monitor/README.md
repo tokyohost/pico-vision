@@ -94,7 +94,7 @@ Windows 托盘的“设备管理 → 主动探测”会枚举所有启用网卡�
 
 设备管理会同时显示 Python 文件固件版本和 MicroPython SDK 版本。仅当设备通过 ESP32-S3 原生 USB CDC 连接，并在 PONG 中声明支持 SDK 刷写时，“刷写 USB SDK”按钮才会启用；Wi-Fi WebSocket、RP2040、CH343 等兼容控制台通道均不会进入该流程。
 
-选择 `.bin` 后，Monitor 会在停止设备传输前校验 ESP32-S3 芯片编号、`0x8000` 分区表、`0x10000` factory 应用、镜像大小和 SHA-256，并显示目标 SDK 版本供再次确认。确认后设备先返回带 request_id 的成功应答，再调用 `machine.bootloader()` 退出应用 USB；Monitor 只接受同一物理位置或新枚举的 Espressif `VID 303A` ROM 串口，随后由隔离子进程调用 esptool 将完整合并镜像写入 `0x0`。刷写完成会重启监控进程，并在设备重新连接后核对 PONG 中的 SDK 版本。
+选择 `.bin` 后，Monitor 会在停止设备传输前校验 ESP32-S3 芯片编号、`0x8000` 分区表、`0x10000` factory 应用、镜像大小和 SHA-256，并显示目标 SDK 版本供再次确认。确认后设备先返回并刷新带 request_id 的成功应答，再通过调度器延迟调用 `machine.bootloader()` 退出应用 USB；Monitor 只接受同一物理位置或新枚举的 Espressif `VID 303A` ROM 串口，并仅在真实重枚举后报告已经进入 ROM 下载模式，随后由隔离子进程调用 esptool 将完整合并镜像写入 `0x0`。刷写完成会重启监控进程，并在设备重新连接后核对 PONG 中的 SDK 版本。
 
 刷写期间不要断电、拔线或让电脑休眠。旧设备固件如果尚未实现 `sdk.bootloader`，设备页会保持按钮禁用；这类设备需要先用传统方式升级一次支持该命令的固件，后续 SDK 更新才可不按 Boot 键完成。
 
