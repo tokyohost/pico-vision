@@ -116,7 +116,7 @@ onMounted(() => {
       <el-input v-model="wifi.ssid" placeholder="网络名称" class="section-gap" />
       <el-input v-model="wifi.password" type="password" show-password placeholder="网络密码" class="section-gap" />
       <el-button type="primary" class="section-gap" :loading="wifi.connecting" :disabled="!wifi.ssid" @click="connectWifi">连接网络</el-button>
-      <el-table :data="wifi.networks" class="section-gap dark-table" highlight-current-row @row-click="selectWifi">
+      <el-table :data="wifi.networks" class="section-gap theme-table wifi-table" highlight-current-row @row-click="selectWifi">
         <el-table-column prop="ssid" label="SSID" />
         <el-table-column prop="state_label" label="状态" width="90" />
         <el-table-column label="信号" width="90">
@@ -138,8 +138,12 @@ onMounted(() => {
           <el-button text @click="loadWebsocketClients">刷新</el-button>
         </div>
       </template>
-      <el-empty v-if="!websocket.clients.length" description="暂无客户端记录" />
-      <el-table v-else :data="websocket.clients" class="dark-table">
+      <el-table
+        :data="websocket.clients"
+        class="theme-table websocket-table"
+        empty-text="暂无客户端记录"
+        show-header
+      >
         <el-table-column label="客户端" min-width="210">
           <template #default="{ row }">
             <div class="client-identity">
@@ -164,7 +168,19 @@ onMounted(() => {
         <el-table-column label="启用" width="90">
           <template #default="{ row }"><el-switch v-model="row.enabled" /></template>
         </el-table-column>
-        <el-table-column label="优先级" width="140">
+        <el-table-column width="140">
+          <template #header>
+            <span class="priority-header">
+              <span>优先级</span>
+              <el-tooltip
+                content="取值范围为 -1000 至 1000，数值越大优先级越高。新客户端仅在优先级严格高于当前客户端时才能抢占连接，相同优先级不会抢占。"
+                placement="top"
+                :show-after="200"
+              >
+                <span class="priority-help" tabindex="0" aria-label="查看优先级说明">!</span>
+              </el-tooltip>
+            </span>
+          </template>
           <template #default="{ row }">
             <el-input-number v-model="row.priority" :min="-1000" :max="1000" size="small" />
           </template>

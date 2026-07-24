@@ -18,6 +18,7 @@ from sdk_flash import (
     is_espressif_usb_port,
     wait_for_esp32s3_bootloader_port,
 )
+from windows_update import WindowsReleaseUpdater
 
 from .constants import APPLICATION_NAME
 from .settings import (
@@ -39,6 +40,7 @@ from .ui.wifi_window import (
 
 LOGGER = logging.getLogger("pico-monitor.web-ui")
 SDK_IMAGE_FILE_TYPES = ("SDK 镜像 (*.bin)", "所有文件 (*.*)")
+SDK_RELEASE_REPOSITORY = "tokyohost/pico-vision-micropython-sdk"
 
 
 class WebViewBridge:
@@ -68,6 +70,7 @@ class WebViewBridge:
             "app.bootstrap": self._bootstrap,
             "settings.save": self._save_settings,
             "settings.verifyQbittorrent": self._verify_qbittorrent,
+            "update.check": self._check_update,
             "device.status": self._device_status,
             "device.probe": self._probe_device,
             "device.screenshot": self._take_screenshot,
@@ -86,6 +89,8 @@ class WebViewBridge:
             "style.delete": self._style_delete,
             "data.list": self._custom_data_list,
             "data.import": self._custom_data_import,
+            "data.importDirectory": self._custom_data_import_directory,
+            "data.installDependencies": self._custom_data_install_dependencies,
             "data.activate": self._custom_data_activate,
             "data.test": self._custom_data_test,
             "data.delete": self._custom_data_delete,
@@ -228,6 +233,105 @@ class WebViewBridge:
         )
         client.login()
         return {"verified": True}
+
+    @staticmethod
+    def _find_release_asset(assets, expected_name):
+        """按不区分大小写的完整文件名查找发布资源。"""
+        expected = str(expected_name or "").lower()
+        return next(
+            (
+                item for item in assets
+                if str(item.get("name") or "").lower() == expected
+            ),
+            None,
+        )
+
+    def _check_update(self, payload):
+        """按类别检查设备固件、设备 SDK 或 OmniWatch 应用更新。"""
+        category = str(payload.get("category") or "").strip()
+        connection = self._application._get_device_connection()
+        if category == "firmware":
+            if not connection.get("connected"):
+                raise RuntimeError("设备未连接，无法检查设备固件版本")
+            current_version = str(connection.get("firmware_version") or "未知")
+            updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, current_version)
+            latest_version, assets, notes = updater.latest_release(
+                self._application.settings.get("update_url") or None,
+                include_notes=True,
+            )
+            board_model = str(connection.get("board_model") or "").strip()
+            lcd_type = str(connection.get("lcd_device_type") or "").strip()
+            asset_name = "OmniWatch-pico-upgrade-v{}-{}-{}.zip".format(
+                latest_version, board_model, lcd_type,
+            )
+            asset = self._find_release_asset(assets, asset_name)
+            return {
+                "category": category,
+                "currentVersion": current_version,
+                "latestVersion": latest_version,
+                "updateAvailable": updater.firmware_update_available(
+                    current_version, latest_version
+                ),
+                "applicable": True,
+                "assetAvailable": asset is not None,
+                "assetName": asset.get("name") if asset else asset_name,
+                "notes": notes,
+            }
+        if category == "sdk":
+            if not connection.get("connected"):
+                raise RuntimeError("设备未连接，无法检查设备 SDK 版本")
+            current_version = str(connection.get("sdk_version") or "未知")
+            board_model = str(connection.get("board_model") or "").lower().replace("_", "-")
+            if "esp32-s3" not in board_model:
+                return {
+                    "category": category,
+                    "currentVersion": current_version,
+                    "latestVersion": "不适用",
+                    "updateAvailable": False,
+                    "applicable": False,
+                    "assetAvailable": False,
+                    "assetName": "",
+                    "notes": "当前开发板不使用 ESP32-S3 MicroPython SDK 镜像。",
+                }
+            updater = WindowsReleaseUpdater(SDK_RELEASE_REPOSITORY, current_version)
+            latest_version, assets, notes = updater.latest_release(include_notes=True)
+            asset_name = "micropython-ESP32_GENERIC_S3-N8R8-v{}.bin".format(
+                latest_version
+            )
+            asset = self._find_release_asset(assets, asset_name)
+            return {
+                "category": category,
+                "currentVersion": current_version,
+                "latestVersion": latest_version,
+                "updateAvailable": (
+                    current_version.lstrip("v") != latest_version.lstrip("v")
+                ),
+                "applicable": True,
+                "assetAvailable": asset is not None,
+                "assetName": asset.get("name") if asset else asset_name,
+                "notes": notes,
+            }
+        if category == "application":
+            updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, MONITOR_VERSION)
+            latest_version, assets, notes = updater.latest_release(
+                self._application.settings.get("update_url") or None,
+                include_notes=True,
+            )
+            try:
+                asset = updater.select_monitor_asset(assets, latest_version)
+            except RuntimeError:
+                asset = None
+            return {
+                "category": category,
+                "currentVersion": MONITOR_VERSION,
+                "latestVersion": latest_version,
+                "updateAvailable": updater.update_available(latest_version),
+                "applicable": True,
+                "assetAvailable": asset is not None,
+                "assetName": asset.get("name") if asset else "",
+                "notes": notes,
+            }
+        raise ValueError("不支持的更新检查类别：{}".format(category))
 
     def _device_status(self, payload):
         """返回当前工作进程维护的设备连接快照。"""
@@ -677,6 +781,24 @@ class WebViewBridge:
         )
         return result[0] if result else None
 
+    def _select_directory(self):
+        """通过 pywebview 原生目录选择器选择单个文件夹。"""
+        import webview
+
+        window = getattr(self._application, "webview_window", None)
+        if window is None:
+            raise RuntimeError("界面窗口尚未就绪")
+        dialog_enum = getattr(webview, "FileDialog", None)
+        dialog_type = (
+            dialog_enum.FOLDER
+            if dialog_enum is not None
+            else webview.FOLDER_DIALOG
+        )
+        result = window.create_file_dialog(dialog_type, allow_multiple=False)
+        if isinstance(result, str):
+            return result
+        return result[0] if result else None
+
     def _style_upload(self, payload):
         """选择、校验并上传一个自定义屏幕样式文件。"""
         path = self._select_file(("Python 样式文件 (*.py)",))
@@ -737,12 +859,46 @@ class WebViewBridge:
 
     def _custom_data_import(self, payload):
         """选择 ZIP 插件包并导入自定义数据插件。"""
-        path = self._select_file(("自定义数据插件 (*.zip)",))
+        path = (
+            str(payload.get("sourcePath") or "").strip()
+            if payload.get("overwrite")
+            else self._select_file(("自定义数据插件 (*.zip)",))
+        )
         if not path:
             return {"cancelled": True}
-        definition = custom_data.get_manager().import_plugin(
-            path, bool(payload.get("overwrite"))
+        return self._import_custom_data_source(path, payload)
+
+    def _custom_data_import_directory(self, payload):
+        """选择包含 plugin.json 的本地目录并导入自定义数据插件。"""
+        path = (
+            str(payload.get("sourcePath") or "").strip()
+            if payload.get("overwrite")
+            else self._select_directory()
         )
+        if not path:
+            return {"cancelled": True}
+        return self._import_custom_data_source(path, payload)
+
+    @staticmethod
+    def _import_custom_data_source(path, payload):
+        """导入指定插件来源，并把重复冲突转换为可确认的界面结果。"""
+        manager = custom_data.get_manager()
+        try:
+            definition = manager.import_plugin(path, bool(payload.get("overwrite")))
+        except custom_data.CustomDataDuplicateError as error:
+            return {
+                "requiresOverwrite": True,
+                "message": str(error),
+                "sourcePath": str(path),
+                "conflicts": [
+                    {
+                        "name": conflict.zh_name,
+                        "key": conflict.key,
+                        "taskName": conflict.task_name,
+                    }
+                    for conflict in error.conflicts
+                ],
+            }
         return {"name": definition.name, "chineseName": definition.zh_name}
 
     def _custom_data_activate(self, payload):
@@ -751,6 +907,22 @@ class WebViewBridge:
         custom_data.get_manager().activate_plugin(name)
         applied = self._application._activate_custom_data_plugin(name)
         return {"activated": True, "applied": applied}
+
+    def _custom_data_install_dependencies(self, payload):
+        """创建指定插件的独立环境并安装依赖。"""
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            raise ValueError("缺少插件名称")
+        logs = []
+
+        def append_log(message):
+            """收集环境安装进度，并同步写入应用日志。"""
+            text = str(message)
+            logs.append(text)
+            LOGGER.info("自定义数据环境安装：插件=%s，%s", name, text)
+
+        status = custom_data.get_manager().install_dependencies(name, append_log)
+        return {"status": status, "output": "\n".join(logs)}
 
     def _custom_data_test(self, payload):
         """测试执行指定自定义数据插件。"""

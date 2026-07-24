@@ -117,7 +117,7 @@ function saveSettings() {
     </el-card>
   </div>
   <div class="sticky-actions">
-    <span>所有配置均通过 action 桥接热更新，无需重启后台监控服务</span>
+    <span class="sticky-action-hint">保存后配置将立即热更新，无需重启后台监控服务</span>
     <el-button type="primary" :loading="saving" @click="saveSettings">保存配置</el-button>
   </div>
 </template>

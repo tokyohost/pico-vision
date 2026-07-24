@@ -10,6 +10,7 @@ import LogsPage from './components/LogsPage.vue'
 import NetworkPage from './components/NetworkPage.vue'
 import SettingsPage from './components/SettingsPage.vue'
 import StylesPage from './components/StylesPage.vue'
+import UpdatePage from './components/UpdatePage.vue'
 
 const loading = ref(true)
 const saving = ref(false)
@@ -30,6 +31,8 @@ const metadata = reactive({
 })
 const settings = reactive({})
 const device = reactive({ connected: null })
+let deviceRefreshTimer = null
+let deviceRefreshPending = false
 
 const menuItems = [
   ['settings', '设置', 'Setting'],
@@ -37,6 +40,7 @@ const menuItems = [
   ['network', '无线与客户端', 'Connection'],
   ['styles', '屏幕样式', 'Brush'],
   ['data', '自定义数据', 'DataAnalysis'],
+  ['update', '检查更新', 'Upload'],
   ['logs', '运行日志', 'Document'],
   ['about', '关于', 'InfoFilled'],
 ]
@@ -59,6 +63,22 @@ async function bootstrap() {
     ElMessage.error(error?.message || String(error))
   } finally {
     loading.value = false
+  }
+}
+
+/**
+ * 静默刷新全局设备连接状态，确保侧边栏与后台实时状态一致。
+ */
+async function refreshDeviceStatus() {
+  if (deviceRefreshPending) return
+  deviceRefreshPending = true
+  try {
+    const latestDevice = await invoke('device.status')
+    Object.assign(device, latestDevice || { connected: null })
+  } catch {
+    // 后台进程短暂切换时保留最近一次状态，下一轮自动重试。
+  } finally {
+    deviceRefreshPending = false
   }
 }
 
@@ -100,13 +120,15 @@ function handleExternalNavigation(event) {
   navigate(event.detail || 'settings')
 }
 
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener('omniwatch:navigate', handleExternalNavigation)
-  bootstrap()
+  await bootstrap()
+  deviceRefreshTimer = window.setInterval(refreshDeviceStatus, 1000)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('omniwatch:navigate', handleExternalNavigation)
+  if (deviceRefreshTimer !== null) window.clearInterval(deviceRefreshTimer)
 })
 </script>
 
@@ -155,6 +177,7 @@ onBeforeUnmount(() => {
           @catalog-updated="updateStyleCatalog"
         />
         <CustomDataPage v-else-if="activePage === 'data'" />
+        <UpdatePage v-else-if="activePage === 'update'" :device="device" :application-version="metadata.version" />
         <LogsPage v-else-if="activePage === 'logs'" />
         <AboutPage v-else :metadata="metadata" />
       </el-main>

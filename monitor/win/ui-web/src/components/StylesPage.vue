@@ -11,6 +11,56 @@ const props = defineProps({
 
 const emit = defineEmits(['save', 'catalog-updated'])
 const remoteStyles = reactive({ loading: false, items: [], flash: {} })
+const previewModules = import.meta.glob('../../assert/style/*', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+})
+const stylePreviewSources = Object.fromEntries(
+  Object.entries(previewModules).map(([path, url]) => {
+    const filename = path.split('/').pop() || ''
+    const styleName = filename.replace(/\.[^.]+$/, '').toLowerCase()
+    return [styleName, url]
+  }),
+)
+const detailModules = import.meta.glob('../../assert/styleDetail/*.html', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+})
+const styleDetailSources = Object.fromEntries(
+  Object.entries(detailModules).map(([path, content]) => {
+    const filename = path.split('/').pop() || ''
+    const styleName = filename.replace(/\.html$/i, '').toLowerCase()
+    return [styleName, content]
+  }),
+)
+const styleDetail = reactive({ visible: false, title: '', content: '' })
+
+/**
+ * 返回与样式标识同名的本地界面截图地址。
+ */
+function stylePreview(item) {
+  return stylePreviewSources[String(item?.name || '').toLowerCase()] || ''
+}
+
+/**
+ * 判断指定样式是否存在同名 HTML 详情页。
+ */
+function hasStyleDetail(item) {
+  return Boolean(styleDetailSources[String(item?.name || '').toLowerCase()])
+}
+
+/**
+ * 在应用内打开指定样式的指标详情页。
+ */
+function openStyleDetail(item) {
+  const content = styleDetailSources[String(item?.name || '').toLowerCase()]
+  if (!content) return
+  styleDetail.title = `${item.chinese_name} · 样式详情`
+  styleDetail.content = content
+  styleDetail.visible = true
+}
 
 /**
  * 刷新设备中的自定义屏幕样式。
@@ -89,16 +139,42 @@ onMounted(loadRemoteStyles)
     </div>
   </div>
   <div class="style-grid">
-    <button
+    <article
       v-for="item in styles"
       :key="item.name"
       :class="['style-card', { selected: settings.lcd_style === item.name || settings.idle_style === item.name }]"
+      role="button"
+      tabindex="0"
       @click="selectStyle(item)"
+      @keydown.enter="selectStyle(item)"
+      @keydown.space.prevent="selectStyle(item)"
     >
-      <span class="style-icon"><el-icon><MagicStick /></el-icon></span>
-      <strong>{{ item.chinese_name }}</strong>
-      <small>{{ item.name }} · {{ item.type === 'custom' ? '自定义' : '内置' }}</small>
-    </button>
+      <span class="style-preview-shell">
+        <img
+          v-if="stylePreview(item)"
+          :src="stylePreview(item)"
+          :alt="`${item.chinese_name}界面预览`"
+          class="style-preview"
+        />
+        <span v-else class="style-preview-empty">
+          <span class="style-icon"><el-icon><MagicStick /></el-icon></span>
+          <small>暂无界面预览</small>
+        </span>
+      </span>
+      <span class="style-card-copy">
+        <strong>{{ item.chinese_name }}</strong>
+        <span class="style-card-meta">
+          <small>{{ item.name }} · {{ item.type === 'custom' ? '自定义' : '内置' }}</small>
+          <el-button
+            v-if="hasStyleDetail(item)"
+            text
+            size="small"
+            type="primary"
+            @click.stop="openStyleDetail(item)"
+          >查看详情</el-button>
+        </span>
+      </span>
+    </article>
   </div>
   <el-card v-if="remoteStyles.items.length" shadow="never" class="section-gap">
     <template #header><span>设备自定义样式</span></template>
@@ -116,4 +192,12 @@ onMounted(loadRemoteStyles)
     <span>当前选择会与其他设置一并保存</span>
     <el-button type="primary" :loading="saving" @click="emit('save')">应用样式</el-button>
   </div>
+  <el-dialog v-model="styleDetail.visible" :title="styleDetail.title" width="min(920px, 88vw)" class="style-detail-dialog">
+    <iframe
+      :srcdoc="styleDetail.content"
+      :title="styleDetail.title"
+      class="style-detail-frame"
+      sandbox=""
+    />
+  </el-dialog>
 </template>

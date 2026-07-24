@@ -105,7 +105,7 @@ class IdleStyle:
     @classmethod
     def _draw_header(cls, canvas, snapshot):
         """绘制品牌和右上角 Wi-Fi 状态。"""
-        canvas.text(8, 8, "OMNIWATCH", WHITE)
+        # canvas.text(8, 8, "OMNIWATCH", WHITE)
         wifi = cls._wifi_status(snapshot)
         connected = bool(wifi.get("connected"))
         color = IDLE_GREEN if connected else DIM_TEXT
@@ -114,7 +114,7 @@ class IdleStyle:
             ssid = wifi.get("ssid") or "ON"
             label = "WIFI {}dBm {}".format(rssi, ssid) if rssi is not None else "WIFI {}".format(ssid)
         else:
-            label = "WIFI OFF"
+            label = "WIFI NOT CONNECT"
         label = cls._clip_text(canvas, label.strip(), 208)
         text_x = SCREEN_WIDTH - 8 - canvas.text_width(label)
         canvas.fill_rect(max(104, text_x - 12), 9, 7, 7, color)
@@ -169,7 +169,7 @@ class IdleStyle:
         for index, (bullet_color, text, text_color) in enumerate(rows):
             y = 187 + index * 16
             canvas.fill_rect(12, y + 2, 6, 6, bullet_color)
-            canvas.text(25, y, text, text_color)
+            canvas.text(25, y, text, text_color,font_name="wqy_8x16")
         canvas.text(286, 224, "IDLE", IDLE_GREEN)
 
     @classmethod

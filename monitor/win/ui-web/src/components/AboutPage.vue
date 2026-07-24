@@ -32,7 +32,6 @@ async function openDataDirectory() {
         <el-descriptions-item label="发布仓库">{{ metadata.about.repository || '--' }}</el-descriptions-item>
         <el-descriptions-item label="数据目录">{{ metadata.dataDirectory || '--' }}</el-descriptions-item>
       </el-descriptions>
-      <p class="about-copy">基于 pywebview、Vue 3、Element Plus 与 Vite 构建，通过本地 action 桥接调用 Python 业务能力。</p>
       <el-button type="primary" @click="openDataDirectory">打开日志和数据目录</el-button>
     </el-card>
     <el-card shadow="never" class="qr-card">

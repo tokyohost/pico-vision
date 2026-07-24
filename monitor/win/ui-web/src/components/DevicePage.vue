@@ -232,7 +232,7 @@ onBeforeUnmount(() => {
       </div>
     </template>
     <el-alert
-      title="仅支持 ESP32-S3 完整合并 bin；刷写期间请勿断电、拔线或让电脑休眠。"
+      title="刷写期间请勿断电、拔线或让电脑休眠。"
       type="warning"
       :closable="false"
       show-icon
