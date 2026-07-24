@@ -10,6 +10,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['save', 'catalog-updated'])
+const customStyleTutorialUrl = 'https://github.com/tokyohost/omniwatch-doc'
 const remoteStyles = reactive({ loading: false, items: [], flash: {} })
 const previewModules = import.meta.glob('../../assert/style/*', {
   eager: true,
@@ -32,10 +33,31 @@ const styleDetailSources = Object.fromEntries(
   Object.entries(detailModules).map(([path, content]) => {
     const filename = path.split('/').pop() || ''
     const styleName = filename.replace(/\.html$/i, '').toLowerCase()
-    return [styleName, content]
+    return [styleName, applyDetailScrollbarTheme(content)]
   }),
 )
 const styleDetail = reactive({ visible: false, title: '', content: '' })
+
+/**
+ * 为独立详情页注入与主界面一致的滚动条主题。
+ */
+function applyDetailScrollbarTheme(content) {
+  const scrollbarStyle = `<style>
+    * { scrollbar-width: thin; scrollbar-color: rgba(91, 140, 255, .48) transparent; }
+    *::-webkit-scrollbar { width: 9px; height: 9px; }
+    *::-webkit-scrollbar-track { background: transparent; }
+    *::-webkit-scrollbar-thumb {
+      min-width: 36px; min-height: 36px;
+      border: 2px solid transparent; border-radius: 999px;
+      background: rgba(91, 140, 255, .48); background-clip: padding-box;
+    }
+    *::-webkit-scrollbar-thumb:hover { background-color: rgba(111, 153, 255, .76); }
+    *::-webkit-scrollbar-thumb:active { background-color: rgba(129, 166, 255, .92); }
+    *::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+    *::-webkit-scrollbar-corner { background: transparent; }
+  </style>`
+  return content.replace(/<\/head>/i, `${scrollbarStyle}</head>`)
+}
 
 /**
  * 返回与样式标识同名的本地界面截图地址。
@@ -132,8 +154,15 @@ onMounted(loadRemoteStyles)
 
 <template>
   <div class="page-title card-header">
-    <div><h2>屏幕样式</h2><p>选择样式后保存，或上传设备自定义 Python 样式。</p></div>
+    <div><h2>屏幕样式</h2><p>选择样式后保存，或上传设备自定义样式。</p></div>
     <div>
+      <el-button
+        tag="a"
+        :href="customStyleTutorialUrl"
+        target="_blank"
+        rel="noopener noreferrer"
+        title="在浏览器中打开自定义屏幕教程"
+      >自定义屏幕教程</el-button>
       <el-button :loading="remoteStyles.loading" @click="loadRemoteStyles">刷新设备</el-button>
       <el-button type="primary" @click="uploadStyle">上传样式</el-button>
     </div>
@@ -189,7 +218,7 @@ onMounted(loadRemoteStyles)
     </el-table>
   </el-card>
   <div class="sticky-actions">
-    <span>当前选择会与其他设置一并保存</span>
+    <span class="sticky-action-hint">当前选择会与其他设置一并保存</span>
     <el-button type="primary" :loading="saving" @click="emit('save')">应用样式</el-button>
   </div>
   <el-dialog v-model="styleDetail.visible" :title="styleDetail.title" width="min(920px, 88vw)" class="style-detail-dialog">

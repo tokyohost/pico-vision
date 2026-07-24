@@ -400,13 +400,11 @@ class WindowsTrayApplication(
         if window is not None:
             window.destroy()
 
-    @staticmethod
-    def _create_image():
-        """加载托盘图标并转换为带透明通道的图像。"""
+    def _create_image(self):
+        """从统一应用图标路径加载托盘菜单栏图标。"""
         from PIL import Image
 
-        base_directory = Path(getattr(sys, "_MEIPASS", MONITOR_DIRECTORY))
-        with Image.open(base_directory / "icon" / "icon.png") as image:
+        with Image.open(self._resource_path("icon", "icon.png")) as image:
             return image.convert("RGBA")
 
     @staticmethod

@@ -71,6 +71,7 @@ class WebViewBridge:
             "settings.save": self._save_settings,
             "settings.verifyQbittorrent": self._verify_qbittorrent,
             "update.check": self._check_update,
+            "update.install": self._install_update,
             "device.status": self._device_status,
             "device.probe": self._probe_device,
             "device.screenshot": self._take_screenshot,
@@ -332,6 +333,121 @@ class WebViewBridge:
                 "notes": notes,
             }
         raise ValueError("不支持的更新检查类别：{}".format(category))
+
+    def _run_firmware_release_update(self, updater, asset, latest_version):
+        """下载并安装设备固件发布包，结束后恢复常驻监控。"""
+        package_path = None
+        try:
+            package_path = updater.download(asset, ".zip")
+            self._application._stop_worker()
+            self._application._upgrade_pico_from_package(package_path)
+            LOGGER.info("设备固件已立即更新至 %s", latest_version)
+        except Exception as error:
+            LOGGER.exception("设备固件立即更新失败：%s", error)
+        finally:
+            if package_path is not None:
+                updater.remove_file(package_path)
+            if not self._application.stopping.is_set() and (
+                self._application.worker_process is None
+                or self._application.worker_process.poll() is not None
+            ):
+                self._application._start_worker()
+            self._application.update_lock.release()
+
+    def _run_sdk_release_update(self, updater, asset, connection):
+        """下载 SDK 发布镜像并通过受控 USB 模式立即刷写。"""
+        image_path = None
+        delegated = False
+        try:
+            image_path = updater.download(asset, ".bin")
+            information = inspect_sdk_image(image_path)
+            with self._sdk_lock:
+                self._sdk_state.update({
+                    "busy": True,
+                    "status": "running",
+                    "message": "正在下载并刷写最新 SDK，请勿断电或拔线",
+                    "image_path": image_path,
+                    "image": self._sdk_image_payload(information),
+                    "logs": [],
+                })
+            delegated = True
+            self._run_sdk_flash_task(information, connection, False, "")
+        except Exception as error:
+            LOGGER.exception("SDK 立即更新失败：%s", error)
+            with self._sdk_lock:
+                self._sdk_state.update({
+                    "busy": False,
+                    "status": "error",
+                    "message": "SDK 立即更新失败：{}".format(error),
+                })
+        finally:
+            if image_path is not None:
+                updater.remove_file(image_path)
+                with self._sdk_lock:
+                    if self._sdk_state.get("image_path") == image_path:
+                        self._sdk_state["image_path"] = None
+            if not delegated:
+                self._application.update_lock.release()
+
+    def _install_update(self, payload):
+        """按更新类别立即启动应用、设备固件或 SDK 更新。"""
+        category = str(payload.get("category") or "").strip()
+        if category == "application":
+            self._application._check_for_updates(self._application.icon)
+            return {"category": category, "started": True}
+
+        connection = self._application._get_device_connection()
+        if not connection.get("connected"):
+            raise RuntimeError("设备未连接，无法立即更新")
+        if not self._application.update_lock.acquire(blocking=False):
+            raise RuntimeError("已有更新任务正在执行，请稍候")
+        try:
+            if category == "firmware":
+                current_version = str(connection.get("firmware_version") or "未知")
+                updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, current_version)
+                latest_version, assets = updater.latest_release(
+                    self._application.settings.get("update_url") or None
+                )
+                if not updater.firmware_update_available(current_version, latest_version):
+                    raise RuntimeError("设备固件已是最新版本")
+                board_model = str(connection.get("board_model") or "").strip()
+                lcd_type = str(connection.get("lcd_device_type") or "").strip()
+                asset_name = "OmniWatch-pico-upgrade-v{}-{}-{}.zip".format(
+                    latest_version, board_model, lcd_type,
+                )
+                asset = self._find_release_asset(assets, asset_name)
+                if asset is None:
+                    raise RuntimeError("当前发布中缺少适配设备固件：{}".format(asset_name))
+                target = self._run_firmware_release_update
+                arguments = (updater, asset, latest_version)
+            elif category == "sdk":
+                if not self._sdk_flash_allowed(connection):
+                    raise RuntimeError("当前连接不支持 ESP32-S3 SDK 受控更新")
+                current_version = str(connection.get("sdk_version") or "未知")
+                updater = WindowsReleaseUpdater(SDK_RELEASE_REPOSITORY, current_version)
+                latest_version, assets = updater.latest_release()
+                if current_version.lstrip("v") == latest_version.lstrip("v"):
+                    raise RuntimeError("设备 SDK 已是最新版本")
+                asset_name = "micropython-ESP32_GENERIC_S3-N8R8-v{}.bin".format(
+                    latest_version
+                )
+                asset = self._find_release_asset(assets, asset_name)
+                if asset is None:
+                    raise RuntimeError("当前发布中缺少适配 SDK 镜像：{}".format(asset_name))
+                target = self._run_sdk_release_update
+                arguments = (updater, asset, connection)
+            else:
+                raise ValueError("不支持的立即更新类别：{}".format(category))
+            threading.Thread(
+                target=target,
+                args=arguments,
+                name="Web 立即更新-{}".format(category),
+                daemon=True,
+            ).start()
+            return {"category": category, "started": True}
+        except Exception:
+            self._application.update_lock.release()
+            raise
 
     def _device_status(self, payload):
         """返回当前工作进程维护的设备连接快照。"""
@@ -971,6 +1087,29 @@ class WebViewBridge:
 class WebUiMixin:
     """把原有多个 Tk 窗口替换为单一 pywebview Vue 应用。"""
 
+    def _prepare_webview_icon(self):
+        """将统一 PNG 应用图标转换为 Windows WebView 可识别的 ICO。"""
+        from PIL import Image
+
+        source_path = self._resource_path("icon", "icon.png")
+        target_path = self.data_directory / "icon.ico"
+        icon_sizes = (
+            (16, 16),
+            (24, 24),
+            (32, 32),
+            (48, 48),
+            (64, 64),
+            (128, 128),
+            (256, 256),
+        )
+        with Image.open(source_path) as source_image:
+            source_image.convert("RGBA").save(
+                target_path,
+                format="ICO",
+                sizes=icon_sizes,
+            )
+        return target_path
+
     def _initialize_webview(self):
         """在主线程创建常驻隐藏窗口，保证 Windows GUI 消息循环合法。"""
         import webview
@@ -1003,12 +1142,16 @@ class WebUiMixin:
         self.settings_window = window
         return window
 
-    @staticmethod
-    def _start_webview_loop():
-        """在应用主线程启动 Edge WebView2 消息循环。"""
+    def _start_webview_loop(self):
+        """使用统一应用图标启动 Edge WebView2 消息循环。"""
         import webview
 
-        webview.start(gui="edgechromium", debug=False, private_mode=False)
+        webview.start(
+            gui="edgechromium",
+            debug=False,
+            private_mode=False,
+            icon=str(self._prepare_webview_icon()),
+        )
 
     def _show_web_page(self, page="settings"):
         """恢复常驻 Web 窗口并导航到指定页面。"""

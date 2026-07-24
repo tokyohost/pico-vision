@@ -35,18 +35,21 @@ let deviceRefreshTimer = null
 let deviceRefreshPending = false
 
 const menuItems = [
-  ['settings', '设置', 'Setting'],
-  ['device', '设备管理', 'Monitor'],
-  ['network', '无线与客户端', 'Connection'],
-  ['styles', '屏幕样式', 'Brush'],
-  ['data', '自定义数据', 'DataAnalysis'],
-  ['update', '检查更新', 'Upload'],
-  ['logs', '运行日志', 'Document'],
-  ['about', '关于', 'InfoFilled'],
+  ['settings', '设置', 'Setting', '配置屏幕显示、数据采集、设备连接与任务频率。'],
+  ['device', '设备管理', 'Monitor', '查看设备状态，管理固件升级与底层 SDK 刷写。'],
+  ['network', '无线与客户端', 'Connection', '管理无线网络档案、连接优先级与客户端访问状态。'],
+  ['styles', '屏幕样式', 'Brush', '选择屏幕与待机样式，预览详情或管理设备自定义样式。'],
+  ['data', '自定义数据', 'DataAnalysis', '管理自定义数据插件及其采集配置。'],
+  ['update', '检查更新', 'Upload', '检查设备固件、底层 SDK 与桌面控制中心的新版本。'],
+  ['logs', '运行日志', 'Document', '查看实时运行记录，定位采集、通信与设备异常。'],
+  ['about', '关于', 'InfoFilled', '查看应用版本、作者信息与本地数据目录。'],
 ]
 
 const pageTitle = computed(
   () => menuItems.find((item) => item[0] === activePage.value)?.[1] || '',
+)
+const pageDescription = computed(
+  () => menuItems.find((item) => item[0] === activePage.value)?.[3] || '',
 )
 
 /**
@@ -147,7 +150,7 @@ onBeforeUnmount(() => {
       <el-header class="topbar">
         <div>
           <h1>{{ pageTitle }}</h1>
-          <p>集中管理 OmniWatch 采集、显示与设备连接</p>
+          <p>{{ pageDescription }}</p>
         </div>
         <el-button circle @click="bootstrap">
           <el-icon><Refresh /></el-icon>

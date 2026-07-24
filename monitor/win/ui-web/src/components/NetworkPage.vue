@@ -168,7 +168,7 @@ onMounted(() => {
         <el-table-column label="启用" width="90">
           <template #default="{ row }"><el-switch v-model="row.enabled" /></template>
         </el-table-column>
-        <el-table-column width="140">
+        <el-table-column min-width="210">
           <template #header>
             <span class="priority-header">
               <span>优先级</span>

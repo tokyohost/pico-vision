@@ -1,6 +1,6 @@
 <script setup>
 import { computed, reactive } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '../bridge'
 
 const props = defineProps({
@@ -9,9 +9,9 @@ const props = defineProps({
 })
 
 const checks = reactive({
-  firmware: { loading: false, result: null, error: '' },
-  sdk: { loading: false, result: null, error: '' },
-  application: { loading: false, result: null, error: '' },
+  firmware: { loading: false, installing: false, result: null, error: '' },
+  sdk: { loading: false, installing: false, result: null, error: '' },
+  application: { loading: false, installing: false, result: null, error: '' },
 })
 
 const updateItems = computed(() => [
@@ -90,48 +90,84 @@ async function checkAllUpdates() {
   if (errorCount) ElMessage.warning(`更新检查完成，${errorCount} 项检查失败`)
   else ElMessage.success('更新检查已完成')
 }
+
+/**
+ * 确认风险提示后立即启动指定类别的更新任务。
+ */
+async function installUpdate(category) {
+  const state = checks[category]
+  if (category !== 'application') {
+    try {
+      await ElMessageBox.confirm(
+        '更新期间请勿断开设备、关闭电源或退出 OmniWatch。是否立即更新？',
+        '确认立即更新',
+        { confirmButtonText: '立即更新', cancelButtonText: '取消', type: 'warning' },
+      )
+    } catch {
+      return
+    }
+  }
+  state.installing = true
+  try {
+    await invoke('update.install', { category })
+    ElMessage.success(category === 'application' ? '已打开应用更新流程' : '更新任务已启动')
+  } catch (error) {
+    ElMessage.error(error?.message || String(error))
+  } finally {
+    state.installing = false
+  }
+}
 </script>
 
 <template>
-  <div class="page-title card-header">
-    <div>
-      <h2>检查更新</h2>
-      <p>分别检查设备固件、底层 SDK 与 OmniWatch 桌面应用。</p>
-    </div>
+  <div class="update-toolbar">
     <el-button type="primary" :loading="Object.values(checks).some((state) => state.loading)" @click="checkAllUpdates">
       检查全部更新
     </el-button>
   </div>
 
-  <div class="update-grid section-gap">
+  <div class="update-grid">
     <el-card v-for="item in updateItems" :key="item.key" shadow="never" class="update-card">
-      <div class="update-card-heading">
-        <span class="update-icon"><el-icon><component :is="item.icon" /></el-icon></span>
-        <div>
-          <h3>{{ item.title }}</h3>
-          <p>{{ item.description }}</p>
+      <div class="update-card-main">
+        <div class="update-card-heading">
+          <span class="update-icon"><el-icon><component :is="item.icon" /></el-icon></span>
+          <div>
+            <h3>{{ item.title }}</h3>
+            <p>{{ item.description }}</p>
+          </div>
         </div>
-      </div>
 
-      <div class="update-version-row">
-        <span>当前版本</span>
-        <strong>{{ checks[item.key].result?.currentVersion || item.current }}</strong>
-      </div>
-      <div class="update-version-row">
-        <span>最新版本</span>
-        <strong>{{ checks[item.key].result?.latestVersion || '--' }}</strong>
-      </div>
-      <div class="update-result-row">
-        <el-tag :type="resultTagType(checks[item.key])" effect="dark">
-          {{ resultText(checks[item.key]) }}
-        </el-tag>
-        <el-button
-          type="primary"
-          plain
-          :disabled="item.disabled"
-          :loading="checks[item.key].loading"
-          @click="checkUpdate(item.key)"
-        >立即检查</el-button>
+        <div class="update-version-list">
+          <div class="update-version-row">
+            <span>当前版本</span>
+            <strong>{{ checks[item.key].result?.currentVersion || item.current }}</strong>
+          </div>
+          <div class="update-version-row">
+            <span>最新版本</span>
+            <strong>{{ checks[item.key].result?.latestVersion || '--' }}</strong>
+          </div>
+        </div>
+
+        <div class="update-card-actions">
+          <el-tag :type="resultTagType(checks[item.key])" effect="dark">
+            {{ resultText(checks[item.key]) }}
+          </el-tag>
+          <div class="update-action-buttons">
+            <el-button
+              type="primary"
+              plain
+              :disabled="item.disabled"
+              :loading="checks[item.key].loading"
+              @click="checkUpdate(item.key)"
+            >立即检查</el-button>
+            <el-button
+              v-if="checks[item.key].result?.updateAvailable && checks[item.key].result?.assetAvailable"
+              type="danger"
+              :loading="checks[item.key].installing"
+              @click="installUpdate(item.key)"
+            >立即更新</el-button>
+          </div>
+        </div>
       </div>
 
       <el-alert
