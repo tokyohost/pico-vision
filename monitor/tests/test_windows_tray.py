@@ -164,6 +164,27 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertEqual(payload["interval"], 1.5)
         application._restart_worker.assert_not_called()
 
+    def test_device_style_change_updates_saved_and_open_ui_selection(self):
+        """设备按键事件应同步设置存储、托盘菜单和已打开的 Web 页面。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.settings = dict(DEFAULT_SETTINGS, lcd_style="simple")
+        application.settings_store = mock.Mock()
+        application.icon = mock.Mock()
+        application.webview_window = mock.Mock()
+
+        changed = application._apply_device_style_change({
+            "status": "ok",
+            "style": "thermal_watch",
+        })
+
+        self.assertTrue(changed)
+        self.assertEqual("thermal_watch", application.settings["lcd_style"])
+        application.settings_store.save.assert_called_once_with(application.settings)
+        application.icon.update_menu.assert_called_once_with()
+        script = application.webview_window.evaluate_js.call_args.args[0]
+        self.assertIn("omniwatch:style-change", script)
+        self.assertIn("thermal_watch", script)
+
     def test_web_bridge_reboot_uses_supported_exit_reboot_action(self):
         """确认 Web 界面的重启设备动作发送后台支持的退出重启命令。"""
         application = mock.Mock()

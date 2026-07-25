@@ -85,6 +85,7 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
             websocket_client_name=getattr(arguments, "websocket_client_name", None),
             websocket_client_id=getattr(arguments, "websocket_client_id", None),
         )
+        self.client.event_callback = self._handle_device_event
         self.stopping = threading.Event()
         self.runtime_reconnect_requested = threading.Event()
         self.active_probe_requested = threading.Event()
@@ -270,6 +271,31 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
                 "连接参数已热更新并保留当前会话，新参数将在下次自然重连时生效"
             )
         LOGGER.info("完整运行配置已热更新，不重启 Monitor 工作进程")
+
+    def _handle_device_event(self, payload):
+        """处理设备主动事件，并同步按键选择的屏幕样式。"""
+        try:
+            message = bytes(payload).decode("utf-8", "replace").strip()
+        except (TypeError, ValueError):
+            return
+        prefix = "styleChange:"
+        if not message.startswith(prefix):
+            return
+        style_name = message[len(prefix):].strip()
+        if not style_name or style_name not in self.available_styles:
+            LOGGER.warning("设备上报了未知样式：%s", style_name or "空")
+            return
+        self.arguments.lcd_style = style_name
+        LOGGER.info("设备按键切换样式，Monitor 已实时同步：%s", style_name)
+        print(
+            "STYLE_CHANGE_RESULT:"
+            + json.dumps(
+                {"status": "ok", "style": style_name},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
 
     def _apply_runtime_qbittorrent(self, payload):
         """根据最新配置启动、停止或替换 qBittorrent 采集器。"""

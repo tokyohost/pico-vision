@@ -25,7 +25,7 @@ class GpioButton:
         self.pin_id = int(pin_id)
         self.action = action
         self.active_low = bool(active_low)
-        self.debounce_ms = max(1, int(debounce_ms))
+        self.debounce_ms = max(0, int(debounce_ms))
         pull = Pin.PULL_UP if self.active_low else Pin.PULL_DOWN
         self._pin = Pin(self.pin_id, Pin.IN, pull)
         self._stable_pressed = False
@@ -43,8 +43,12 @@ class GpioButton:
         if raw_pressed != self._last_raw_pressed:
             self._last_raw_pressed = raw_pressed
             self._last_changed_ms = now_ms
-            return None
-        if _ticks_diff(now_ms, self._last_changed_ms) < self.debounce_ms:
+            if self.debounce_ms > 0:
+                return None
+        if (
+            self.debounce_ms > 0
+            and _ticks_diff(now_ms, self._last_changed_ms) < self.debounce_ms
+        ):
             return None
         if raw_pressed == self._stable_pressed:
             return None

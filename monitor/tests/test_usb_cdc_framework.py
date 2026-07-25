@@ -135,6 +135,20 @@ class UsbCdcFrameworkTest(unittest.TestCase):
 
         self.assertIn(b"PV1:JSONZ:", bytes(serial_port.written))
 
+    def test_event_callback_receives_device_style_change(self):
+        """设备样式事件应由统一读回调实时转交业务层。"""
+        client = PicoJsonClient()
+        events = []
+        client.event_callback = events.append
+
+        client._handle_cdc_response(
+            "测试读线程",
+            b"PV1:EVENT",
+            ("EVENT", b"styleChange:thermal_watch"),
+        )
+
+        self.assertEqual([b"styleChange:thermal_watch"], events)
+
     def test_handshake_splits_full_usb_endpoint_packet(self):
         """确认 64 字节 PING 拆成短包发送，避免 CDC 设备端一直等待后续数据。"""
         pong = build_frame("PONG", json.dumps({

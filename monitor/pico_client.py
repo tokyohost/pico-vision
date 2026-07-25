@@ -98,6 +98,7 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         self._json_ack_lock = threading.Lock()
         self._json_ack_events = {}
         self.transport = None
+        self.event_callback = None
 
     @property
     def is_connected(self):
@@ -309,6 +310,8 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
             self._format_json_ack_timing_suffix(frame, received_at),
         )
         self._notify_json_ack(frame)
+        if frame and frame[0] == "EVENT" and callable(self.event_callback):
+            self.event_callback(frame[1])
         if _is_restarting_fatal(frame):
             raise PicoRestartingError("Pico 发生不可恢复的渲染错误，设备正在自动重启")
 

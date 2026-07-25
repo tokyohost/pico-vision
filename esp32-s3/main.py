@@ -321,7 +321,7 @@ class Application:
         self._renderer.request_render(snapshot or {}, force=True)
         if changed:
             self._protocol.write(
-                "BUTTON:LCD_STYLE:{}\n".format(
+                "styleChange:{}\n".format(
                     self._renderer.style_name()
                 ).encode("utf-8")
             )
