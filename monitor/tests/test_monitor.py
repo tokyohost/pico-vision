@@ -1005,6 +1005,53 @@ class PicoClientTest(unittest.TestCase):
         service.client.close.assert_not_called()
         service._stop_transmit_worker.assert_not_called()
 
+    def test_connected_websocket_defers_address_and_identity_changes(self):
+        """活动会话应保留，地址与身份变化延迟到下次自然重连生效。"""
+        before = (
+            "",
+            "ws://192.168.0.248:8765/pv1",
+            False,
+            "旧名称",
+            "旧标识",
+            3.0,
+        )
+        after = (
+            "",
+            "ws://192.168.0.224:8765/pv1",
+            False,
+            "新名称",
+            "新标识",
+            5.0,
+        )
+
+        reconnect = MonitorService._runtime_connection_requires_reconnect(
+            before, after, connected=True
+        )
+
+        self.assertFalse(reconnect)
+
+    def test_disconnected_service_applies_new_websocket_address_immediately(self):
+        """未连接时更新 WebSocket 地址应立即唤醒连接流程。"""
+        before = ("", "ws://192.168.0.248:8765/pv1", False, "名称", "标识", 3.0)
+        after = ("", "ws://192.168.0.224:8765/pv1", False, "名称", "标识", 3.0)
+
+        reconnect = MonitorService._runtime_connection_requires_reconnect(
+            before, after, connected=False
+        )
+
+        self.assertTrue(reconnect)
+
+    def test_explicit_transport_switch_still_reconnects_active_session(self):
+        """活动会话切换到强制 USB 模式时仍应立即重连。"""
+        before = ("", "ws://192.168.0.248:8765/pv1", False, "名称", "标识", 3.0)
+        after = ("COM11", "ws://192.168.0.248:8765/pv1", True, "名称", "标识", 3.0)
+
+        reconnect = MonitorService._runtime_connection_requires_reconnect(
+            before, after, connected=True
+        )
+
+        self.assertTrue(reconnect)
+
     def test_sending_uses_latest_snapshot_without_waiting_for_next_collection(self):
         """确认后台采集尚未发布新结果时，发送链路立即复用最近成功快照。"""
         service = MonitorService.__new__(MonitorService)

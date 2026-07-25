@@ -15,7 +15,7 @@ import gc
 import time
 
 from canvas_backend import Canvas, canvas_backend_name
-from config import BLACK, LCD_STYLE
+from config import BLACK, LCD_STYLE, WHITE, YELLOW
 from styles.style_plugins import create_style, normalize_style_name, release_style
 
 
@@ -209,6 +209,7 @@ class DashboardRenderer:
         self.canvas.set_view(0, 0, self._width, self._height)
         canvas_started = time.ticks_us()
         self._style.draw_visible(self.canvas, self._snapshot)
+        self._draw_button_hint(self._snapshot)
         self._canvas_us = time.ticks_diff(time.ticks_us(), canvas_started)
         lcd_started = time.ticks_us()
         self._region_count = self.lcd.present(
@@ -229,6 +230,34 @@ class DashboardRenderer:
             - self._canvas_us - self._lcd_us,
         )
         return True
+
+    def _draw_button_hint(self, snapshot):
+        """在当前画布中央绘制按键名称提示框。"""
+        hint = snapshot.get("button_hint") if snapshot else None
+        if not hint:
+            return
+        text = str(hint)
+        font_name = "wqy_8x16"
+        text_width = self.canvas.text_width(text, font_name=font_name)
+        horizontal_padding = 14
+        panel_width = min(
+            self._width - 16,
+            text_width + horizontal_padding * 2,
+        )
+        panel_height = 40
+        panel_x = (self._width - panel_width) // 2
+        panel_y = (self._height - panel_height) // 2
+        text_x = panel_x + (panel_width - text_width) // 2
+        text_y = panel_y + (panel_height - 16) // 2
+        self.canvas.fill_round_rect(
+            panel_x, panel_y, panel_width, panel_height, BLACK, 6
+        )
+        self.canvas.draw_rect(
+            panel_x, panel_y, panel_width, panel_height, YELLOW, 2
+        )
+        self.canvas.text(
+            text_x, text_y, text, WHITE, font_name=font_name
+        )
 
     def record_gc_us(self, elapsed_us):
         """记录应用在当前帧完成后安全执行垃圾回收的耗时。"""

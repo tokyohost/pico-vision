@@ -40,6 +40,15 @@ LINUX_WEBSOCKET_FAST_SCAN_WORKERS = 16
 class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin):
     """管理系统指标采集、Pico 连接以及异常重连。"""
 
+    @staticmethod
+    def _runtime_connection_requires_reconnect(before, after, connected):
+        """判断运行配置变化是否必须中断当前设备连接。"""
+        if not connected:
+            return after != before
+        # 已建立连接时仅显式切换串口或传输模式需要立即重连；WebSocket
+        # 地址、客户端身份和探测周期均作为下次自然重连参数延迟生效。
+        return before[0] != after[0] or before[2] != after[2]
+
     def __init__(self, arguments):
         """根据命令行配置创建采集器、串口客户端和停止事件。"""
         self.arguments = arguments
@@ -250,8 +259,16 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
             self.arguments.websocket_client_id,
             self.arguments.serial_probe_interval,
         )
-        if connection_after != connection_before:
+        if self._runtime_connection_requires_reconnect(
+            connection_before,
+            connection_after,
+            self.client.is_connected,
+        ):
             self.runtime_reconnect_requested.set()
+        elif connection_after != connection_before and self.client.is_connected:
+            LOGGER.info(
+                "连接参数已热更新并保留当前会话，新参数将在下次自然重连时生效"
+            )
         LOGGER.info("完整运行配置已热更新，不重启 Monitor 工作进程")
 
     def _apply_runtime_qbittorrent(self, payload):

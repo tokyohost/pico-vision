@@ -28,6 +28,8 @@ class WebSocketTransport(TransportStrategy):
     _GUID = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
     _MAX_HTTP_HEADER_BYTES = 4096
     _HANDSHAKE_TIMEOUT_MS = 2000
+    _SEND_RETRY_TIMEOUT_MS = 250
+    _WOULD_BLOCK_ERRNOS = (11, 35, 10035)
 
     def __init__(self, wifi_manager, port=8765, path="/pv1", heartbeat_ms=10000, timeout_ms=30000,
                  client_registry=None):
@@ -67,6 +69,23 @@ class WebSocketTransport(TransportStrategy):
             return 0
         ticks_diff = getattr(time, "ticks_diff", None)
         return ticks_diff(now, started) if ticks_diff else now - started
+
+    @classmethod
+    def _is_would_block_error(cls, error):
+        """判断套接字异常是否仅表示非阻塞发送缓冲暂时不可写。"""
+        error_number = getattr(error, "errno", None)
+        if error_number is None and getattr(error, "args", None):
+            error_number = error.args[0]
+        return error_number in cls._WOULD_BLOCK_ERRNOS
+
+    @staticmethod
+    def _sleep_ms(delay_ms):
+        """短暂让出处理器，并兼容 MicroPython 与 CPython 测试环境。"""
+        sleep_ms = getattr(time, "sleep_ms", None)
+        if callable(sleep_ms):
+            sleep_ms(delay_ms)
+        else:
+            time.sleep(delay_ms / 1000)
 
     def _open_server(self):
         """在 Wi-Fi 可用后创建非阻塞 WebSocket 监听套接字。"""
@@ -425,13 +444,28 @@ class WebSocketTransport(TransportStrategy):
             raise ValueError("WEBSOCKET_PAYLOAD_TOO_LARGE")
         packet = header + payload
         offset = 0
+        retry_started_ms = self._ticks_ms()
         try:
             while offset < len(packet):
-                written = self._client.send(packet[offset:])
+                try:
+                    written = self._client.send(packet[offset:])
+                except OSError as error:
+                    if (
+                        not self._is_would_block_error(error)
+                        or self._elapsed(
+                            self._ticks_ms(), retry_started_ms
+                        ) >= self._SEND_RETRY_TIMEOUT_MS
+                    ):
+                        raise
+                    # 显示设置会集中产生多条状态消息；非阻塞发送缓冲暂满
+                    # 只需短暂让出处理器，不能误判为 WebSocket 已断开。
+                    self._sleep_ms(1)
+                    continue
                 if not written:
                     self._close_client()
                     return False
                 offset += written
+                retry_started_ms = self._ticks_ms()
         except OSError:
             self._close_client()
             return False

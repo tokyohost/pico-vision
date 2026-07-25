@@ -156,6 +156,9 @@ class Application:
         self._dev_mode = False
         self._button_style_override = None
         self._last_display_style = LCD_STYLE
+        self._button_hint_until_ms = None
+        self._button_hint_snapshot = None
+        self._button_hint_label = None
 
     def _preload_boot_styles(self):
         """在启动页阶段预加载大型样式，避免连接后首次编译造成内存峰值。"""
@@ -324,18 +327,52 @@ class Application:
             )
 
     def _handle_button_actions(self, actions, snapshot):
-        """处理本轮按键动作，样式键立即切换，功能键暂时仅上报事件。"""
+        """处理按键动作，并在动作完成后显示对应按键名称。"""
         for action in actions:
             if action == "style_previous":
                 self._apply_button_style(
                     self._neighbor_style_name(-1), snapshot
                 )
+                self._show_button_hint("上一样式键", snapshot)
             elif action == "style_next":
                 self._apply_button_style(
                     self._neighbor_style_name(1), snapshot
                 )
+                self._show_button_hint("下一样式键", snapshot)
             elif action == "function":
                 self._protocol.write(b"BUTTON:FUNCTION:RESERVED\n")
+                self._show_button_hint("功能键", snapshot)
+
+    def _show_button_hint(self, label, snapshot):
+        """提交带按键名称的快照，并从本次按下起显示一秒。"""
+        hint_snapshot = dict(snapshot or {})
+        hint_snapshot["button_hint"] = label
+        self._button_hint_snapshot = dict(snapshot or {})
+        self._button_hint_label = label
+        self._button_hint_until_ms = time.ticks_add(time.ticks_ms(), 1000)
+        self._renderer.request_render(hint_snapshot, force=True)
+
+    def _with_button_hint(self, snapshot):
+        """在提示有效期间为普通刷新快照补充当前按键名称。"""
+        if self._button_hint_until_ms is None or not self._button_hint_label:
+            return snapshot
+        hint_snapshot = dict(snapshot or {})
+        hint_snapshot["button_hint"] = self._button_hint_label
+        return hint_snapshot
+
+    def _clear_button_hint_if_due(self, now, snapshot):
+        """按键提示到期后重绘原始快照并清除提示状态。"""
+        deadline = self._button_hint_until_ms
+        if deadline is None or time.ticks_diff(now, deadline) < 0:
+            return False
+        restore_snapshot = snapshot
+        if restore_snapshot is None:
+            restore_snapshot = self._button_hint_snapshot
+        self._button_hint_until_ms = None
+        self._button_hint_snapshot = None
+        self._button_hint_label = None
+        self._renderer.request_render(restore_snapshot or {}, force=True)
+        return True
 
     def _update_renderer_with_fallback(self, snapshot, receiver_busy=False):
         """按板型预算刷新区域，并在可恢复的渲染异常时降级。"""
@@ -550,6 +587,7 @@ class Application:
                 time.ticks_diff(now, self._next_clock_render) >= 0
             )
             self._handle_button_actions(self._buttons.update(now), snapshot)
+            self._clear_button_hint_if_due(now, snapshot)
             # 遗留半包可能使接收器持续忙碌，因此待机判断必须先于忙状态短路。
             if (
                 not self._idle_active
@@ -570,7 +608,10 @@ class Application:
                 and not self._renderer.is_rendering()
                 and idle_refresh_due
             ):
-                self._renderer.request_render(self._idle_snapshot(snapshot), force=False)
+                self._renderer.request_render(
+                    self._with_button_hint(self._idle_snapshot(snapshot)),
+                    force=False,
+                )
                 self._rendering_version = version
                 self._next_clock_render = self._cache.next_refresh_ms(
                     CLOCK_REFRESH_INTERVAL_MS, now
@@ -699,7 +740,7 @@ class Application:
                 # 避免把配置阶段开始时已经过期的秒数画到屏幕上。
                 snapshot, version = self._cache.latest()
                 self._renderer.request_render(
-                    snapshot,
+                    self._with_button_hint(snapshot),
                     force=False,
                     frame_version=version,
                 )

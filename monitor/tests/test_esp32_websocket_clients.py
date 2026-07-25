@@ -55,6 +55,22 @@ class FakeSocket:
         self.closed = True
 
 
+class TemporarilyBlockedSocket(FakeSocket):
+    """模拟首次发送遇到 EAGAIN、随后恢复可写的非阻塞套接字。"""
+
+    def __init__(self):
+        """初始化一次瞬时阻塞机会和发送尝试计数。"""
+        super().__init__()
+        self.send_attempts = 0
+
+    def send(self, data):
+        """首次发送报告缓冲忙，第二次开始正常写入。"""
+        self.send_attempts += 1
+        if self.send_attempts == 1:
+            raise OSError(11, "temporarily unavailable")
+        return super().send(data)
+
+
 class FailingPersistenceRegistry:
     """模拟客户端身份有效但 Flash 持久化失败的记录器。"""
 
@@ -248,6 +264,21 @@ class WebSocketClientPriorityTest(unittest.TestCase):
             self.assertGreater(transport.write(b"PV1:COMMAND:0:0000:{}\n"), 0)
             self.assertTrue(active_socket.closed)
             self.assertTrue(active_socket.sent)
+
+    def test_temporary_send_backpressure_keeps_active_connection(self):
+        """发送缓冲瞬时繁忙时应重试，不能把活动连接误判为断开。"""
+        transport = WebSocketTransport(FakeWifiManager())
+        active_socket = TemporarilyBlockedSocket()
+        transport._client = active_socket
+        transport._peer = ("192.168.1.20", 1000)
+        transport._http_buffer = None
+
+        written = transport.write(b"PV1:ACK:0:0000:{}\n")
+
+        self.assertGreater(written, 0)
+        self.assertEqual(2, active_socket.send_attempts)
+        self.assertFalse(active_socket.closed)
+        self.assertTrue(transport.is_connected())
 
     def test_incomplete_primary_and_pending_handshakes_expire(self):
         """两个握手槽位都必须超时释放，避免半连接永久堵死监听服务。"""
