@@ -58,12 +58,18 @@ class WorkerControllerMixin:
             return {"status": "error", "message": fallback_message}
         return result
 
-    def _apply_device_style_change(self, result):
-        """保存设备按键选择的样式，并刷新托盘与 Web 界面。"""
-        style_name = str(result.get("style") or "").strip()
-        if not style_name:
+    def _apply_device_config_change(self, result):
+        """保存设备按键修改的配置，并刷新托盘与 Web 界面。"""
+        key = str(result.get("key") or "").strip()
+        if key not in (
+            "lcd_style",
+            "lcd_brightness",
+            "screen_rotation",
+            "network_unit",
+        ):
             return False
-        self.settings["lcd_style"] = style_name
+        value = result.get("value")
+        self.settings[key] = value
         self.settings_store.save(self.settings)
         if self.icon is not None:
             self.icon.update_menu()
@@ -71,11 +77,13 @@ class WorkerControllerMixin:
         if window is not None:
             try:
                 window.evaluate_js(
-                    "window.__omniwatchStyleChangeReady ? "
+                    "window.__omniwatchConfigChangeReady ? "
                     "window.dispatchEvent(new CustomEvent("
-                    "'omniwatch:style-change', {detail: %s})) : "
-                    "window.location.reload()"
-                    % json.dumps(style_name)
+                    "'omniwatch:config-change', {detail: %s})) : "
+                    "(window.clearTimeout(window.__omniwatchConfigReloadTimer),"
+                    " window.__omniwatchConfigReloadTimer = window.setTimeout("
+                    "() => window.location.reload(), 300))"
+                    % json.dumps({"key": key, "value": value})
                 )
             except Exception as error:
                 LOGGER.debug("向 Web 界面同步设备样式失败：%s", error)
@@ -303,17 +311,17 @@ class WorkerControllerMixin:
                                 "后台监控返回了无效的热更新响应",
                             )
                             self.runtime_config_messages.put(result)
-                        if "STYLE_CHANGE_RESULT:" in line:
-                            style_event_line = line[
-                                line.index("STYLE_CHANGE_RESULT:"):
+                        if "CONFIG_CHANGE_RESULT:" in line:
+                            config_event_line = line[
+                                line.index("CONFIG_CHANGE_RESULT:"):
                             ]
                             result = self._parse_worker_result(
-                                style_event_line,
-                                "STYLE_CHANGE_RESULT:",
-                                "设备返回了无效的样式切换事件",
+                                config_event_line,
+                                "CONFIG_CHANGE_RESULT:",
+                                "设备返回了无效的配置变化事件",
                             )
                             if result.get("status") == "ok":
-                                self._apply_device_style_change(result)
+                                self._apply_device_config_change(result)
                         if line.startswith("SDK_BOOTLOADER_RESULT:"):
                             result = self._parse_worker_result(
                                 line,

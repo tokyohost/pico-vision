@@ -126,23 +126,25 @@ function handleExternalNavigation(event) {
 /**
  * 实时采用设备物理按键选择的屏幕样式。
  */
-function handleDeviceStyleChange(event) {
-  const styleName = String(event.detail || '').trim()
-  if (styleName) settings.lcd_style = styleName
+function handleDeviceConfigChange(event) {
+  const key = String(event.detail?.key || '').trim()
+  if (key && Object.prototype.hasOwnProperty.call(settings, key)) {
+    settings[key] = event.detail.value
+  }
 }
 
 onMounted(async () => {
-  window.__omniwatchStyleChangeReady = true
+  window.__omniwatchConfigChangeReady = true
   window.addEventListener('omniwatch:navigate', handleExternalNavigation)
-  window.addEventListener('omniwatch:style-change', handleDeviceStyleChange)
+  window.addEventListener('omniwatch:config-change', handleDeviceConfigChange)
   await bootstrap()
   deviceRefreshTimer = window.setInterval(refreshDeviceStatus, 1000)
 })
 
 onBeforeUnmount(() => {
-  window.__omniwatchStyleChangeReady = false
+  window.__omniwatchConfigChangeReady = false
   window.removeEventListener('omniwatch:navigate', handleExternalNavigation)
-  window.removeEventListener('omniwatch:style-change', handleDeviceStyleChange)
+  window.removeEventListener('omniwatch:config-change', handleDeviceConfigChange)
   if (deviceRefreshTimer !== null) window.clearInterval(deviceRefreshTimer)
 })
 </script>

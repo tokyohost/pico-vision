@@ -289,6 +289,8 @@ class Esp32RenderServiceTest(unittest.TestCase):
         self.assertFalse(service.update_pending(max_regions=1))
         self.assertTrue(service.update_pending(max_regions=1))
         self.assertEqual(service.last_completed_version(), 9)
+        self.assertTrue(service.set_backlight_brightness(80))
+        self.assertEqual(80, service.backlight_brightness())
 
     def test_thread_creation_failure_uses_synchronous_fallback(self):
         """确认线程创建失败时自动在通信主线程建立同步渲染器。"""

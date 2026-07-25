@@ -75,6 +75,8 @@ PIN_BUTTON_STYLE_NEXT = 2
 PIN_BUTTON_FUNCTION = 3
 BUTTON_ACTIVE_LOW = True
 BUTTON_DEBOUNCE_MS = 0
+BUTTON_LONG_PRESS_MS = 500
+BUTTON_REPEAT_INTERVAL_MS = 60
 
 # 板载状态灯公共时序参数。
 LED_PIN = 48
@@ -148,6 +150,8 @@ def _load_runtime_configuration():
         "PIN_BUTTON_FUNCTION": int,
         "BUTTON_ACTIVE_LOW": bool,
         "BUTTON_DEBOUNCE_MS": int,
+        "BUTTON_LONG_PRESS_MS": int,
+        "BUTTON_REPEAT_INTERVAL_MS": int,
     }
     for name, expected_type in allowed.items():
         if name in values:

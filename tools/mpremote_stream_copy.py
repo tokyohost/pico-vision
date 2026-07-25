@@ -38,6 +38,16 @@ class MpremoteStreamCopier:
         remote_path = self.remote_root.joinpath(*relative_path.parts)
         return f":{remote_path.as_posix()}"
 
+    def _should_copy(self, item: Path) -> bool:
+        """判断目录或文件是否属于设备端部署内容。"""
+        relative_parts = item.relative_to(self.source).parts
+        normalized_parts = tuple(part.lower() for part in relative_parts)
+        if "tests" in normalized_parts or "__pycache__" in normalized_parts:
+            return False
+        if item.is_file() and item.suffix.lower() in {".md", ".pyc", ".pyo"}:
+            return False
+        return True
+
     def _run_mpremote(self, arguments: list[str], description: str) -> None:
         """执行 mpremote 子命令，并将命令输出实时转发到当前终端。"""
         command = [*self.mpremote_command, "connect", self.port, *arguments]
@@ -216,8 +226,7 @@ class MpremoteStreamCopier:
             (
                 item
                 for item in self.source.rglob("*")
-                if "__pycache__" not in item.parts
-                   and item.suffix.lower() not in {".pyc", ".pyo"}
+                if self._should_copy(item)
             ),
             key=lambda item: (
                 len(item.relative_to(self.source).parts),

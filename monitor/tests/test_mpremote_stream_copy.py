@@ -96,6 +96,39 @@ class MpremoteStreamCopyTest(unittest.TestCase):
             for call in run_mpremote.call_args_list
         ))
 
+    def test_copy_ignores_tests_directories_and_markdown_files(self):
+        """复制时应忽略任意层级 tests 目录以及大小写不同的 Markdown 文件。"""
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            (source / "main.py").write_text("print('ready')", encoding="utf-8")
+            (source / "README.md").write_text("说明", encoding="utf-8")
+            nested = source / "buttonCommand"
+            nested.mkdir()
+            (nested / "NOTICE.MD").write_text("说明", encoding="utf-8")
+            tests_directory = nested / "tests"
+            tests_directory.mkdir()
+            (tests_directory / "test_command.py").write_text(
+                "assert True", encoding="utf-8"
+            )
+            copier = MODULE.MpremoteStreamCopier("COM_TEST", source)
+            with mock.patch.object(copier, "_check_environment"), mock.patch.object(
+                copier,
+                "_prepare_remote_directories",
+            ) as prepare_directories, mock.patch.object(
+                copier,
+                "_run_mpremote",
+            ) as run_mpremote, contextlib.redirect_stdout(io.StringIO()):
+                copier.copy(force=True, restart=False)
+
+        copied_targets = [
+            call.args[0][-1]
+            for call in run_mpremote.call_args_list
+            if call.args[0][:2] == ["fs", "cp"]
+        ]
+        self.assertEqual([":/main.py"], copied_targets)
+        prepared = prepare_directories.call_args.args[0]
+        self.assertFalse(any(path.name.lower() == "tests" for path in prepared))
+
     def test_remote_manifest_requests_are_batched_and_valid_python(self):
         """远端校验代码应分批发送并保持有效 Python 语法。"""
         with tempfile.TemporaryDirectory() as directory:

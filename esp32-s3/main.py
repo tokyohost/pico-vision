@@ -18,6 +18,11 @@ import gc
 import sys
 import time
 
+try:
+    import ujson as json
+except ImportError:
+    import json
+
 from config import (
     CLOCK_REFRESH_INTERVAL_MS,
     GC_ALLOCATION_THRESHOLD,
@@ -75,6 +80,7 @@ class Application:
         from lcd import create_lcd_device
         from render_service import RenderService
         from button_controller import ButtonController
+        from buttonCommand import ButtonCommandDispatcher
         from led import create_led_controller
 
         self._protocol = protocol
@@ -131,6 +137,7 @@ class Application:
             ).encode()
         )
         self._buttons = ButtonController()
+        self._button_commands = ButtonCommandDispatcher()
         self._protocol.set_command_services({"renderer": self._renderer})
         self._boot_frame = 0
         self._boot_logs = []
@@ -155,7 +162,13 @@ class Application:
         self._idle_wait_started_ms = now
         self._dev_mode = False
         self._button_style_override = None
+        self._button_brightness_override = None
+        self._button_rotation_override = None
+        self._button_network_unit_override = None
         self._last_display_style = LCD_STYLE
+        self._last_display_brightness = None
+        self._last_display_rotation = None
+        self._last_display_network_unit = None
         self._button_hint_until_ms = None
         self._button_hint_snapshot = None
         self._button_hint_label = None
@@ -320,44 +333,77 @@ class Application:
         self._rendering_version = -1
         self._renderer.request_render(snapshot or {}, force=True)
         if changed:
-            self._protocol.write(
-                "styleChange:{}\n".format(
-                    self._renderer.style_name()
-                ).encode("utf-8")
+            self._emit_config_change(
+                "lcd_style", self._renderer.style_name()
             )
 
     def _handle_button_actions(self, actions, snapshot):
-        """处理按键动作，并在动作完成后显示对应按键名称。"""
-        for action in actions:
-            if action == "style_previous":
-                self._apply_button_style(
-                    self._neighbor_style_name(-1), snapshot
-                )
-                self._show_button_hint("上一样式键", snapshot)
-            elif action == "style_next":
-                self._apply_button_style(
-                    self._neighbor_style_name(1), snapshot
-                )
-                self._show_button_hint("下一样式键", snapshot)
-            elif action == "function":
-                self._protocol.write(b"BUTTON:FUNCTION:RESERVED\n")
-                self._show_button_hint("功能键", snapshot)
+        """使用命令分派器处理按下、长按和连发事件。"""
+        self._button_commands.dispatch(actions, self, snapshot)
+
+    def _emit_config_change(self, key, value):
+        """通过通用 configChange 事件向 Monitor 同步配置变化。"""
+        payload = json.dumps({"key": key, "value": value})
+        self._protocol.write(
+            "configChange:{}\n".format(payload).encode("utf-8")
+        )
+
+    def show_button_mode(self, label, snapshot):
+        """显示功能键刚切换到的按键命令模式。"""
+        self._show_button_hint("模式：{}".format(label), snapshot)
+
+    def execute_style_command(self, direction, snapshot):
+        """执行样式方向命令并显示切换结果。"""
+        self._apply_button_style(
+            self._neighbor_style_name(direction), snapshot
+        )
+        self._show_button_hint(
+            "上一样式" if direction < 0 else "下一样式", snapshot
+        )
+
+    def execute_brightness_command(self, direction, snapshot):
+        """按一个百分点步长调节背光并同步 Monitor。"""
+        current = self._renderer.backlight_brightness()
+        brightness = max(1, min(100, int(current) + direction))
+        self._renderer.set_backlight_brightness(brightness)
+        self._button_brightness_override = brightness
+        self._emit_config_change("lcd_brightness", brightness)
+        self._show_button_hint("亮度 {}%".format(brightness), snapshot)
+
+    def execute_rotation_command(self, direction, snapshot):
+        """上一键选择零度，下一键选择一百八十度。"""
+        rotation = 0 if direction < 0 else 180
+        self._renderer.set_rotation(rotation)
+        self._button_rotation_override = rotation
+        self._emit_config_change("screen_rotation", rotation)
+        self._show_button_hint("旋转 {}°".format(rotation), snapshot)
+
+    def execute_network_unit_command(self, direction, snapshot):
+        """上一键选择 MB，下一键选择 Mbps 网络速率单位。"""
+        unit = "MB" if direction < 0 else "Mbps"
+        self._button_network_unit_override = unit
+        self._emit_config_change("network_unit", unit)
+        self._show_button_hint("网络单位 {}".format(unit), snapshot)
 
     def _show_button_hint(self, label, snapshot):
         """提交带按键名称的快照，并从本次按下起显示一秒。"""
-        hint_snapshot = dict(snapshot or {})
-        hint_snapshot["button_hint"] = label
         self._button_hint_snapshot = dict(snapshot or {})
         self._button_hint_label = label
         self._button_hint_until_ms = time.ticks_add(time.ticks_ms(), 1000)
-        self._renderer.request_render(hint_snapshot, force=True)
+        self._renderer.request_render(
+            self._with_button_hint(snapshot), force=True
+        )
 
     def _with_button_hint(self, snapshot):
-        """在提示有效期间为普通刷新快照补充当前按键名称。"""
-        if self._button_hint_until_ms is None or not self._button_hint_label:
-            return snapshot
+        """为快照补充按键配置覆盖和有效期内的提示。"""
         hint_snapshot = dict(snapshot or {})
-        hint_snapshot["button_hint"] = self._button_hint_label
+        display = dict(hint_snapshot.get("display") or {})
+        if self._button_network_unit_override is not None:
+            display["network_unit"] = self._button_network_unit_override
+        if display:
+            hint_snapshot["display"] = display
+        if self._button_hint_until_ms is not None and self._button_hint_label:
+            hint_snapshot["button_hint"] = self._button_hint_label
         return hint_snapshot
 
     def _clear_button_hint_if_due(self, now, snapshot):
@@ -371,7 +417,9 @@ class Application:
         self._button_hint_until_ms = None
         self._button_hint_snapshot = None
         self._button_hint_label = None
-        self._renderer.request_render(restore_snapshot or {}, force=True)
+        self._renderer.request_render(
+            self._with_button_hint(restore_snapshot), force=True
+        )
         return True
 
     def _update_renderer_with_fallback(self, snapshot, receiver_busy=False):
@@ -672,6 +720,20 @@ class Application:
                     requested_rotation = int(requested_rotation)
                 except (TypeError, ValueError):
                     requested_rotation = 0
+                if self._button_rotation_override is not None:
+                    if requested_rotation == self._button_rotation_override:
+                        self._button_rotation_override = None
+                    elif (
+                        self._last_display_rotation is not None
+                        and requested_rotation != self._last_display_rotation
+                    ):
+                        self._button_rotation_override = None
+                self._last_display_rotation = requested_rotation
+                requested_rotation = (
+                    self._button_rotation_override
+                    if self._button_rotation_override is not None
+                    else requested_rotation
+                )
                 display_style = display.get("style", LCD_STYLE)
                 if display_style != self._last_display_style:
                     self._button_style_override = None
@@ -691,6 +753,32 @@ class Application:
                     requested_brightness = int(requested_brightness)
                 except (TypeError, ValueError):
                     requested_brightness = 100
+                if self._button_brightness_override is not None:
+                    if requested_brightness == self._button_brightness_override:
+                        self._button_brightness_override = None
+                    elif (
+                        self._last_display_brightness is not None
+                        and requested_brightness != self._last_display_brightness
+                    ):
+                        self._button_brightness_override = None
+                self._last_display_brightness = requested_brightness
+                requested_brightness = (
+                    self._button_brightness_override
+                    if self._button_brightness_override is not None
+                    else requested_brightness
+                )
+                requested_network_unit = display.get("network_unit", "MB")
+                if requested_network_unit not in ("MB", "Mbps"):
+                    requested_network_unit = "MB"
+                if self._button_network_unit_override is not None:
+                    if requested_network_unit == self._button_network_unit_override:
+                        self._button_network_unit_override = None
+                    elif (
+                        self._last_display_network_unit is not None
+                        and requested_network_unit != self._last_display_network_unit
+                    ):
+                        self._button_network_unit_override = None
+                self._last_display_network_unit = requested_network_unit
                 if self._renderer.set_backlight_brightness(requested_brightness):
                     self._protocol.write(
                         "CONFIG:LCD_BRIGHTNESS:{}\n".format(

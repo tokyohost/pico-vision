@@ -273,24 +273,43 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
         LOGGER.info("完整运行配置已热更新，不重启 Monitor 工作进程")
 
     def _handle_device_event(self, payload):
-        """处理设备主动事件，并同步按键选择的屏幕样式。"""
+        """处理设备主动事件，并按白名单同步配置变化。"""
         try:
             message = bytes(payload).decode("utf-8", "replace").strip()
         except (TypeError, ValueError):
             return
-        prefix = "styleChange:"
+        prefix = "configChange:"
         if not message.startswith(prefix):
             return
-        style_name = message[len(prefix):].strip()
-        if not style_name or style_name not in self.available_styles:
-            LOGGER.warning("设备上报了未知样式：%s", style_name or "空")
+        try:
+            change = json.loads(message[len(prefix):])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            LOGGER.warning("设备上报了无效 configChange：%s", message)
             return
-        self.arguments.lcd_style = style_name
-        LOGGER.info("设备按键切换样式，Monitor 已实时同步：%s", style_name)
+        if not isinstance(change, dict):
+            return
+        key = str(change.get("key") or "").strip()
+        value = change.get("value")
+        validators = {
+            "lcd_style": lambda item: isinstance(item, str)
+            and item in self.available_styles,
+            "lcd_brightness": lambda item: isinstance(item, int)
+            and not isinstance(item, bool)
+            and 1 <= item <= 100,
+            "screen_rotation": lambda item: item in (0, 180)
+            and not isinstance(item, bool),
+            "network_unit": lambda item: item in ("MB", "Mbps"),
+        }
+        validator = validators.get(key)
+        if validator is None or not validator(value):
+            LOGGER.warning("设备上报了不允许的配置变化：%s=%r", key, value)
+            return
+        setattr(self.arguments, key, value)
+        LOGGER.info("设备按键修改配置，Monitor 已实时同步：%s=%s", key, value)
         print(
-            "STYLE_CHANGE_RESULT:"
+            "CONFIG_CHANGE_RESULT:"
             + json.dumps(
-                {"status": "ok", "style": style_name},
+                {"status": "ok", "key": key, "value": value},
                 ensure_ascii=False,
                 separators=(",", ":"),
             ),

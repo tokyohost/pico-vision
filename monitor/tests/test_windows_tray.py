@@ -164,17 +164,18 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertEqual(payload["interval"], 1.5)
         application._restart_worker.assert_not_called()
 
-    def test_device_style_change_updates_saved_and_open_ui_selection(self):
-        """设备按键事件应同步设置存储、托盘菜单和已打开的 Web 页面。"""
+    def test_device_config_change_updates_saved_and_open_ui_selection(self):
+        """设备配置事件应同步设置存储、托盘菜单和已打开的 Web 页面。"""
         application = WindowsTrayApplication.__new__(WindowsTrayApplication)
         application.settings = dict(DEFAULT_SETTINGS, lcd_style="simple")
         application.settings_store = mock.Mock()
         application.icon = mock.Mock()
         application.webview_window = mock.Mock()
 
-        changed = application._apply_device_style_change({
+        changed = application._apply_device_config_change({
             "status": "ok",
-            "style": "thermal_watch",
+            "key": "lcd_style",
+            "value": "thermal_watch",
         })
 
         self.assertTrue(changed)
@@ -182,7 +183,7 @@ class WindowsTraySettingsTest(unittest.TestCase):
         application.settings_store.save.assert_called_once_with(application.settings)
         application.icon.update_menu.assert_called_once_with()
         script = application.webview_window.evaluate_js.call_args.args[0]
-        self.assertIn("omniwatch:style-change", script)
+        self.assertIn("omniwatch:config-change", script)
         self.assertIn("thermal_watch", script)
 
     def test_web_bridge_reboot_uses_supported_exit_reboot_action(self):

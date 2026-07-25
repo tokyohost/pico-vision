@@ -1140,18 +1140,21 @@ class PicoClientTest(unittest.TestCase):
         configure.assert_called_once_with("DEBUG")
 
     @mock.patch("builtins.print")
-    def test_device_style_change_updates_monitor_runtime_selection(self, print_mock):
-        """设备按键切换样式后应立即更新后续快照使用的样式。"""
+    def test_device_config_change_updates_monitor_runtime_selection(self, print_mock):
+        """设备 configChange 应立即更新后续快照使用的配置。"""
         service = MonitorService.__new__(MonitorService)
         service.arguments = SimpleNamespace(lcd_style="simple")
         service.available_styles = {"simple", "thermal_watch"}
 
-        service._handle_device_event(b"styleChange:thermal_watch")
+        service._handle_device_event(
+            b'configChange:{"key":"lcd_style","value":"thermal_watch"}'
+        )
 
         self.assertEqual("thermal_watch", service.arguments.lcd_style)
         output = print_mock.call_args.args[0]
-        result = json.loads(output.removeprefix("STYLE_CHANGE_RESULT:"))
-        self.assertEqual("thermal_watch", result["style"])
+        result = json.loads(output.removeprefix("CONFIG_CHANGE_RESULT:"))
+        self.assertEqual("lcd_style", result["key"])
+        self.assertEqual("thermal_watch", result["value"])
 
     def test_collection_fragment_does_not_include_display_config(self):
         """确认采集线程只发布采样结果，不混入发送层显示配置。"""

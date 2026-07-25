@@ -440,9 +440,10 @@ class RenderService:
         if not self._threaded:
             renderer = self._renderer
             if action == "set_backlight_brightness":
-                return renderer.lcd.set_backlight_brightness(*arguments)
-            method = getattr(renderer, action)
-            result = method(*arguments)
+                result = renderer.lcd.set_backlight_brightness(*arguments)
+            else:
+                method = getattr(renderer, action)
+                result = method(*arguments)
             self._refresh_metadata(renderer)
             return result
         request = RenderControlRequest(action, arguments)
