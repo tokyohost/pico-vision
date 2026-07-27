@@ -31,9 +31,11 @@ class BrightnessCommand(ButtonCommand):
     label = "亮度调节"
 
     def execute(self, host, direction, event_type, snapshot):
-        """按每次事件一个百分点的步长调节亮度。"""
+        """调节本机亮度，并在按键释放时统一同步最终值。"""
         if event_type in ("press", "long_press", "repeat"):
             host.execute_brightness_command(direction, snapshot)
+        elif event_type == "release":
+            host.commit_brightness_command()
 
 
 class RotationCommand(ButtonCommand):

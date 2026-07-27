@@ -6,6 +6,9 @@ from .console import _write_version_to_console
 def format_pico_information(information):
     """将 Pico 硬件配置、业务固件及 SDK 版本格式化为终端文本。"""
     return "\n".join((
+        "Pico 设备 UUID：{}".format(
+            information.get("device_id") or "未知（旧版固件未提供）"
+        ),
         "Pico 开发板型号：{}".format(
             information.get("board_model") or "未知（旧版固件未提供）"
         ),

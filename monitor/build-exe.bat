@@ -13,6 +13,8 @@ if errorlevel 1 exit /b 1
 if errorlevel 1 exit /b 1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0prepare-plugin-runtime.ps1" -OutputDirectory "%~dp0dist\plugin-runtime"
 if errorlevel 1 exit /b 1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0prepare-webview2-bootstrapper.ps1" -OutputPath "%~dp0dist\MicrosoftEdgeWebview2Setup.exe"
+if errorlevel 1 exit /b 1
 set "ISCC=ISCC.exe"
 where "%ISCC%" >nul 2>nul
 if errorlevel 1 (
@@ -24,7 +26,7 @@ if errorlevel 1 (
     exit /b 1
   )
 )
-"%ISCC%" /DAppVersion=development /DArchitecture=x64 /DSourceExe=dist\pico-monitor.exe /DPluginRuntime=dist\plugin-runtime pico_monitor_setup.iss
+"%ISCC%" /DAppVersion=development /DArchitecture=x64 /DSourceExe=dist\pico-monitor.exe /DPluginRuntime=dist\plugin-runtime /DWebView2Bootstrapper=dist\MicrosoftEdgeWebview2Setup.exe pico_monitor_setup.iss
 if errorlevel 1 exit /b 1
 echo Windows 安装包已生成：dist\OmniWatch-windows-x64-setup-vdevelopment.exe
 endlocal

@@ -8,12 +8,95 @@ from .bridge import WebViewBridge
 
 
 LOGGER = logging.getLogger("pico-monitor.web-ui")
+WEBVIEW2_CLIENT_KEY = (
+    "Software\\Microsoft\\EdgeUpdate\\Clients\\"
+    "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+)
+WEBVIEW2_DOWNLOAD_URL = "https://developer.microsoft.com/microsoft-edge/webview2/"
+DOTNET_FRAMEWORK_FULL_KEY = (
+    r"SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full"
+)
+DOTNET_FRAMEWORK_462_RELEASE = 394802
 
 
 class WebUiMixin:
     """把原有多个 Tk 窗口替换为单一 pywebview Vue 应用。"""
 
     __slots__ = ()
+
+    @staticmethod
+    def _is_usable_webview2_version(version):
+        """判断注册表版本值是否表示可用的 WebView2 Runtime。"""
+        return isinstance(version, str) and version.strip() not in (
+            "",
+            "0.0.0.0",
+        )
+
+    @classmethod
+    def _get_webview2_runtime_version(cls):
+        """按照 Microsoft 推荐的注册表位置读取 Evergreen Runtime 版本。"""
+        import winreg
+
+        registry_locations = (
+            (winreg.HKEY_CURRENT_USER, winreg.KEY_READ),
+            (
+                winreg.HKEY_LOCAL_MACHINE,
+                winreg.KEY_READ | winreg.KEY_WOW64_32KEY,
+            ),
+            (
+                winreg.HKEY_LOCAL_MACHINE,
+                winreg.KEY_READ | winreg.KEY_WOW64_64KEY,
+            ),
+        )
+        for root_key, access in registry_locations:
+            try:
+                with winreg.OpenKey(
+                    root_key,
+                    WEBVIEW2_CLIENT_KEY,
+                    0,
+                    access,
+                ) as registry_key:
+                    version, _ = winreg.QueryValueEx(registry_key, "pv")
+            except OSError:
+                continue
+            if cls._is_usable_webview2_version(version):
+                return version.strip()
+        return None
+
+    @classmethod
+    def _require_webview2_runtime(cls):
+        """确认 WebView2 Runtime 已安装，缺失时给出可操作的错误信息。"""
+        version = cls._get_webview2_runtime_version()
+        if version is None:
+            raise RuntimeError(
+                "未检测到 Microsoft Edge WebView2 Runtime，无法启动控制中心。"
+                "请安装 Evergreen WebView2 Runtime 后重试：{}".format(
+                    WEBVIEW2_DOWNLOAD_URL
+                )
+            )
+        return version
+
+    @staticmethod
+    def _require_dotnet_framework_462():
+        """确认 WinForms WebView2 后端所需的 .NET Framework 4.6.2 已安装。"""
+        import winreg
+
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                DOTNET_FRAMEWORK_FULL_KEY,
+            ) as registry_key:
+                release, _ = winreg.QueryValueEx(registry_key, "Release")
+        except (OSError, TypeError) as error:
+            raise RuntimeError(
+                "未检测到 .NET Framework 4.6.2 或更高版本，"
+                "无法启动 EdgeChromium 控制中心。"
+            ) from error
+        if not isinstance(release, int) or release < DOTNET_FRAMEWORK_462_RELEASE:
+            raise RuntimeError(
+                ".NET Framework 版本过低，请升级到 4.6.2 或更高版本后重试。"
+            )
+        return release
 
     def _prepare_webview_icon(self):
         """将统一 PNG 应用图标转换为 Windows WebView 可识别的 ICO。"""
@@ -55,8 +138,14 @@ class WebUiMixin:
             min_size=(920, 640),
             background_color="#0b1020",
             confirm_close=False,
-            hidden=True,
+            hidden=False,
+            minimized=True,
         )
+
+        def hide_after_initial_show():
+            """首次完成原生窗口显示后立即隐藏，确保 pywebview 正确置位 shown 事件。"""
+            window.events.shown -= hide_after_initial_show
+            window.hide()
 
         def hide_instead_of_closing():
             """把用户关闭操作转换为隐藏，保持托盘和主 GUI 循环运行。"""
@@ -65,19 +154,34 @@ class WebUiMixin:
             window.hide()
             return False
 
+        window.events.shown += hide_after_initial_show
         window.events.closing += hide_instead_of_closing
         self.webview_window = window
         self.settings_window = window
         return window
 
+    def _prepare_webview_runtime(self):
+        """在启动后台线程前校验 Edge WebView2 与 .NET 运行环境。"""
+        runtime_version = self._require_webview2_runtime()
+        self._require_dotnet_framework_462()
+        self.webview2_runtime_version = runtime_version
+        return runtime_version
+
     def _start_webview_loop(self):
-        """使用统一应用图标启动 Edge WebView2 消息循环。"""
+        """使用独立数据目录启动 Edge WebView2 消息循环。"""
         import webview
 
+        runtime_version = getattr(self, "webview2_runtime_version", None)
+        if runtime_version is None:
+            runtime_version = self._prepare_webview_runtime()
+        storage_path = self.data_directory / "webview2"
+        storage_path.mkdir(parents=True, exist_ok=True)
+        LOGGER.info("使用 Microsoft Edge WebView2 Runtime %s", runtime_version)
         webview.start(
             gui="edgechromium",
             debug=False,
             private_mode=False,
+            storage_path=str(storage_path),
             icon=str(self._prepare_webview_icon()),
         )
 
@@ -89,12 +193,12 @@ class WebUiMixin:
                 self.icon.notify("界面尚未就绪，请稍后重试", APPLICATION_NAME)
             return
         try:
+            window.show()
+            window.restore()
             window.evaluate_js(
                 "window.dispatchEvent(new CustomEvent('omniwatch:navigate',"
                 " {detail: %s}))" % json.dumps(page)
             )
-            window.show()
-            window.restore()
         except Exception as error:
             LOGGER.exception("恢复 Web 界面失败：%s", error)
             if self.icon is not None:
@@ -129,4 +233,3 @@ class WebUiMixin:
         """打开 Web 关于页。"""
         del icon, item
         self._show_web_page("about")
-

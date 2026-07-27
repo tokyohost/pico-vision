@@ -33,7 +33,7 @@
 - `board_manager.py`：注册开发板硬件档案并隔离不同板载 LED 类型。
 - `fonts/`：SDK 内置文泉驿点阵正黑和 Fusion Pixel 双语字模的授权说明。
 
-Pico 握手会向 Monitor 返回当前开发板型号、屏幕色彩方案、运行固件版本和 `net` 状态；USB 模式返回 `mode=usb`，Wi-Fi 模式还返回 SSID、IP、网关、RSSI、WebSocket 端口与路径。源码
+Pico 握手会向 Monitor 返回当前开发板型号、屏幕色彩方案、运行固件版本和 `net` 状态；ESP32-S3 还会返回由 eFuse MAC 经 SHA-256 派生的稳定 `device_id`，设备管理页面以 UUID 形式展示且不暴露原始 MAC。USB 模式返回 `mode=usb`，Wi-Fi 模式还返回 SSID、IP、网关、RSSI、WebSocket 端口与路径。源码
 直接部署时版本为 `development`，发布升级包会自动写入对应的发布版本。
 
 开发板型号和 Wi-Fi 开关由 `picoRP2040/config.py` 配置。例如 ESP32-S3 开启 Wi-Fi：

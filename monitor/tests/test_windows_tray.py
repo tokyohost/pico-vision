@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import queue
+import sys
 import tempfile
 import threading
 import unittest
@@ -58,6 +59,167 @@ class WindowsTraySettingsTest(unittest.TestCase):
             qbittorrent_password="不能导出的密码",
         )
         return application
+
+    def test_webview2_zero_version_is_not_usable(self):
+        """确认空版本和零版本不会被误判为已安装的 WebView2 Runtime。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+
+        self.assertFalse(application._is_usable_webview2_version(None))
+        self.assertFalse(application._is_usable_webview2_version(""))
+        self.assertFalse(application._is_usable_webview2_version("0.0.0.0"))
+        self.assertTrue(application._is_usable_webview2_version("136.0.3240.76"))
+
+    def test_webview2_runtime_detection_checks_machine_install(self):
+        """确认用户级运行时缺失时继续检查机器级 WebView2 安装。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        registry_key = mock.MagicMock()
+        registry_context = mock.MagicMock()
+        registry_context.__enter__.return_value = registry_key
+        winreg_module = mock.Mock(
+            HKEY_CURRENT_USER="current-user",
+            HKEY_LOCAL_MACHINE="local-machine",
+            KEY_READ=1,
+            KEY_WOW64_32KEY=2,
+            KEY_WOW64_64KEY=4,
+        )
+        winreg_module.OpenKey.side_effect = [FileNotFoundError(), registry_context]
+        winreg_module.QueryValueEx.return_value = ("136.0.3240.76", 1)
+
+        with mock.patch.dict(sys.modules, {"winreg": winreg_module}):
+            version = application._get_webview2_runtime_version()
+
+        self.assertEqual("136.0.3240.76", version)
+        winreg_module.QueryValueEx.assert_called_once_with(registry_key, "pv")
+
+        machine_call = winreg_module.OpenKey.call_args_list[1]
+        self.assertEqual("local-machine", machine_call.args[0])
+        self.assertEqual(
+            "Software\\Microsoft\\EdgeUpdate\\Clients\\"
+            "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+            machine_call.args[1],
+        )
+        self.assertEqual(1 | 2, machine_call.args[3])
+
+    def test_missing_webview2_runtime_has_actionable_error(self):
+        """确认缺少 WebView2 Runtime 时错误信息包含官方下载入口。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+
+        with mock.patch.object(
+            application,
+            "_get_webview2_runtime_version",
+            return_value=None,
+        ), self.assertRaisesRegex(RuntimeError, "developer.microsoft.com"):
+            application._require_webview2_runtime()
+
+    def test_old_dotnet_framework_blocks_webview_start(self):
+        """确认旧版 .NET Framework 不会触发 pywebview 静默降级。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        registry_key = mock.MagicMock()
+        registry_context = mock.MagicMock()
+        registry_context.__enter__.return_value = registry_key
+        winreg_module = mock.Mock(HKEY_LOCAL_MACHINE="local-machine")
+        winreg_module.OpenKey.return_value = registry_context
+        winreg_module.QueryValueEx.return_value = (394801, 4)
+
+        with mock.patch.dict(sys.modules, {"winreg": winreg_module}):
+            with self.assertRaisesRegex(RuntimeError, "版本过低"):
+                application._require_dotnet_framework_462()
+
+    def test_webview_start_uses_isolated_persistent_storage(self):
+        """确认 WebView2 启动前校验运行时并使用应用独立的持久化目录。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.data_directory = Path(self.temporary_directory.name)
+        application._require_webview2_runtime = mock.Mock(
+            return_value="136.0.3240.76"
+        )
+        application._require_dotnet_framework_462 = mock.Mock(
+            return_value=528040
+        )
+        application._prepare_webview_icon = mock.Mock(
+            return_value=application.data_directory / "icon.ico"
+        )
+        webview_module = mock.Mock()
+
+        with mock.patch.dict(sys.modules, {"webview": webview_module}):
+            application._start_webview_loop()
+
+        application._require_webview2_runtime.assert_called_once_with()
+        application._require_dotnet_framework_462.assert_called_once_with()
+        webview_module.start.assert_called_once_with(
+            gui="edgechromium",
+            debug=False,
+            private_mode=False,
+            storage_path=str(application.data_directory / "webview2"),
+            icon=str(application.data_directory / "icon.ico"),
+        )
+
+    def test_failed_start_stops_detached_tray(self):
+        """确认 WebView 启动失败时停止托盘线程，避免留下失效菜单。"""
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.icon = None
+        application.mutex = None
+        application.stopping = threading.Event()
+        application._install_thread_crash_handler = mock.Mock(
+            return_value=threading.excepthook
+        )
+        application._configure_windows_taskbar = mock.Mock()
+        application._acquire_single_instance = mock.Mock(return_value=True)
+        application._prepare_webview_runtime = mock.Mock()
+        application._start_worker = mock.Mock()
+        application._create_image = mock.Mock()
+        application._build_menu = mock.Mock()
+        application._initialize_webview = mock.Mock()
+        application._start_webview_loop = mock.Mock(
+            side_effect=RuntimeError("WebView 启动失败")
+        )
+        application._report_unhandled_crash = mock.Mock()
+        application._stop_worker = mock.Mock()
+        tray_icon = mock.Mock()
+        pystray_module = mock.Mock()
+        pystray_module.Icon.return_value = tray_icon
+
+        with mock.patch.dict(sys.modules, {"pystray": pystray_module}):
+            result = application.run()
+
+        self.assertEqual(1, result)
+        tray_icon.run_detached.assert_called_once_with()
+        tray_icon.stop.assert_called_once_with()
+        application._stop_worker.assert_called_once_with()
+
+    def test_webview_initial_show_sets_ready_event_before_hiding(self):
+        """确认主窗口先完成 shown 初始化再隐藏，避免后续 show 调用超时。"""
+        entry = Path(self.temporary_directory.name) / "index.html"
+        entry.write_text("<html></html>", encoding="utf-8")
+
+        application = WindowsTrayApplication.__new__(WindowsTrayApplication)
+        application.stopping = threading.Event()
+        application._resource_path = mock.Mock(return_value=entry)
+
+        shown_event = mock.MagicMock()
+        shown_event.__iadd__.return_value = shown_event
+        shown_event.__isub__.return_value = shown_event
+        closing_event = mock.MagicMock()
+        closing_event.__iadd__.return_value = closing_event
+        window = mock.Mock()
+        window.events = mock.Mock(
+            shown=shown_event,
+            closing=closing_event,
+        )
+        webview_module = mock.Mock()
+        webview_module.create_window.return_value = window
+
+        with mock.patch.dict(sys.modules, {"webview": webview_module}):
+            result = application._initialize_webview()
+
+        create_options = webview_module.create_window.call_args.kwargs
+        self.assertFalse(create_options["hidden"])
+        self.assertTrue(create_options["minimized"])
+        self.assertIs(window, result)
+
+        initial_show_handler = shown_event.__iadd__.call_args.args[0]
+        initial_show_handler()
+        shown_event.__isub__.assert_called_once_with(initial_show_handler)
+        window.hide.assert_called_once_with()
 
     def test_recent_log_export_is_limited_to_one_megabyte(self):
         """确认日志导出只读取末尾一兆字节。"""
@@ -811,12 +973,17 @@ class WindowsTraySettingsTest(unittest.TestCase):
         connection = WorkerControllerMixin._parse_device_connection(
             "2026-07-15 10:27:14,370 [INFO] "
             "[串口连接] COM11 握手成功：开发板=ESP32-S3，"
+            "设备UUID=17226b1f-68ae-8acd-af07-46450f642874，"
             "LCD=st7789-2inch-8pin-a，屏幕方案=st7789vw_2inch，"
             "固件版本=development，SDK版本=v1.0.61-fnProcotolV1，"
             "分辨率=240x320，Wi-Fi支持=是，SDK刷写支持=是"
         )
 
         self.assertEqual("v1.0.61-fnProcotolV1", connection["sdk_version"])
+        self.assertEqual(
+            "17226b1f-68ae-8acd-af07-46450f642874",
+            connection["device_id"],
+        )
         self.assertTrue(connection["sdk_update_supported"])
         self.assertEqual("COM11", connection["address"])
 
@@ -1028,6 +1195,12 @@ class WindowsTraySettingsTest(unittest.TestCase):
 
     def test_device_probe_output_uses_current_pico_prefix(self):
         """确认设备管理页面能够解析单次探测实际输出的 Pico 字段。"""
+        self.assertEqual(
+            ("device_id", "17226b1f-68ae-8acd-af07-46450f642874"),
+            parse_device_information_line(
+                "Pico 设备 UUID：17226b1f-68ae-8acd-af07-46450f642874\n"
+            ),
+        )
         self.assertEqual(
             ("board_model", "esp32-s3"),
             parse_device_information_line("Pico 开发板型号：esp32-s3\n"),

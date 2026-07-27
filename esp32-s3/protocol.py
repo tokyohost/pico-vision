@@ -76,6 +76,7 @@ from config import (
     SERIAL_READ_BUDGET,
 )
 import protocolC
+from device_identity import device_uuid
 
 
 def runtime_sdk_version():
@@ -562,6 +563,7 @@ class JsonProtocol:
         }
         payload = json.dumps({
             "board_model": BOARD_MODEL,
+            "device_id": device_uuid(),
             "screen_color_profile": panel_profile.color_profile_name,
             "firmware_version": FIRMWARE_VERSION,
             "sdk_version": runtime_sdk_version(),

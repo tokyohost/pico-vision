@@ -740,6 +740,7 @@ class PicoClientTest(unittest.TestCase):
         client = PicoJsonClient()
         client._parse_pong_payload(json.dumps({
             "board_model": "rp2040_typec",
+            "device_id": "17226b1f-68ae-8acd-af07-46450f642874",
             "lcd_device_type": "st7789-2.4inch-8pin-b",
             "screen_color_profile": "st7789_2_4inch",
             "firmware_version": "1.2.3",
@@ -751,6 +752,7 @@ class PicoClientTest(unittest.TestCase):
         }).encode())
         self.assertEqual(client.device_information(), {
             "board_model": "rp2040_typec",
+            "device_id": "17226b1f-68ae-8acd-af07-46450f642874",
             "lcd_device_type": "st7789-2.4inch-8pin-b",
             "screen_color_profile": "st7789_2_4inch",
             "firmware_version": "1.2.3",
@@ -804,6 +806,7 @@ class PicoClientTest(unittest.TestCase):
         """确认 Pico 信息使用清晰的中文字段输出。"""
         text = format_pico_information({
             "board_model": "rp2040_typec",
+            "device_id": "17226b1f-68ae-8acd-af07-46450f642874",
             "lcd_device_type": "st7789-2.4inch-8pin-b",
             "screen_color_profile": "st7789_2_4inch",
             "firmware_version": "1.2.3",
@@ -813,6 +816,7 @@ class PicoClientTest(unittest.TestCase):
             "screen_height": 240,
             "net": {"wifi_enabled": True, "mode": "wifi", "ip": "192.168.0.224"},
         })
+        self.assertIn("Pico 设备 UUID：17226b1f-68ae-8acd-af07-46450f642874", text)
         self.assertIn("Pico 开发板型号：rp2040_typec", text)
         self.assertIn("Pico LCD 设备类型：st7789-2.4inch-8pin-b", text)
         self.assertIn("Pico 屏幕色彩方案：st7789_2_4inch", text)

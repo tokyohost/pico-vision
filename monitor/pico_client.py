@@ -84,6 +84,7 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         self.cancellation_event = cancellation_event
         self.serial = None
         self.board_model = None
+        self.device_id = None
         self.lcd_device_type = None
         self.screen_color_profile = None
         self.firmware_version = None
@@ -163,9 +164,10 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
                 if self._handshake(device):
                     self.serial = device
                     LOGGER.info(
-                        "[串口连接] %s 握手成功：开发板=%s，LCD=%s，屏幕方案=%s，固件版本=%s，SDK版本=%s，分辨率=%sx%s，Wi-Fi支持=%s，SDK刷写支持=%s",
+                        "[串口连接] %s 握手成功：开发板=%s，设备UUID=%s，LCD=%s，屏幕方案=%s，固件版本=%s，SDK版本=%s，分辨率=%sx%s，Wi-Fi支持=%s，SDK刷写支持=%s",
                         port,
                         self.board_model or "未知",
+                        self.device_id or "未知",
                         self.lcd_device_type or "未知",
                         self.screen_color_profile or "未知",
                         self.firmware_version or "未知",
@@ -200,9 +202,10 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
             self.serial = device
             self._start_cdc_framework()
             LOGGER.info(
-                "[WebSocket 连接] %s 握手成功：开发板=%s，LCD=%s，屏幕方案=%s，固件版本=%s，SDK版本=%s，分辨率=%sx%s，Wi-Fi支持=%s，SDK刷写支持=%s",
+                "[WebSocket 连接] %s 握手成功：开发板=%s，设备UUID=%s，LCD=%s，屏幕方案=%s，固件版本=%s，SDK版本=%s，分辨率=%sx%s，Wi-Fi支持=%s，SDK刷写支持=%s",
                 self.websocket_url,
                 self.board_model or "未知",
+                self.device_id or "未知",
                 self.lcd_device_type or "未知",
                 self.screen_color_profile or "未知",
                 self.firmware_version or "未知",
@@ -272,6 +275,7 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
                 error_callback=self._handle_cdc_error,
             )
         self.board_model = winner.board_model
+        self.device_id = winner.device_id
         self.lcd_device_type = winner.lcd_device_type
         self.screen_color_profile = winner.screen_color_profile
         self.firmware_version = winner.firmware_version
@@ -331,6 +335,7 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
     def _handshake(self, device):
         """发送设备发现命令并验证 Pico 固件响应。"""
         self.board_model = None
+        self.device_id = None
         self.lcd_device_type = None
         self.screen_color_profile = None
         self.firmware_version = None
@@ -394,6 +399,7 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         """解析 PV1 PONG 的 JSON 设备信息。"""
         information = json.loads(payload.decode("utf-8"))
         self.board_model = information.get("board_model") or None
+        self.device_id = information.get("device_id") or None
         self.lcd_device_type = information.get("lcd_device_type") or None
         self.screen_color_profile = information.get("screen_color_profile") or None
         self.firmware_version = information.get("firmware_version") or None
@@ -412,6 +418,7 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         """返回当前已连接 Pico 的硬件配置与固件版本。"""
         information = {
             "board_model": self.board_model,
+            "device_id": self.device_id,
             "lcd_device_type": self.lcd_device_type,
             "screen_color_profile": self.screen_color_profile,
             "firmware_version": self.firmware_version,

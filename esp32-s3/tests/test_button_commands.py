@@ -24,6 +24,10 @@ class FakeCommandHost:
         """记录亮度调节命令。"""
         self.calls.append(("brightness", direction, snapshot))
 
+    def commit_brightness_command(self):
+        """记录亮度最终值同步命令。"""
+        self.calls.append(("brightness_commit",))
+
     def execute_rotation_command(self, direction, snapshot):
         """记录屏幕旋转命令。"""
         self.calls.append(("rotation", direction, snapshot))
@@ -49,8 +53,8 @@ class ButtonCommandDispatcherTest(unittest.TestCase):
             [call[1] for call in host.calls],
         )
 
-    def test_brightness_mode_accepts_press_long_press_and_repeat(self):
-        """亮度模式应让短按、长按起始和连发事件全部生效。"""
+    def test_brightness_mode_commits_once_after_release(self):
+        """亮度模式应连续调节本机，并在释放时仅同步一次。"""
         dispatcher = ButtonCommandDispatcher()
         host = FakeCommandHost()
         dispatcher.dispatch((("function", "press"),), host, {})
@@ -61,13 +65,14 @@ class ButtonCommandDispatcherTest(unittest.TestCase):
                 ("style_next", "press"),
                 ("style_next", "long_press"),
                 ("style_next", "repeat"),
+                ("style_next", "release"),
             ),
             host,
             {"version": 1},
         )
 
         self.assertEqual(
-            ["brightness", "brightness", "brightness"],
+            ["brightness", "brightness", "brightness", "brightness_commit"],
             [call[0] for call in host.calls],
         )
 

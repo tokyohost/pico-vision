@@ -88,7 +88,9 @@ class TkSupportMixin:
             detail_text,
         )
 
-        owner = parent if parent is not None else self.settings_window
+        owner_candidate = parent if parent is not None else self.settings_window
+        # pywebview Window 不是 Tk 控件，不能作为 Toplevel 的父窗口。
+        owner = owner_candidate if hasattr(owner_candidate, "tk") else None
         dialog = tk.Toplevel(owner) if owner is not None else tk.Tk()
         dialog.withdraw()
         dialog.title(title_text)

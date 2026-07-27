@@ -243,6 +243,7 @@ onBeforeUnmount(() => {
   <el-card shadow="never" class="section-gap">
     <template #header><span>设备详情</span></template>
     <el-descriptions :column="2" border>
+      <el-descriptions-item label="设备 UUID"><span class="hash-value">{{ currentDevice.device_id || '--' }}</span></el-descriptions-item>
       <el-descriptions-item label="开发板">{{ currentDevice.board_model || '--' }}</el-descriptions-item>
       <el-descriptions-item label="连接方式">{{ currentDevice.transport || '--' }}</el-descriptions-item>
       <el-descriptions-item label="LCD">{{ currentDevice.lcd_device_type || '--' }}</el-descriptions-item>

@@ -15,6 +15,10 @@ if not exist ".venv\Scripts\python.exe" (
 
 set "PYTHON=.venv\Scripts\python.exe"
 
+echo Checking Microsoft Edge WebView2 Runtime...
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0prepare-webview2-bootstrapper.ps1" -InstallIfMissing
+if errorlevel 1 goto :error
+
 echo Installing dependencies...
 "%PYTHON%" -m pip install -r requirements.txt
 if errorlevel 1 (

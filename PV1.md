@@ -268,7 +268,8 @@ Linux/POSIX 实现首次握手前执行恢复性同步：清空主机输入输�
 
 ```json
 {
-  "board_model": "rp2040_typec",
+  "board_model": "ESP32-S3",
+  "device_id": "17226b1f-68ae-8acd-af07-46450f642874",
   "screen_color_profile": "st7789_2_4inch",
   "firmware_version": "1.2.3",
   "device_name": "PICO_LCD",
@@ -278,6 +279,10 @@ Linux/POSIX 实现首次握手前执行恢复性同步：清空主机输入输�
   "pixel_format": "RGB565"
 }
 ```
+
+ESP32-S3 的 `device_id` 是稳定的设备 UUID：固件读取芯片 eFuse MAC，计算
+SHA-256 后取前 128 位，并设置 UUID v8 版本位和 RFC 变体位。Monitor 不接收、
+记录或展示原始 MAC；旧版固件未提供该字段时，Monitor 按未知设备 UUID 兼容处理。
 
 ### 9.3 `JSONZ`
 

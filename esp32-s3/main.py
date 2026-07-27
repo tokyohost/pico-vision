@@ -163,6 +163,7 @@ class Application:
         self._dev_mode = False
         self._button_style_override = None
         self._button_brightness_override = None
+        self._button_brightness_dirty = False
         self._button_rotation_override = None
         self._button_network_unit_override = None
         self._last_display_style = LCD_STYLE
@@ -362,13 +363,23 @@ class Application:
         )
 
     def execute_brightness_command(self, direction, snapshot):
-        """按一个百分点步长调节背光并同步 Monitor。"""
+        """按一个百分点步长调节本机背光，并记录待同步状态。"""
         current = self._renderer.backlight_brightness()
         brightness = max(1, min(100, int(current) + direction))
-        self._renderer.set_backlight_brightness(brightness)
+        changed = self._renderer.set_backlight_brightness(brightness)
         self._button_brightness_override = brightness
-        self._emit_config_change("lcd_brightness", brightness)
+        if changed:
+            self._button_brightness_dirty = True
         self._show_button_hint("亮度 {}%".format(brightness), snapshot)
+
+    def commit_brightness_command(self):
+        """在亮度按键释放后向 Monitor 同步一次最终亮度。"""
+        if not self._button_brightness_dirty:
+            return
+        self._button_brightness_dirty = False
+        self._emit_config_change(
+            "lcd_brightness", self._renderer.backlight_brightness()
+        )
 
     def execute_rotation_command(self, direction, snapshot):
         """上一键选择零度，下一键选择一百八十度。"""
@@ -395,8 +406,16 @@ class Application:
         )
 
     def _with_button_hint(self, snapshot):
-        """为快照补充按键配置覆盖和有效期内的提示。"""
-        hint_snapshot = dict(snapshot or {})
+        """为当前页面补充设备状态、按键配置覆盖和有效期内的提示。"""
+        # 待机页的所有渲染入口都必须使用设备实时 Wi-Fi 状态。主循环除整秒
+        # 待机刷新外还会提交普通快照；若直接使用上位机中的旧状态，两种快照
+        # 会交替覆盖右上角连接标识，造成实际已连接却反复显示未连接。
+        source_snapshot = (
+            self._idle_snapshot(snapshot)
+            if self._idle_active
+            else snapshot
+        )
+        hint_snapshot = dict(source_snapshot or {})
         display = dict(hint_snapshot.get("display") or {})
         if self._button_network_unit_override is not None:
             display["network_unit"] = self._button_network_unit_override

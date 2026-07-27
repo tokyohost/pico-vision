@@ -52,7 +52,7 @@ class GpioButton:
         return value == 0 if self.active_low else value == 1
 
     def update(self, now_ms):
-        """更新按键状态，并返回按下、长按或连发事件。"""
+        """更新按键状态，并返回按下、长按、连发或释放事件。"""
         raw_pressed = self._read_pressed()
         if raw_pressed != self._last_raw_pressed:
             self._last_raw_pressed = raw_pressed
@@ -87,7 +87,7 @@ class GpioButton:
             return self.action, "press"
         self._pressed_ms = None
         self._next_repeat_ms = None
-        return None
+        return self.action, "release"
 
 
 class ButtonController:

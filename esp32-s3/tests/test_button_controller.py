@@ -53,7 +53,7 @@ class GpioButtonTest(unittest.TestCase):
         self.assertEqual(("style_next", "press"), button.update(100))
 
         button._pin.level = 1
-        self.assertIsNone(button.update(110))
+        self.assertEqual(("style_next", "release"), button.update(110))
         button._pin.level = 0
 
         self.assertEqual(("style_next", "press"), button.update(120))
@@ -79,6 +79,10 @@ class GpioButtonTest(unittest.TestCase):
         self.assertEqual(("style_next", "long_press"), button.update(600))
         self.assertIsNone(button.update(659))
         self.assertEqual(("style_next", "repeat"), button.update(660))
+
+        button._pin.level = 1
+
+        self.assertEqual(("style_next", "release"), button.update(720))
 
 
 if __name__ == "__main__":

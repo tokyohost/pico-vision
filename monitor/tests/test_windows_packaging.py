@@ -1,0 +1,59 @@
+"""验证 Windows 安装包依赖的构建与运行时部署配置。"""
+
+import unittest
+from pathlib import Path
+
+
+MONITOR_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = MONITOR_ROOT.parent
+
+
+class WindowsPackagingTest(unittest.TestCase):
+    """验证 WebView2 Bootstrapper 已完整接入 Windows 发布链。"""
+
+    def test_inno_setup_installs_webview2_only_when_missing(self):
+        """确认安装器携带 Bootstrapper，并在 Runtime 缺失时才运行。"""
+        script = (MONITOR_ROOT / "pico_monitor_setup.iss").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('Source: "{#WebView2Bootstrapper}"', script)
+        self.assertIn('Parameters: "/silent /install"', script)
+        self.assertIn("Check: not IsWebView2RuntimeInstalled", script)
+        self.assertIn("HKCU, WebView2ClientKey", script)
+        self.assertIn("HKLM32, WebView2ClientKey", script)
+
+    def test_local_build_prepares_signed_bootstrapper(self):
+        """确认本地构建会下载并校验 Microsoft 签名。"""
+        build_script = (MONITOR_ROOT / "build-exe.bat").read_text(
+            encoding="utf-8"
+        )
+        prepare_script = (
+            MONITOR_ROOT / "prepare-webview2-bootstrapper.ps1"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("prepare-webview2-bootstrapper.ps1", build_script)
+        self.assertIn("Get-AuthenticodeSignature", prepare_script)
+        self.assertIn("Microsoft Corporation", prepare_script)
+
+    def test_windows_development_launcher_installs_missing_runtime(self):
+        """确认源码启动脚本会在 Runtime 缺失时调用官方 Bootstrapper。"""
+        launcher = (MONITOR_ROOT / "test-windows.bat").read_text(
+            encoding="utf-8"
+        )
+        prepare_script = (
+            MONITOR_ROOT / "prepare-webview2-bootstrapper.ps1"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("-InstallIfMissing", launcher)
+        self.assertIn("Get-WebView2RuntimeVersion", prepare_script)
+        self.assertIn('Start-Process -FilePath $resolvedOutputPath', prepare_script)
+
+    def test_ci_build_prepares_bootstrapper_for_each_architecture(self):
+        """确认 x86 和 x64 CI 构建都会生成包含 Bootstrapper 的安装包。"""
+        workflow = (
+            PROJECT_ROOT / ".github" / "workflows" / "build-windows-exe.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("prepare-webview2-bootstrapper.ps1", workflow)
+        self.assertIn("/DWebView2Bootstrapper=", workflow)

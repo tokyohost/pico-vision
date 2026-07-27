@@ -398,7 +398,11 @@ class WindowsTrayApplication(
         icon.stop()
         window = getattr(self, "webview_window", None)
         if window is not None:
-            window.destroy()
+            try:
+                window.destroy()
+            except Exception:
+                # 原生窗口尚未完成启动时 destroy 会抛错，托盘仍应正常退出。
+                LOGGER.exception("销毁 WebView 窗口失败")
 
     def _create_image(self):
         """从统一应用图标路径加载托盘菜单栏图标。"""
@@ -547,6 +551,7 @@ class WindowsTrayApplication(
             self._configure_windows_taskbar()
             if not self._acquire_single_instance():
                 return 0
+            self._prepare_webview_runtime()
             self._start_worker()
             self.icon = pystray.Icon("pico-monitor", self._create_image(), APPLICATION_NAME, self._build_menu())
             self._initialize_webview()
@@ -563,5 +568,10 @@ class WindowsTrayApplication(
             return 1
         finally:
             self.stopping.set()
+            if self.icon is not None:
+                try:
+                    self.icon.stop()
+                except Exception:
+                    LOGGER.exception("停止 Windows 托盘图标失败")
             self._stop_worker()
             threading.excepthook = original_thread_hook

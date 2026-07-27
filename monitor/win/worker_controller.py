@@ -27,7 +27,7 @@ class WorkerControllerMixin:
     def _parse_device_connection(line):
         """从串口或 WebSocket 握手日志中解析已连接设备快照。"""
         connection = re.search(
-            r"\[(串口|WebSocket)\s*连接\]\s+(.+?)\s+握手成功：开发板=(.*)，LCD=(.*)，屏幕方案=(.*)，固件版本=(.*?)(?:，SDK版本=(.*?))?，分辨率=(.*?)(?:，Wi-Fi支持=(是|否))?(?:，SDK刷写支持=(是|否))?$",
+            r"\[(串口|WebSocket)\s*连接\]\s+(.+?)\s+握手成功：开发板=(.*?)(?:，设备UUID=(.*?))?，LCD=(.*)，屏幕方案=(.*)，固件版本=(.*?)(?:，SDK版本=(.*?))?，分辨率=(.*?)(?:，Wi-Fi支持=(是|否))?(?:，SDK刷写支持=(是|否))?$",
             line.strip(),
         )
         if connection is None:
@@ -37,13 +37,14 @@ class WorkerControllerMixin:
             "transport": connection.group(1),
             "address": connection.group(2),
             "board_model": connection.group(3),
-            "lcd_device_type": connection.group(4),
-            "screen_color_profile": connection.group(5),
-            "firmware_version": connection.group(6),
-            "sdk_version": connection.group(7),
-            "screen_resolution": connection.group(8),
-            "wifi_supported": connection.group(9) == "是",
-            "sdk_update_supported": connection.group(10) == "是",
+            "device_id": connection.group(4),
+            "lcd_device_type": connection.group(5),
+            "screen_color_profile": connection.group(6),
+            "firmware_version": connection.group(7),
+            "sdk_version": connection.group(8),
+            "screen_resolution": connection.group(9),
+            "wifi_supported": connection.group(10) == "是",
+            "sdk_update_supported": connection.group(11) == "是",
         }
 
     @staticmethod
