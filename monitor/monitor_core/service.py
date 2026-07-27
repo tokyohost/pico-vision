@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 import serial
 
 from collectTask import CollectionCoordinator, LockFreeSnapshotStore
+from custom_data import normalize_plugin_configs
 from pico_client import PicoJsonClient
 from net import LanWebSocketScanner
 from qbittorrent_monitor import QbittorrentMonitor
@@ -214,6 +215,9 @@ class MonitorService(
             str(name): float(interval)
             for name, interval in task_intervals.items()
         }
+        self.arguments.custom_data_configs = normalize_plugin_configs(
+            payload.get("custom_data_configs", getattr(self.arguments, "custom_data_configs", {}))
+        )
         self.collector.ping_monitor.target = self.arguments.ping_target
         self._collection_coordinator.update_runtime_settings(
             self.arguments.collection_task_intervals,

@@ -22,6 +22,7 @@ class CustomDataServiceMixin:
             self._complete_collection_fragment,
             self.arguments.collection_task_intervals,
             self.arguments.collection_task_logs,
+            getattr(self.arguments, "custom_data_configs", {}),
         )
 
     def activate_custom_data_plugin(self, name):
@@ -41,6 +42,7 @@ class CustomDataServiceMixin:
             return
         coordinator.update_runtime_settings(
             self.arguments.collection_task_intervals,
+            getattr(self.arguments, "custom_data_configs", {}),
             self.arguments.collection_task_logs,
         )
 

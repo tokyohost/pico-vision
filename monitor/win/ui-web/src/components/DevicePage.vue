@@ -21,6 +21,12 @@ const sdk = reactive({
   ports: [],
   selectedPort: '',
 })
+const firmware = reactive({
+  busy: false,
+  status: 'idle',
+  message: '',
+  progress: 0,
+})
 const sdkLogView = ref(null)
 const deviceLogView = ref(null)
 const deviceLogs = ref('')
@@ -90,14 +96,16 @@ async function refreshRuntimeState(showError = false) {
   try {
     const shouldFollowDeviceLog = !deviceLogView.value
       || deviceLogView.value.scrollHeight - deviceLogView.value.scrollTop - deviceLogView.value.clientHeight < 32
-    const [deviceResult, sdkResult, logResult] = await Promise.all([
+    const [deviceResult, sdkResult, updateResult, logResult] = await Promise.all([
       invoke('device.status'),
       invoke('device.sdk.status'),
+      invoke('update.status'),
       invoke('log.read', { maximum: 160000 }),
     ])
     Object.keys(liveDevice).forEach((key) => delete liveDevice[key])
     Object.assign(liveDevice, deviceResult || {})
     Object.assign(sdk, sdkResult || {})
+    Object.assign(firmware, updateResult?.firmware || {})
     deviceLogs.value = logResult?.content || ''
     await nextTick()
     if (sdkLogView.value && sdk.busy) {
@@ -108,6 +116,28 @@ async function refreshRuntimeState(showError = false) {
     }
   } catch (error) {
     if (showError) ElMessage.error(error?.message || String(error))
+  }
+}
+
+/**
+ * 选择本地固件升级包并直接启动设备更新。
+ */
+async function updateLocalFirmware() {
+  try {
+    await ElMessageBox.confirm(
+      '请选择与当前开发板及屏幕型号匹配的 ZIP 固件包。更新期间请勿断电、拔线或退出 OmniWatch。',
+      '确认本地固件更新',
+      { type: 'warning', confirmButtonText: '选择固件并更新' },
+    )
+    const result = await invoke('device.firmware.updateLocal')
+    if (!result.cancelled) {
+      ElMessage.success(`已开始更新固件：${result.packageName}`)
+      await refreshRuntimeState()
+    }
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(error?.message || String(error))
+    }
   }
 }
 
@@ -307,6 +337,34 @@ onBeforeUnmount(() => {
     </el-descriptions>
     <p v-if="sdk.message" class="sdk-status">{{ sdk.message }}</p>
     <pre v-if="sdk.logs" ref="sdkLogView" class="terminal sdk-log-view">{{ sdk.logs }}</pre>
+    <el-divider />
+    <div class="card-header">
+      <div>
+        <strong>固件更新</strong>
+        <p class="sdk-status">选择本地 ZIP 固件包，直接更新当前连接设备。</p>
+      </div>
+      <el-tag v-if="firmware.busy" type="warning">正在更新</el-tag>
+      <el-tag v-else-if="firmware.status === 'success'" type="success">更新完成</el-tag>
+      <el-tag v-else-if="firmware.status === 'error'" type="danger">更新失败</el-tag>
+    </div>
+    <div class="sdk-toolbar section-gap">
+      <el-button
+        type="primary"
+        :loading="firmware.busy"
+        :disabled="sdk.busy || firmware.busy || !currentDevice.connected"
+        @click="updateLocalFirmware"
+      >
+        选择本地固件并更新
+      </el-button>
+    </div>
+    <el-progress
+      v-if="firmware.status !== 'idle'"
+      :percentage="firmware.progress"
+      :status="firmware.status === 'success' ? 'success' : firmware.status === 'error' ? 'exception' : ''"
+      :stroke-width="10"
+      class="section-gap"
+    />
+    <p v-if="firmware.message" class="sdk-status">{{ firmware.message }}</p>
   </el-card>
   <el-card shadow="never" class="section-gap">
     <template #header>

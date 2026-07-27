@@ -2,6 +2,8 @@
 
 import base64
 
+from custom_data import custom_data_panels, normalize_plugin_configs
+
 from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
 from qbittorrent_monitor import QbittorrentApiClient
 
@@ -27,6 +29,10 @@ class SettingsApiMixin:
         settings["collection_task_intervals"] = normalize_collection_task_intervals(
             settings.get("collection_task_intervals")
         )
+        settings["custom_data_configs"] = normalize_plugin_configs(
+            settings.get("custom_data_configs"),
+            legacy_intervals=settings.get("collection_task_intervals"),
+        )
         qr_path = application._resource_path("assert", "fishQr.png")
         qr_data_url = ""
         if qr_path.is_file():
@@ -40,6 +46,7 @@ class SettingsApiMixin:
             "styles": application.settings.get("styles", []),
             "taskNames": COLLECTION_TASK_ZH_NAMES,
             "defaultTasks": list(DEFAULT_COLLECTION_TASK_INTERVALS),
+            "customDataPanels": custom_data_panels(),
             "device": application._get_device_connection(),
             "dataDirectory": str(application.data_directory),
             "about": {
@@ -81,6 +88,10 @@ class SettingsApiMixin:
         updated["qbittorrent_enabled"] = bool(updated["qbittorrent_enabled"])
         updated["collection_task_intervals"] = normalize_collection_task_intervals(
             updated.get("collection_task_intervals")
+        )
+        updated["custom_data_configs"] = normalize_plugin_configs(
+            updated.get("custom_data_configs"),
+            legacy_intervals=current.get("collection_task_intervals"),
         )
         if updated["lcd_style"] not in style_names(updated, idle=False):
             raise ValueError("界面样式无效")
@@ -127,4 +138,3 @@ class SettingsApiMixin:
         )
         client.login()
         return {"verified": True}
-

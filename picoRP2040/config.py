@@ -24,6 +24,8 @@ LCD_DEVICE_TYPE = "st7789-2.4inch-8pin-b"
 
 
 # LCD 通用刷新参数。
+WIDTH = 240
+HEIGHT = 320
 LCD_STRIP_HEIGHT = 40
 # 未收到新 JSON 时仍使用缓存快照主动刷新的最大间隔，保证至少一帧每秒。
 RENDER_INTERVAL_MS = 1000

@@ -23,6 +23,8 @@ LCD_DEVICE_TYPE = "st7789-2.4inch-10pin-a"
 
 
 # LCD 通用刷新参数。
+WIDTH = 240
+HEIGHT = 320
 # LCD 像素传输后端：auto 优先使用原生 DMA，旧固件缺少模块时自动回退 legacy。
 LCD_TRANSFER_BACKEND = "auto"
 # ESP32 machine.SPI 默认单笔事务上限为 4092 字节，原生后端使用等大的双缓冲。

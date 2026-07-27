@@ -5,7 +5,7 @@ import platform
 import uuid
 from pathlib import Path
 
-from custom_data import custom_data_task_defaults, custom_data_task_zh_names
+from custom_data import normalize_plugin_configs
 from collectTask import system_task_defaults, system_task_zh_names
 from collectTask.system_tasks import system_task_aliases
 
@@ -36,9 +36,7 @@ DEFAULT_STYLE_CATALOG = [
     for name, chinese_name in STYLE_NAMES.items()
 ]
 DEFAULT_COLLECTION_TASK_INTERVALS = system_task_defaults()
-DEFAULT_COLLECTION_TASK_INTERVALS.update(custom_data_task_defaults())
 COLLECTION_TASK_ZH_NAMES = system_task_zh_names()
-COLLECTION_TASK_ZH_NAMES.update(custom_data_task_zh_names())
 DEFAULT_SETTINGS = {
     "port": "",
     "websocket_url": "",
@@ -55,6 +53,7 @@ DEFAULT_SETTINGS = {
     "lan_probe_timeout": 0.3,
     "lan_probe_max_workers": 256,
     "collection_task_intervals": dict(DEFAULT_COLLECTION_TASK_INTERVALS),
+    "custom_data_configs": normalize_plugin_configs({}),
     "collection_task_logs": True,
     "screen_rotation": 0,
     "lcd_brightness": 100,
@@ -85,6 +84,7 @@ ARGUMENT_NAMES = {
     "--lan-probe-timeout": "lan_probe_timeout",
     "--lan-probe-max-workers": "lan_probe_max_workers",
     "--collection-task-intervals": "collection_task_intervals",
+    "--custom-data-configs": "custom_data_configs",
     "--screen-rotation": "screen_rotation",
     "--lcd-brightness": "lcd_brightness",
     "--network-unit": "network_unit",
@@ -171,14 +171,20 @@ class TraySettingsStore:
     def load(self):
         """读取托盘 JSON 配置，并对缺失或无效字段执行默认值修复。"""
         settings = dict(DEFAULT_SETTINGS)
+        legacy_intervals = {}
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
             if isinstance(payload, dict):
                 settings.update({key: payload[key] for key in settings if key in payload})
+                legacy_intervals = payload.get("collection_task_intervals", {})
         except (OSError, ValueError, TypeError):
             pass
         settings["styles"] = normalize_style_catalog(settings.get("styles")) or list(DEFAULT_STYLE_CATALOG)
         settings["collection_task_intervals"] = normalize_collection_task_intervals(settings.get("collection_task_intervals"))
+        settings["custom_data_configs"] = normalize_plugin_configs(
+            settings.get("custom_data_configs"),
+            legacy_intervals=legacy_intervals,
+        )
         if settings["lcd_style"] not in style_names(settings, idle=False):
             settings["lcd_style"] = DEFAULT_SETTINGS["lcd_style"]
         if settings["idle_style"] not in style_names(settings, idle=True):
@@ -266,6 +272,8 @@ def apply_worker_arguments(arguments, settings):
             continue
         if name == "collection_task_intervals":
             value = json.dumps(normalize_collection_task_intervals(value), ensure_ascii=False)
+        elif name == "custom_data_configs":
+            value = json.dumps(normalize_plugin_configs(value), ensure_ascii=False)
         retained.extend((option, str(value)))
     retained.append("--qbittorrent-enabled" if settings["qbittorrent_enabled"] else "--no-qbittorrent")
     retained.append("--adaptive-transmit" if settings["adaptive_transmit"] else "--no-adaptive-transmit")
@@ -285,6 +293,7 @@ def settings_from_arguments(arguments, base=None):
         "screen_rotation": int, "lcd_brightness": int, "idle_timeout": int,
         "qbittorrent_interval": float,
         "collection_task_intervals": lambda value: normalize_collection_task_intervals(json.loads(value)),
+        "custom_data_configs": lambda value: normalize_plugin_configs(json.loads(value)),
     }
     index = 0
     while index < len(arguments):

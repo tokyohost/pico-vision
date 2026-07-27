@@ -255,6 +255,30 @@ body {
   color: var(--loading-text) !important;
   font-size: 13px; letter-spacing: .5px;
 }
+.global-loading-mask {
+  position: fixed; inset: 0; z-index: 5000; display: grid; place-items: center; padding: 24px;
+  background: radial-gradient(circle at center, rgba(91, 140, 255, .16), transparent 46%), rgba(5, 9, 18, .82);
+  backdrop-filter: blur(10px) saturate(115%); -webkit-backdrop-filter: blur(10px) saturate(115%);
+}
+.global-loading-panel {
+  width: min(680px, calc(100vw - 48px)); padding: 24px; border: 1px solid rgba(91, 140, 255, .4);
+  border-radius: 16px; background: rgba(13, 20, 36, .97); box-shadow: 0 26px 80px rgba(0, 0, 0, .52);
+}
+.global-loading-heading { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px; margin-bottom: 18px; }
+.global-loading-heading h3 { margin: 0 0 5px; color: #f4f7ff; font-size: 17px; }
+.global-loading-heading p { margin: 0; color: var(--muted); font-size: 12px; }
+.global-loading-heading strong { color: #b9caff; font: 600 16px/1 "Cascadia Mono", Consolas, monospace; }
+.global-loading-spinner {
+  width: 34px; height: 34px; border: 3px solid rgba(91, 140, 255, .2); border-top-color: var(--accent);
+  border-radius: 50%; filter: drop-shadow(0 0 7px rgba(91, 140, 255, .42)); animation: global-loading-spin .85s linear infinite;
+}
+.global-loading-logs {
+  overflow: auto; height: 190px; margin: 18px 0 0; padding: 14px; border: 1px solid var(--border); border-radius: 10px;
+  color: #b9e3c6; background: rgba(2, 8, 18, .88); font: 12px/1.65 "Cascadia Mono", Consolas, monospace; white-space: pre-wrap;
+}
+.global-loading-fade-enter-active, .global-loading-fade-leave-active { transition: opacity .2s ease; }
+.global-loading-fade-enter-from, .global-loading-fade-leave-to { opacity: 0; }
+@keyframes global-loading-spin { to { transform: rotate(360deg); } }
 .theme-table {
   --el-table-bg-color: var(--table-surface);
   --el-table-tr-bg-color: var(--table-surface);
@@ -331,6 +355,16 @@ body {
 .terminal {
   overflow: auto; margin: 18px 0 0; padding: 18px; border: 1px solid var(--border); border-radius: 12px;
   color: #b9e3c6; background: rgba(2, 8, 18, .82); font: 12px/1.65 "Cascadia Mono", Consolas, monospace; white-space: pre-wrap;
+}
+
+.custom-data-preview {
+  display: block;
+  width: 72px;
+  height: 48px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #0b1020;
 }
 .log-toolbar { justify-content: flex-start; gap: 10px; margin-bottom: 14px; }
 .log-view { height: calc(100vh - 205px); margin: 0; white-space: pre; }

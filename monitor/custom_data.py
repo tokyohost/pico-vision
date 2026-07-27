@@ -35,6 +35,9 @@ CUSTOM_DATA_COLLECTION_QUEUE_CAPACITY = 100
 CUSTOM_DATA_SLOW_TASK_WARNING_SECONDS = 1.0
 CUSTOM_DATA_REMOVE_RETRY_COUNT = 8
 CUSTOM_DATA_REMOVE_RETRY_DELAY_SECONDS = 0.25
+CUSTOM_DATA_DETAIL_MAX_BYTES = 1024 * 1024
+CUSTOM_DATA_PREVIEW_MAX_BYTES = 5 * 1024 * 1024
+CUSTOM_DATA_PREVIEW_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
 TEMPLATE_MANIFEST_CONTENT = '''{
   "protocol": 1,
@@ -42,7 +45,25 @@ TEMPLATE_MANIFEST_CONTENT = '''{
   "name": "my_data",
   "zh_name": "我的数据",
   "interval": 5,
-  "entry": "main.py"
+  "config_panel": [
+    {
+      "name": "threshold",
+      "zh_name": "阈值",
+      "key": "threshold",
+      "type": "number",
+      "default": 50,
+      "min": 0,
+      "max": 100,
+      "decimal": 0
+    }
+  ],
+  "entry": "main.py",
+  "bind_style": false,
+  "style": "style_my_data.py",
+  "bind_detail": false,
+  "detail": "detail.html",
+  "bind_preview": false,
+  "preview": "preview.png"
 }
 '''
 
@@ -52,11 +73,12 @@ TEMPLATE_SCRIPT_CONTENT = '''#!/usr/bin/env python3
 import datetime as dt
 
 
-def collect():
-    """采集自定义数据并返回可进行 JSON 序列化的对象。"""
+def collect(config_json):
+    """解析面板配置，采集自定义数据并返回可进行 JSON 序列化的对象。"""
+    config = __import__("json").loads(config_json)
     return {
         "time": dt.datetime.now().isoformat(timespec="seconds"),
-        "value": 0,
+        "value": config.get("threshold", 0),
     }
 '''
 
@@ -70,9 +92,44 @@ class CustomDataDefinition:
     name: str
     zh_name: str
     interval: float
+    config_panel: tuple
+    bind_style: bool
     modified_time: float
+    style_path: Path = None
+    detail_path: Path = None
+    preview_path: Path = None
     requirements_path: Path = None
     environment_directory: Path = None
+
+    @property
+    def panel(self):
+        """返回始终包含采集间隔的完整设置面板字段。"""
+        interval_field = {
+            "name": "interval",
+            "zh_name": "采集间隔（秒）",
+            "key": "interval",
+            "type": "number",
+            "default": self.interval,
+            "min": 0.1,
+            "decimal": 3,
+            "required": True,
+        }
+        return (interval_field,) + self.config_panel
+
+    @property
+    def style_filename(self):
+        """返回插件绑定样式的文件名，未绑定时返回空字符串。"""
+        return self.style_path.name if self.style_path else ""
+
+    @property
+    def detail_filename(self):
+        """返回插件绑定简介的文件名，未绑定时返回空字符串。"""
+        return self.detail_path.name if self.detail_path else ""
+
+    @property
+    def preview_filename(self):
+        """返回插件绑定预览图的文件名，未绑定时返回空字符串。"""
+        return self.preview_path.name if self.preview_path else ""
 
     @property
     def task_name(self):
@@ -196,6 +253,190 @@ def _validate_identifier(value, field_name):
     return value
 
 
+def _normalize_config_panel(value):
+    """校验并标准化插件声明的动态配置面板字段。"""
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise CustomDataError("plugin.json config_panel 必须是数组")
+    supported_types = {"string", "number", "boolean", "select", "password", "textarea"}
+    normalized = []
+    keys = set()
+    for index, item in enumerate(value, 1):
+        if not isinstance(item, dict):
+            raise CustomDataError("config_panel 第 {} 项必须是对象".format(index))
+        key = _validate_identifier(item.get("key"), "config_panel.key")
+        if key == "interval":
+            raise CustomDataError("config_panel.key interval 为系统保留字段，无需重复配置")
+        if key in keys:
+            raise CustomDataError("config_panel.key 重复：{}".format(key))
+        field_type = str(item.get("type") or "string").strip().lower()
+        if field_type not in supported_types:
+            raise CustomDataError("config_panel {} 的 type 不受支持".format(key))
+        name = str(item.get("name") or key).strip()
+        zh_name = str(item.get("zh_name") or name).strip()
+        field = {
+            "name": name,
+            "zh_name": zh_name,
+            "key": key,
+            "type": field_type,
+            "required": bool(item.get("required", False)),
+        }
+        for numeric_name in ("min", "max"):
+            if item.get(numeric_name) not in (None, ""):
+                try:
+                    field[numeric_name] = float(item[numeric_name])
+                except (TypeError, ValueError) as error:
+                    raise CustomDataError("config_panel {} 的 {} 必须是数字".format(key, numeric_name)) from error
+        if "min" in field and "max" in field and field["min"] > field["max"]:
+            raise CustomDataError("config_panel {} 的 min 不能大于 max".format(key))
+        if item.get("decimal") not in (None, ""):
+            try:
+                decimal = int(item["decimal"])
+            except (TypeError, ValueError) as error:
+                raise CustomDataError("config_panel {} 的 decimal 必须是非负整数".format(key)) from error
+            if decimal < 0 or decimal > 12:
+                raise CustomDataError("config_panel {} 的 decimal 必须介于 0 至 12".format(key))
+            field["decimal"] = decimal
+        if item.get("reg"):
+            try:
+                import re
+                re.compile(str(item["reg"]))
+            except re.error as error:
+                raise CustomDataError("config_panel {} 的 reg 不是有效正则表达式".format(key)) from error
+            field["reg"] = str(item["reg"])
+        if field_type == "select":
+            options = item.get("options")
+            if not isinstance(options, list) or not options:
+                raise CustomDataError("config_panel {} 的 select 类型必须定义非空 options".format(key))
+            field["options"] = options
+        if "default" in item:
+            field["default"] = item["default"]
+        elif field_type == "number":
+            field["default"] = field.get("min", 0)
+        elif field_type == "boolean":
+            field["default"] = False
+        elif field_type == "select":
+            first = field["options"][0]
+            field["default"] = first.get("value") if isinstance(first, dict) else first
+        else:
+            field["default"] = ""
+        default_field = dict(field)
+        default_field["required"] = False
+        field["default"] = _normalize_field_value(default_field, field["default"])
+        normalized.append(field)
+        keys.add(key)
+    return tuple(normalized)
+
+
+def _load_bound_resource(plugin_path, values, flag_name, field_name, extensions, max_bytes, resource_name):
+    """校验清单声明的插件根目录绑定资源并返回完整路径。"""
+    enabled = values.get(flag_name, False)
+    if not isinstance(enabled, bool):
+        raise CustomDataError("plugin.json {} 必须是布尔值".format(flag_name))
+    if not enabled:
+        return None
+    filename = values.get(field_name)
+    if not isinstance(filename, str) or Path(filename).name != filename:
+        raise CustomDataError("{} 为 true 时 {} 必须是插件根目录内的文件名".format(flag_name, field_name))
+    resource_path = Path(plugin_path) / filename
+    if resource_path.suffix.lower() not in extensions:
+        raise CustomDataError("插件{}文件格式不受支持：{}".format(resource_name, filename))
+    if not resource_path.is_file():
+        raise CustomDataError("插件{}文件不存在：{}".format(resource_name, filename))
+    if resource_path.stat().st_size > max_bytes:
+        raise CustomDataError("插件{}文件不能超过 {} MB".format(resource_name, max_bytes // (1024 * 1024)))
+    return resource_path
+
+
+def _validate_preview_content(preview_path):
+    """根据文件头校验预览图内容与扩展名相符。"""
+    header = preview_path.read_bytes()[:16]
+    suffix = preview_path.suffix.lower()
+    valid = (
+        suffix == ".png" and header.startswith(b"\x89PNG\r\n\x1a\n")
+        or suffix in (".jpg", ".jpeg") and header.startswith(b"\xff\xd8\xff")
+        or suffix == ".gif" and header.startswith((b"GIF87a", b"GIF89a"))
+        or suffix == ".webp" and header.startswith(b"RIFF") and header[8:12] == b"WEBP"
+    )
+    if not valid:
+        raise CustomDataError("插件预览图内容与文件格式不匹配：{}".format(preview_path.name))
+
+
+def _normalize_field_value(field, value):
+    """按照面板字段定义校验并转换一个配置值。"""
+    key = field["key"]
+    field_type = field["type"]
+    if value is None or value == "":
+        if field.get("required"):
+            raise CustomDataError("配置项 {} 不能为空".format(field["zh_name"]))
+        return "" if field_type not in ("number", "boolean") else field.get("default")
+    if field_type == "number":
+        try:
+            number = float(value)
+        except (TypeError, ValueError) as error:
+            raise CustomDataError("配置项 {} 必须是数字".format(field["zh_name"])) from error
+        if "min" in field and number < field["min"] or "max" in field and number > field["max"]:
+            raise CustomDataError("配置项 {} 超出允许范围".format(field["zh_name"]))
+        decimal = field.get("decimal")
+        if decimal is not None:
+            number = round(number, decimal)
+        return int(number) if decimal == 0 else number
+    if field_type == "boolean":
+        if isinstance(value, bool):
+            return value
+        if value in (0, 1, "0", "1", "false", "true"):
+            return str(value).lower() in ("1", "true")
+        raise CustomDataError("配置项 {} 必须是布尔值".format(field["zh_name"]))
+    if field_type == "select":
+        allowed = {
+            option.get("value") if isinstance(option, dict) else option
+            for option in field.get("options", ())
+        }
+        if value not in allowed:
+            raise CustomDataError("配置项 {} 的选项无效".format(field["zh_name"]))
+        return value
+    text = str(value)
+    if "min" in field and len(text) < field["min"] or "max" in field and len(text) > field["max"]:
+        raise CustomDataError("配置项 {} 的文本长度超出允许范围".format(field["zh_name"]))
+    if field.get("reg"):
+        import re
+        if re.fullmatch(field["reg"], text) is None:
+            raise CustomDataError("配置项 {} 的格式无效".format(field["zh_name"]))
+    return text
+
+
+def normalize_plugin_configs(configs, definitions=None, legacy_intervals=None):
+    """按当前插件面板生成完整配置，并兼容迁移旧采集频率。"""
+    definitions = tuple(definitions if definitions is not None else get_manager().list_definitions())
+    configs = configs if isinstance(configs, dict) else {}
+    legacy_intervals = legacy_intervals if isinstance(legacy_intervals, dict) else {}
+    normalized = {}
+    for definition in definitions:
+        source = configs.get(definition.name)
+        source = source if isinstance(source, dict) else {}
+        values = {}
+        for field in definition.panel:
+            default = field.get("default")
+            if field["key"] == "interval":
+                default = legacy_intervals.get(definition.task_name, default)
+            values[field["key"]] = _normalize_field_value(field, source.get(field["key"], default))
+        normalized[definition.name] = values
+    return normalized
+
+
+def custom_data_panels():
+    """返回 Web 设置页渲染所需的全部自定义插件面板。"""
+    return [
+        {
+            "name": definition.name,
+            "chineseName": definition.zh_name,
+            "fields": [dict(field) for field in definition.panel],
+        }
+        for definition in get_manager().list_definitions()
+    ]
+
+
 def _load_definition(plugin_path, environment_root):
     """从插件目录读取并校验插件定义。"""
     plugin_path = Path(plugin_path).resolve()
@@ -224,6 +465,33 @@ def _load_definition(plugin_path, environment_root):
     interval = values.get("CUSTOM_DATA_INTERVAL", values.get("interval"))
     if not isinstance(interval, (int, float)) or isinstance(interval, bool) or interval <= 0:
         raise CustomDataError("必须定义大于 0 的 CUSTOM_DATA_INTERVAL")
+    config_panel = _normalize_config_panel(values.get("config_panel"))
+    bind_style = values.get("bind_style", False)
+    if not isinstance(bind_style, bool):
+        raise CustomDataError("plugin.json bind_style 必须是布尔值")
+    style_path = None
+    if bind_style:
+        style = values.get("style")
+        if not isinstance(style, str) or Path(style).name != style or not style.lower().endswith(".py"):
+            raise CustomDataError("bind_style 为 true 时 style 必须是插件根目录内的 py 文件名")
+        style_path = plugin_path / style
+        if not style_path.is_file():
+            raise CustomDataError("插件绑定样式文件不存在：{}".format(style))
+    detail_path = _load_bound_resource(
+        plugin_path, values, "bind_detail", "detail", {".html", ".htm"},
+        CUSTOM_DATA_DETAIL_MAX_BYTES, "简介",
+    )
+    if detail_path:
+        try:
+            detail_path.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeError) as error:
+            raise CustomDataError("插件简介必须是 UTF-8 编码的 HTML：{}".format(error)) from error
+    preview_path = _load_bound_resource(
+        plugin_path, values, "bind_preview", "preview", CUSTOM_DATA_PREVIEW_EXTENSIONS,
+        CUSTOM_DATA_PREVIEW_MAX_BYTES, "预览图",
+    )
+    if preview_path:
+        _validate_preview_content(preview_path)
     tracked_paths = [
         path for path in plugin_directory.rglob("*")
         if path.is_file() and "__pycache__" not in path.parts and path.suffix.lower() not in (".pyc", ".pyo")
@@ -236,6 +504,11 @@ def _load_definition(plugin_path, environment_root):
         name=name,
         zh_name=zh_name.strip(),
         interval=float(interval),
+        config_panel=config_panel,
+        bind_style=bind_style,
+        style_path=style_path,
+        detail_path=detail_path,
+        preview_path=preview_path,
         modified_time=modified_time,
         requirements_path=requirements_path,
         environment_directory=Path(environment_root) / name,
@@ -328,14 +601,15 @@ class CustomDataWorker:
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
 
-    def collect(self, timeout=DEFAULT_SCRIPT_TIMEOUT_SECONDS):
+    def collect(self, config=None, timeout=DEFAULT_SCRIPT_TIMEOUT_SECONDS):
         """请求常驻进程执行一次采集，超时或退出时终止进程以便下次重建。"""
         with self.lock:
             if self.process is None or self.process.poll() is not None:
                 self.stop()
                 self._start()
             try:
-                self.process.stdin.write('{"command":"collect"}\n')
+                request = {"command": "collect", "config": json.dumps(config or {}, ensure_ascii=False)}
+                self.process.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
                 self.process.stdin.flush()
                 result = []
                 reader = threading.Thread(target=lambda: result.append(self.process.stdout.readline()), daemon=True)
@@ -413,6 +687,7 @@ class CustomDataCollectionCoordinator:
         result_transform=None,
         task_intervals=None,
         task_logs_enabled=True,
+        plugin_configs=None,
     ):
         """创建核心 1、最大 5、队列 100 的自定义数据采集协调器。"""
         self.manager = manager
@@ -420,6 +695,8 @@ class CustomDataCollectionCoordinator:
         self.result_transform = result_transform
         self.task_logs_enabled = bool(task_logs_enabled)
         self.task_intervals = dict(task_intervals or {})
+        self.plugin_configs = dict(plugin_configs or {})
+        self.manager.update_plugin_configs(self.plugin_configs)
         self.tasks = ()
         self.executor = BoundedElasticThreadPool(
             core_workers=CUSTOM_DATA_COLLECTION_POOL_CORE_WORKERS,
@@ -482,9 +759,11 @@ class CustomDataCollectionCoordinator:
         if self.task_logs_enabled:
             logging.getLogger("pico-monitor.custom-data").info("自定义数据采集线程池已关闭：%s", self._pool_state_text())
 
-    def update_runtime_settings(self, task_intervals, task_logs_enabled):
+    def update_runtime_settings(self, task_intervals, plugin_configs, task_logs_enabled):
         """热更新自定义数据任务频率和常规日志开关。"""
         self.task_intervals = dict(task_intervals or {})
+        self.plugin_configs = dict(plugin_configs or {})
+        self.manager.update_plugin_configs(self.plugin_configs)
         self.task_logs_enabled = bool(task_logs_enabled)
         self._sync_tasks()
         logging.getLogger("pico-monitor.custom-data").info(
@@ -503,7 +782,9 @@ class CustomDataCollectionCoordinator:
                 task = CustomDataCollectionTask(self.manager, definition)
             else:
                 task.update_definition(definition)
-            configured_interval = self.task_intervals.get(task.name)
+            configured_interval = self.plugin_configs.get(task.plugin_name, {}).get("interval")
+            if configured_interval is None:
+                configured_interval = self.task_intervals.get(task.name)
             if configured_interval is not None:
                 try:
                     task.configure_interval(configured_interval)
@@ -584,6 +865,7 @@ class CustomDataManager:
         self.load_errors = {}
         self.last_scan_time = 0.0
         self._environment_threads = {}
+        self._plugin_configs = {}
         self._runtime_enabled_names = set()
         self._runtime_initialized = False
         self.reload_scripts()
@@ -594,6 +876,15 @@ class CustomDataManager:
             workers, self.workers = tuple(self.workers.values()), {}
         for worker in workers:
             worker.stop()
+
+    def update_plugin_configs(self, configs):
+        """更新 collect 调用使用的插件配置副本。"""
+        with self.lock:
+            self._plugin_configs = {
+                str(name): dict(values)
+                for name, values in (configs or {}).items()
+                if isinstance(values, dict)
+            }
 
     def __del__(self):
         """在管理器回收时尽力清理仍在运行的插件进程。"""
@@ -849,10 +1140,14 @@ class CustomDataManager:
             for state in self.states.values():
                 if not state.runtime_enabled:
                     continue
-                if state.last_run_time and now - state.last_run_time < state.definition.interval:
+                configured_interval = self._plugin_configs.get(state.definition.name, {}).get(
+                    "interval", state.definition.interval
+                )
+                if state.last_run_time and now - state.last_run_time < configured_interval:
                     continue
                 try:
-                    state.data = self.workers[state.definition.name].collect()
+                    config = self._plugin_configs.get(state.definition.name, {"interval": state.definition.interval})
+                    state.data = self.workers[state.definition.name].collect(config)
                     state.error = ""
                 except Exception:
                     state.error = traceback.format_exc()
@@ -888,6 +1183,7 @@ class CustomDataManager:
                 return {state.definition.key: dict(CUSTOM_DATA_PLACEHOLDER)}
             definition = state.definition
             worker = self.workers[name]
+            config = dict(self._plugin_configs.get(name, {"interval": definition.interval}))
         try:
             started = time.monotonic()
             logger.info(
@@ -896,7 +1192,7 @@ class CustomDataManager:
                 definition.zh_name,
                 definition.key,
             )
-            data = worker.collect()
+            data = worker.collect(config)
             with self.lock:
                 state.data = data
                 state.error = ""
@@ -925,6 +1221,12 @@ class CustomDataManager:
         self.reload_if_changed()
         with self.lock:
             return tuple(state.definition for state in self.states.values() if state.runtime_enabled)
+
+    def list_definitions(self):
+        """返回全部已加载插件定义，不受当前运行激活状态影响。"""
+        self.reload_if_changed()
+        with self.lock:
+            return tuple(state.definition for state in self.states.values())
 
     def list_items(self):
         """返回管理窗口需要展示的插件状态和加载错误。"""
@@ -1071,7 +1373,8 @@ class CustomDataManager:
                 return "插件不存在或尚未加载"
             worker = self.workers[name]
         try:
-            result = worker.collect()
+            config = dict(self._plugin_configs.get(name, {"interval": state.definition.interval}))
+            result = worker.collect(config)
             return json.dumps(result, ensure_ascii=False, indent=2)
         except Exception:
             return traceback.format_exc()

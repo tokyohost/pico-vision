@@ -116,6 +116,22 @@ build-exe.bat
 
 自定义数据只接受包含 `plugin.json` 的标准插件目录或 ZIP 插件包，不再扫描、导入或校验旧版单文件 `.py`。首次创建用户数据目录时会生成 `custom_data_plugin_template` 目录模板，该目录仅供复制开发，不会作为已安装插件运行。
 
+每个插件会在 Monitor 设置页生成独立配置面板。`interval` 是保留字段，无需写入
+`config_panel`；即使不声明 `config_panel`，面板也会至少显示采集间隔。支持的字段
+类型为 `string`、`number`、`boolean`、`select`、`password` 和 `textarea`。字段可声明
+`default`、`required`、`min`、`max`、`decimal`、`reg`；`select` 还必须声明非空
+`options`。所有面板值（包括 `interval`）会组成 JSON 字符串传给 `collect(config_json)`，
+插件通过 `json.loads(config_json)` 自行解析。为兼容已有插件，无参数 `collect()` 仍可运行。
+
+插件还可声明 `"bind_style": true` 和插件根目录内的 Python 文件名 `"style"`。导入后
+自定义数据插件表会显示该绑定样式，并允许通过“同步样式”校验后上传到当前设备。
+声明 `"bind_detail": true` 与 `"detail": "demo_detail.html"` 可绑定不超过 1 MB 的
+UTF-8 HTML 简介；声明 `"bind_preview": true` 与 `"preview": "preview.png"` 可绑定
+不超过 5 MB 的 PNG、JPEG、GIF 或 WebP 预览图。预览图会显示在插件表中，简介则在
+禁用脚本和主界面访问权限的受限页面中打开。所有绑定资源都必须直接位于插件根目录。
+`key`、`name`、配置字段 `key` 只能包含字母、数字和下划线且不能以数字开头；
+`interval` 不能作为自定义字段重复声明。
+
 日志使用 `[Monitor -> Pico]` 和 `[Pico -> Monitor]` 标识通信方向。Linux 服务可通过 `journalctl -u pico-monitor -f` 实时查看相同内容。
 
 ## 构建 Linux DEB

@@ -8,6 +8,8 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
+from zipfile import BadZipFile, ZipFile
 
 from serial.tools import list_ports
 from sdk_flash import (
@@ -17,7 +19,7 @@ from sdk_flash import (
 )
 
 from ..ui.device_window import format_connection_method
-from .config import SDK_IMAGE_FILE_TYPES
+from .config import FIRMWARE_PACKAGE_FILE_TYPES, SDK_IMAGE_FILE_TYPES
 
 
 LOGGER = logging.getLogger("pico-monitor.web-ui")
@@ -92,6 +94,91 @@ class DeviceApiMixin:
         return self._wait_worker_result(
             self._application.device_management_messages, 20
         )
+
+    @staticmethod
+    def _validate_firmware_package(path):
+        """校验本地固件升级包是可读取且非空的 ZIP 文件。"""
+        package_path = Path(path)
+        if package_path.suffix.lower() != ".zip":
+            raise ValueError("请选择 ZIP 格式的设备固件升级包")
+        try:
+            with ZipFile(package_path, "r") as package:
+                files = [item for item in package.infolist() if not item.is_dir()]
+                if not files:
+                    raise ValueError("固件升级包为空")
+                damaged_file = package.testzip()
+                if damaged_file:
+                    raise ValueError("固件升级包文件损坏：{}".format(damaged_file))
+        except BadZipFile as error:
+            raise ValueError("所选文件不是有效的固件升级包") from error
+        return package_path
+
+    def _run_local_firmware_update(self, package_path):
+        """在后台安装用户选择的本地固件包并恢复常驻监控。"""
+        try:
+            self._set_update_state(
+                "firmware", "running", 20, "本地固件包校验完成，正在暂停监控", True
+            )
+            self._application._stop_worker()
+            self._set_update_state("firmware", "running", 55, "正在更新设备固件")
+            self._application._upgrade_pico_from_package(package_path)
+            self._set_update_state(
+                "firmware", "success", 100, "本地设备固件更新完成，正在重新连接设备"
+            )
+            LOGGER.info("本地设备固件更新完成：%s", package_path.name)
+        except Exception as error:
+            self._set_update_state(
+                "firmware", "error", None, "本地设备固件更新失败：{}".format(error)
+            )
+            LOGGER.exception("本地设备固件更新失败：%s", error)
+        finally:
+            try:
+                if not self._application.stopping.is_set() and (
+                    self._application.worker_process is None
+                    or self._application.worker_process.poll() is not None
+                ):
+                    self._application._start_worker()
+            except Exception as error:
+                LOGGER.exception("本地固件更新后恢复后台监控失败：%s", error)
+                self._set_update_state(
+                    "firmware",
+                    "error",
+                    None,
+                    "固件更新结束，但恢复后台监控失败：{}".format(error),
+                )
+            finally:
+                self._application.update_lock.release()
+
+    def _select_and_update_firmware(self, payload):
+        """选择本地固件升级包并立即启动设备固件更新任务。"""
+        del payload
+        connection = self._application._get_device_connection()
+        if not connection.get("connected"):
+            raise RuntimeError("设备未连接，无法更新本地固件")
+        path = self._select_file(FIRMWARE_PACKAGE_FILE_TYPES)
+        if not path:
+            return {"cancelled": True, "started": False}
+        package_path = self._validate_firmware_package(path)
+        if not self._application.update_lock.acquire(blocking=False):
+            raise RuntimeError("已有更新任务正在执行，请稍候")
+        try:
+            self._set_update_state(
+                "firmware", "running", 1, "本地固件更新任务已启动", True
+            )
+            threading.Thread(
+                target=self._run_local_firmware_update,
+                args=(package_path,),
+                name="Web 本地固件更新",
+                daemon=True,
+            ).start()
+        except Exception:
+            self._application.update_lock.release()
+            raise
+        return {
+            "cancelled": False,
+            "started": True,
+            "packageName": package_path.name,
+        }
 
     @staticmethod
     def _sdk_flash_allowed(connection):
@@ -388,4 +475,3 @@ class DeviceApiMixin:
             daemon=True,
         ).start()
         return self._sdk_status({})
-

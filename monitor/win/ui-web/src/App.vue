@@ -6,6 +6,7 @@ import AboutPage from './components/AboutPage.vue'
 import AppSidebar from './components/AppSidebar.vue'
 import CustomDataPage from './components/CustomDataPage.vue'
 import DevicePage from './components/DevicePage.vue'
+import GlobalLoadingOverlay from './components/GlobalLoadingOverlay.vue'
 import LogsPage from './components/LogsPage.vue'
 import NetworkPage from './components/NetworkPage.vue'
 import SettingsPage from './components/SettingsPage.vue'
@@ -21,6 +22,7 @@ const metadata = reactive({
   styles: [],
   taskNames: {},
   defaultTasks: [],
+  customDataPanels: [],
   dataDirectory: '',
   about: {
     author: '',
@@ -150,6 +152,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <GlobalLoadingOverlay />
   <el-container class="shell" v-loading="loading">
     <AppSidebar
       :active-page="activePage"
@@ -195,7 +198,7 @@ onBeforeUnmount(() => {
           @save="saveSettings"
           @catalog-updated="updateStyleCatalog"
         />
-        <CustomDataPage v-else-if="activePage === 'data'" />
+        <CustomDataPage v-else-if="activePage === 'data'" @plugins-changed="bootstrap" />
         <UpdatePage v-else-if="activePage === 'update'" :device="device" :application-version="metadata.version" />
         <LogsPage v-else-if="activePage === 'logs'" />
         <AboutPage v-else :metadata="metadata" />

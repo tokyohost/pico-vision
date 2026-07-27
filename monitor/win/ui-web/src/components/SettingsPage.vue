@@ -36,6 +36,28 @@ async function verifyQbittorrent() {
 function saveSettings() {
   emit('save')
 }
+
+/**
+ * 返回数字配置项对应的小数步长。
+ */
+function numberStep(field) {
+  const decimal = Number.isInteger(field.decimal) ? field.decimal : 1
+  return 10 ** -decimal
+}
+
+/**
+ * 返回下拉选项的显示名称。
+ */
+function optionLabel(option) {
+  return typeof option === 'object' ? (option.label ?? option.zh_name ?? option.value) : option
+}
+
+/**
+ * 返回下拉选项的实际配置值。
+ */
+function optionValue(option) {
+  return typeof option === 'object' ? option.value : option
+}
 </script>
 
 <template>
@@ -114,6 +136,45 @@ function saveSettings() {
           <el-input-number v-model="settings.collection_task_intervals[name]" :min="0.1" :step="0.1" size="small" />
         </label>
       </div>
+    </el-card>
+
+    <el-card v-for="panel in metadata.customDataPanels" :key="panel.name" shadow="never">
+      <template #header><span>{{ panel.chineseName }}（{{ panel.name }}）</span></template>
+      <el-form v-if="settings.custom_data_configs?.[panel.name]" label-position="top">
+        <div class="form-grid">
+          <el-form-item v-for="field in panel.fields" :key="field.key" :label="field.zh_name || field.name">
+            <el-input-number
+              v-if="field.type === 'number'"
+              v-model="settings.custom_data_configs[panel.name][field.key]"
+              :min="field.min"
+              :max="field.max"
+              :precision="field.decimal"
+              :step="numberStep(field)"
+            />
+            <el-switch
+              v-else-if="field.type === 'boolean'"
+              v-model="settings.custom_data_configs[panel.name][field.key]"
+            />
+            <el-select
+              v-else-if="field.type === 'select'"
+              v-model="settings.custom_data_configs[panel.name][field.key]"
+            >
+              <el-option
+                v-for="option in field.options"
+                :key="String(optionValue(option))"
+                :label="optionLabel(option)"
+                :value="optionValue(option)"
+              />
+            </el-select>
+            <el-input
+              v-else
+              v-model="settings.custom_data_configs[panel.name][field.key]"
+              :type="field.type === 'password' ? 'password' : field.type === 'textarea' ? 'textarea' : 'text'"
+              :show-password="field.type === 'password'"
+            />
+          </el-form-item>
+        </div>
+      </el-form>
     </el-card>
   </div>
   <div class="sticky-actions">

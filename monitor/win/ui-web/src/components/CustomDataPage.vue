@@ -2,6 +2,9 @@
 import { onMounted, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '../bridge'
+import { runWithGlobalLoading } from '../globalLoading'
+
+const emit = defineEmits(['plugins-changed'])
 
 const customData = reactive({
   loading: false,
@@ -9,6 +12,7 @@ const customData = reactive({
   errors: [],
   output: '',
   installingNames: [],
+  detail: { visible: false, title: '', content: '' },
 })
 
 /**
@@ -47,6 +51,7 @@ async function importCustomData(action, sourceLabel) {
     if (!result.cancelled) {
       ElMessage.success(`${sourceLabel}“${result.chineseName}”导入成功`)
       await loadCustomData()
+      emit('plugins-changed')
     }
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
@@ -68,9 +73,21 @@ function isInstallingEnvironment(item) {
 async function installEnvironment(item) {
   if (isInstallingEnvironment(item)) return
   customData.installingNames.push(item.name)
-  customData.output = `正在为插件“${item.chineseName}”安装独立环境，请稍候……`
+  customData.output = ''
   try {
-    const result = await invoke('data.installDependencies', { name: item.name })
+    const result = await runWithGlobalLoading({
+      title: `正在安装“${item.chineseName}”环境`,
+      message: '准备创建插件独立环境',
+      progress: 8,
+      successMessage: '插件环境安装完成',
+    }, async ({ progress, log }) => {
+      progress(20, '正在检查 Python Runtime 和虚拟环境')
+      progress(35, '正在创建环境并安装 requirements.txt 依赖')
+      const response = await invoke('data.installDependencies', { name: item.name })
+      for (const line of String(response.output || '').split(/\r?\n/)) log(line)
+      progress(92, '正在刷新插件环境状态')
+      return response
+    })
     customData.output = result.output || result.status || '环境安装完成'
     ElMessage.success(`插件“${item.chineseName}”${result.status}`)
     await loadCustomData()
@@ -107,6 +124,52 @@ async function testCustomData(item) {
 }
 
 /**
+ * 在受限页面中显示插件绑定的 HTML 简介。
+ */
+async function openPluginDetail(item) {
+  try {
+    const result = await invoke('data.detail', { name: item.name })
+    customData.detail.title = result.title || `${item.chineseName} · 插件简介`
+    customData.detail.content = result.content || ''
+    customData.detail.visible = true
+  } catch (error) {
+    ElMessage.error(error?.message || String(error))
+  }
+}
+
+/**
+ * 将插件包内绑定的屏幕样式同步到设备。
+ */
+async function syncBoundStyle(item, overwrite = false) {
+  try {
+    await runWithGlobalLoading({
+      title: `正在同步“${item.boundStyle}”`,
+      message: '准备校验绑定样式',
+      progress: 8,
+      successMessage: '绑定样式同步完成',
+    }, async ({ progress }) => {
+      progress(25, '正在校验样式文件名、编码和必需方法')
+      progress(45, '正在将样式发送到设备')
+      const result = await invoke('data.syncStyle', { name: item.name, overwrite })
+      progress(88, '设备已接收样式，正在刷新样式目录')
+      return result
+    })
+    ElMessage.success(`绑定样式“${item.boundStyle}”已同步到设备`)
+  } catch (error) {
+    if (!overwrite && /已存在/.test(error?.message || '')) {
+      try {
+        await ElMessageBox.confirm(`${error.message}。是否覆盖设备中的样式？`, '覆盖绑定样式', { type: 'warning' })
+        await syncBoundStyle(item, true)
+      } catch (nestedError) {
+        if (nestedError !== 'cancel' && nestedError !== 'close') ElMessage.error(nestedError?.message || String(nestedError))
+      }
+      return
+    }
+    ElMessage.error(error?.message || String(error))
+  }
+}
+
+/**
  * 删除一个自定义数据插件。
  */
 async function deleteCustomData(item) {
@@ -114,6 +177,7 @@ async function deleteCustomData(item) {
     await ElMessageBox.confirm(`确定删除插件“${item.chineseName}”及其独立环境吗？`, '删除插件', { type: 'warning' })
     await invoke('data.delete', { path: item.path })
     await loadCustomData()
+    emit('plugins-changed')
   } catch (error) {
     if (error !== 'cancel') ElMessage.error(error?.message || String(error))
   }
@@ -137,13 +201,27 @@ onMounted(loadCustomData)
       empty-text="暂无自定义数据插件"
     >
       <el-table-column prop="chineseName" label="插件" min-width="120" />
+      <el-table-column label="预览" width="100">
+        <template #default="{ row }">
+          <img
+            v-if="row.previewDataUrl"
+            :src="row.previewDataUrl"
+            :alt="`${row.chineseName}预览图`"
+            class="custom-data-preview"
+          />
+          <span v-else>无</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="key" label="JSON Key" min-width="110" />
       <el-table-column prop="interval" label="间隔（秒）" width="100" />
+      <el-table-column prop="boundStyle" label="绑定样式" min-width="120">
+        <template #default="{ row }">{{ row.boundStyle || '未绑定' }}</template>
+      </el-table-column>
       <el-table-column prop="environment" label="独立环境" min-width="130" />
       <el-table-column label="状态" width="90">
         <template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '运行中' : '未激活' }}</el-tag></template>
       </el-table-column>
-      <el-table-column label="操作" width="290">
+      <el-table-column label="操作" width="440">
         <template #default="{ row }">
           <el-button
             text
@@ -153,6 +231,8 @@ onMounted(loadCustomData)
           >安装环境</el-button>
           <el-button v-if="!row.enabled" text size="small" type="primary" @click="activateCustomData(row)">激活</el-button>
           <el-button text size="small" @click="testCustomData(row)">测试</el-button>
+          <el-button v-if="row.hasDetail" text size="small" @click="openPluginDetail(row)">查看简介</el-button>
+          <el-button v-if="row.boundStyle" text size="small" type="primary" @click="syncBoundStyle(row)">同步样式</el-button>
           <el-button text size="small" type="danger" @click="deleteCustomData(row)">删除</el-button>
         </template>
       </el-table-column>
@@ -168,4 +248,17 @@ onMounted(loadCustomData)
     />
   </el-card>
   <pre v-if="customData.output" class="terminal">{{ customData.output }}</pre>
+  <el-dialog
+    v-model="customData.detail.visible"
+    :title="customData.detail.title"
+    width="min(920px, 88vw)"
+    class="style-detail-dialog"
+  >
+    <iframe
+      :srcdoc="customData.detail.content"
+      :title="customData.detail.title"
+      class="style-detail-frame"
+      sandbox=""
+    />
+  </el-dialog>
 </template>

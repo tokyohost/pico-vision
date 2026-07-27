@@ -12,6 +12,7 @@ const props = defineProps({
 const emit = defineEmits(['save', 'catalog-updated'])
 const customStyleTutorialUrl = 'https://github.com/tokyohost/omniwatch-doc'
 const remoteStyles = reactive({ loading: false, items: [], flash: {} })
+const customStyleAssets = reactive({})
 const previewModules = import.meta.glob('../../assert/style/*', {
   eager: true,
   query: '?url',
@@ -33,7 +34,7 @@ const styleDetailSources = Object.fromEntries(
   Object.entries(detailModules).map(([path, content]) => {
     const filename = path.split('/').pop() || ''
     const styleName = filename.replace(/\.html$/i, '').toLowerCase()
-    return [styleName, applyDetailScrollbarTheme(content)]
+    return [styleName, content]
   }),
 )
 const styleDetail = reactive({ visible: false, title: '', content: '' })
@@ -63,25 +64,41 @@ function applyDetailScrollbarTheme(content) {
  * 返回与样式标识同名的本地界面截图地址。
  */
 function stylePreview(item) {
-  return stylePreviewSources[String(item?.name || '').toLowerCase()] || ''
+  const styleName = String(item?.name || '').toLowerCase()
+  return customStyleAssets[styleName]?.previewDataUrl || stylePreviewSources[styleName] || ''
 }
 
 /**
  * 判断指定样式是否存在同名 HTML 详情页。
  */
 function hasStyleDetail(item) {
-  return Boolean(styleDetailSources[String(item?.name || '').toLowerCase()])
+  const styleName = String(item?.name || '').toLowerCase()
+  return Boolean(customStyleAssets[styleName]?.detailHtml || styleDetailSources[styleName])
 }
 
 /**
  * 在应用内打开指定样式的指标详情页。
  */
 function openStyleDetail(item) {
-  const content = styleDetailSources[String(item?.name || '').toLowerCase()]
+  const styleName = String(item?.name || '').toLowerCase()
+  const content = customStyleAssets[styleName]?.detailHtml || styleDetailSources[styleName]
   if (!content) return
   styleDetail.title = `${item.chinese_name} · 样式详情`
-  styleDetail.content = content
+  styleDetail.content = applyDetailScrollbarTheme(content)
   styleDetail.visible = true
+}
+
+/**
+ * 尝试加载自定义数据插件随绑定样式提供的可选预览图和 HTML 详情。
+ */
+async function loadCustomStyleAssets() {
+  try {
+    const result = await invoke('style.assets')
+    for (const key of Object.keys(customStyleAssets)) delete customStyleAssets[key]
+    Object.assign(customStyleAssets, result.assets || {})
+  } catch {
+    // 自定义资源不是必需项，读取失败时保留内置资源和空状态。
+  }
 }
 
 /**
@@ -94,6 +111,7 @@ async function loadRemoteStyles() {
     remoteStyles.items = (result.styles || []).filter((item) => item.type === 'custom')
     remoteStyles.flash = result.flash || {}
     if (result.catalog) emit('catalog-updated', result.catalog)
+    await loadCustomStyleAssets()
   } catch (error) {
     ElMessage.error(error?.message || String(error))
   } finally {

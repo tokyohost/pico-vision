@@ -69,6 +69,7 @@ class WebViewBridge(
             "device.probe": self._probe_device,
             "device.screenshot": self._take_screenshot,
             "device.reboot": self._reboot_device,
+            "device.firmware.updateLocal": self._select_and_update_firmware,
             "device.sdk.select": self._select_sdk_image,
             "device.sdk.ports": self._sdk_ports,
             "device.sdk.flash": self._start_sdk_flash,
@@ -79,6 +80,7 @@ class WebViewBridge(
             "websocket.list": self._websocket_list,
             "websocket.update": self._websocket_update,
             "style.list": self._style_list,
+            "style.assets": self._style_assets,
             "style.upload": self._style_upload,
             "style.delete": self._style_delete,
             "data.list": self._custom_data_list,
@@ -87,6 +89,8 @@ class WebViewBridge(
             "data.installDependencies": self._custom_data_install_dependencies,
             "data.activate": self._custom_data_activate,
             "data.test": self._custom_data_test,
+            "data.detail": self._custom_data_detail,
+            "data.syncStyle": self._custom_data_sync_style,
             "data.delete": self._custom_data_delete,
             "log.read": self._read_log,
             "log.clear": self._clear_log,
@@ -104,4 +108,3 @@ class WebViewBridge(
         except Exception as error:
             LOGGER.exception("执行界面动作失败：%s", action)
             return self._error(str(error) or "操作失败")
-

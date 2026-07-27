@@ -3,6 +3,7 @@
 import tempfile
 import unittest
 import zipfile
+import json
 import os
 import sys
 from pathlib import Path
@@ -72,6 +73,123 @@ class CustomDataTaskTest(unittest.TestCase):
             manager.close()
 
         self.assertEqual(result, {"demo_json": {"value": 2}})
+
+    def test_config_panel_defaults_and_json_parameter_are_forwarded(self):
+        """确认面板自动包含 interval，且全部配置以 JSON 字符串传入 collect。"""
+        with tempfile.TemporaryDirectory() as directory:
+            plugin = self._create_plugin(directory)
+            manifest = json.loads((plugin / "plugin.json").read_text(encoding="utf-8"))
+            manifest["config_panel"] = [
+                {
+                    "name": "threshold",
+                    "zh_name": "阈值",
+                    "key": "threshold",
+                    "type": "number",
+                    "min": 0,
+                    "max": 100,
+                    "decimal": 0,
+                    "default": 12,
+                }
+            ]
+            (plugin / "plugin.json").write_text(
+                json.dumps(manifest, ensure_ascii=False), encoding="utf-8", newline="\n"
+            )
+            (plugin / "main.py").write_text(
+                'import json\n\ndef collect(config_json):\n'
+                '    """返回解析后的插件配置。"""\n'
+                '    return json.loads(config_json)\n',
+                encoding="utf-8",
+                newline="\n",
+            )
+            manager = custom_data.CustomDataManager(directory, Path(directory) / "envs")
+            definition = manager.list_definitions()[0]
+            self._create_test_environment(definition)
+            configs = custom_data.normalize_plugin_configs(
+                {definition.name: {"interval": 2.5, "threshold": 80}},
+                (definition,),
+            )
+            manager.update_plugin_configs(configs)
+            result = manager.collect_task_data(definition.name)
+            manager.close()
+
+        self.assertEqual([field["key"] for field in definition.panel], ["interval", "threshold"])
+        self.assertEqual(result["demo_json"], {"interval": 2.5, "threshold": 80})
+
+    def test_missing_config_panel_still_exposes_interval(self):
+        """确认未声明 config_panel 的插件仍生成独立采集间隔配置项。"""
+        with tempfile.TemporaryDirectory() as directory:
+            self._create_plugin(directory)
+            manager = custom_data.CustomDataManager(directory, Path(directory) / "envs")
+            definition = manager.list_definitions()[0]
+            manager.close()
+
+        self.assertEqual(len(definition.panel), 1)
+        self.assertEqual(definition.panel[0]["key"], "interval")
+        self.assertEqual(definition.panel[0]["default"], 7.0)
+
+    def test_bound_style_must_exist_in_plugin_directory(self):
+        """确认声明绑定样式时必须提供插件根目录内的 Python 样式文件。"""
+        with tempfile.TemporaryDirectory() as directory:
+            plugin = self._create_plugin(directory)
+            manifest = json.loads((plugin / "plugin.json").read_text(encoding="utf-8"))
+            manifest.update({"bind_style": True, "style": "demo_style.py"})
+            (plugin / "plugin.json").write_text(
+                json.dumps(manifest, ensure_ascii=False), encoding="utf-8", newline="\n"
+            )
+            manager = custom_data.CustomDataManager(directory, Path(directory) / "envs")
+
+            self.assertEqual(manager.list_definitions(), ())
+            self.assertIn("绑定样式文件不存在", "\n".join(manager.load_errors.values()))
+            manager.close()
+
+    def test_bound_detail_and_preview_are_loaded_from_plugin_directory(self):
+        """确认插件可绑定 UTF-8 HTML 简介和经过文件头校验的预览图。"""
+        with tempfile.TemporaryDirectory() as directory:
+            plugin = self._create_plugin(directory)
+            manifest = json.loads((plugin / "plugin.json").read_text(encoding="utf-8"))
+            manifest.update(
+                {
+                    "bind_detail": True,
+                    "detail": "demo_detail.html",
+                    "bind_preview": True,
+                    "preview": "preview.png",
+                }
+            )
+            (plugin / "plugin.json").write_text(
+                json.dumps(manifest, ensure_ascii=False), encoding="utf-8", newline="\n"
+            )
+            (plugin / "demo_detail.html").write_text(
+                "<!doctype html><html><body>演示简介</body></html>",
+                encoding="utf-8",
+                newline="\n",
+            )
+            (plugin / "preview.png").write_bytes(
+                b"\x89PNG\r\n\x1a\n" + b"test-preview"
+            )
+            manager = custom_data.CustomDataManager(directory, Path(directory) / "envs")
+            definition = manager.list_definitions()[0]
+            manager.close()
+
+        self.assertEqual(definition.detail_filename, "demo_detail.html")
+        self.assertEqual(definition.preview_filename, "preview.png")
+
+    def test_preview_rejects_content_that_does_not_match_extension(self):
+        """确认伪装成图片的绑定预览文件不会被插件加载。"""
+        with tempfile.TemporaryDirectory() as directory:
+            plugin = self._create_plugin(directory)
+            manifest = json.loads((plugin / "plugin.json").read_text(encoding="utf-8"))
+            manifest.update({"bind_preview": True, "preview": "preview.png"})
+            (plugin / "plugin.json").write_text(
+                json.dumps(manifest, ensure_ascii=False), encoding="utf-8", newline="\n"
+            )
+            (plugin / "preview.png").write_text(
+                "这不是图片", encoding="utf-8", newline="\n"
+            )
+            manager = custom_data.CustomDataManager(directory, Path(directory) / "envs")
+
+            self.assertEqual(manager.list_definitions(), ())
+            self.assertIn("内容与文件格式不匹配", "\n".join(manager.load_errors.values()))
+            manager.close()
 
     def test_collect_task_data_returns_placeholder_before_environment_ready(self):
         """确认独立环境尚未创建成功前返回固定占位数据。"""

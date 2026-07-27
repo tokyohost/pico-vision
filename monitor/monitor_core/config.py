@@ -8,7 +8,6 @@ from pathlib import Path
 
 from collectTask import system_task_defaults
 from collectTask.system_tasks import system_task_aliases
-from custom_data import custom_data_task_defaults
 
 CONFIG_ENV_MAP = {
     "PICO_MONITOR_PORT": ("serial", "port"),
@@ -20,6 +19,7 @@ CONFIG_ENV_MAP = {
     "PICO_MONITOR_INTERVAL": ("monitor", "interval"),
     "PICO_MONITOR_ADAPTIVE_TRANSMIT": ("monitor", "adaptive_transmit"),
     "PICO_MONITOR_COLLECTION_TASK_INTERVALS": ("collection_tasks", "intervals"),
+    "PICO_MONITOR_CUSTOM_DATA_CONFIGS": ("custom_data", "configs"),
     "PICO_MONITOR_COLLECTION_TASK_LOGS": ("collection_tasks", "logs_enabled"),
     "PICO_MONITOR_RECONNECT_INTERVAL": ("monitor", "reconnect_interval"),
     "PICO_MONITOR_SERIAL_PROBE_INTERVAL": ("serial", "probe_interval"),
@@ -139,7 +139,6 @@ def config_flag(config, environment_name, default=False):
 def parse_collection_task_intervals(value):
     """解析任务采集频率配置，并只保留已发现任务的正数频率。"""
     defaults = system_task_defaults()
-    defaults.update(custom_data_task_defaults())
     aliases = system_task_aliases()
     if not value:
         return dict(defaults)
@@ -165,3 +164,24 @@ def parse_collection_task_intervals(value):
             raise argparse.ArgumentTypeError("{} 的采集频率必须大于 0".format(name))
         intervals[name] = interval
     return intervals
+
+
+def parse_custom_data_configs(value):
+    """解析自定义数据插件面板配置 JSON 对象。"""
+    from custom_data import normalize_plugin_configs
+
+    if not value:
+        return normalize_plugin_configs({})
+    if isinstance(value, dict):
+        payload = value
+    else:
+        try:
+            payload = json.loads(value)
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise argparse.ArgumentTypeError("自定义数据插件配置必须是 JSON 对象") from error
+    if not isinstance(payload, dict):
+        raise argparse.ArgumentTypeError("自定义数据插件配置必须是 JSON 对象")
+    try:
+        return normalize_plugin_configs(payload)
+    except Exception as error:
+        raise argparse.ArgumentTypeError(str(error)) from error

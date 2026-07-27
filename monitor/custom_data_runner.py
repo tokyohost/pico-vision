@@ -32,10 +32,11 @@ def _load_collect(script_path):
     return collect
 
 
-def _collect(collect):
+def _collect(collect, config_json):
     """执行已加载的 collect 方法并校验返回值可序列化。"""
     with contextlib.redirect_stdout(sys.stderr):
-        result = collect()
+        parameters = __import__("inspect").signature(collect).parameters
+        result = collect() if not parameters else collect(config_json)
     json.dumps(result, ensure_ascii=False)
     return result
 
@@ -57,7 +58,7 @@ def main():
                 return 0
             if request.get("command") != "collect":
                 raise RuntimeError("不支持的插件进程命令")
-            response = {"ok": True, "data": _collect(collect)}
+            response = {"ok": True, "data": _collect(collect, request.get("config", "{}"))}
         except Exception:
             response = {"ok": False, "error": traceback.format_exc()}
         print(json.dumps(response, ensure_ascii=False), flush=True)

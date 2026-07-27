@@ -1,5 +1,14 @@
 """Web 界面的设备屏幕样式管理接口。"""
 
+import base64
+import logging
+import mimetypes
+
+import custom_data
+
+
+LOGGER = logging.getLogger("pico-monitor.web-ui")
+
 
 class StyleApiMixin:
     """处理屏幕样式目录、上传和删除动作。"""
@@ -18,6 +27,38 @@ class StyleApiMixin:
         self._application._reload_style_catalog()
         result["catalog"] = self._application.settings.get("styles", [])
         return result
+
+    @staticmethod
+    def _style_assets(payload):
+        """尝试读取自定义数据插件为绑定样式提供的可选预览图和 HTML 详情。"""
+        del payload
+        assets = {}
+        for definition in custom_data.get_manager().list_definitions():
+            style_path = definition.style_path
+            if not definition.bind_style or style_path is None:
+                continue
+            filename = style_path.name
+            if not filename.startswith("style_") or not filename.lower().endswith(".py"):
+                continue
+            style_name = filename[6:-3].lower()
+            item = {}
+            preview_path = definition.preview_path
+            if preview_path is not None:
+                try:
+                    mime_type = mimetypes.guess_type(preview_path.name)[0] or "image/png"
+                    encoded = base64.b64encode(preview_path.read_bytes()).decode("ascii")
+                    item["previewDataUrl"] = "data:{};base64,{}".format(mime_type, encoded)
+                except (OSError, ValueError, UnicodeError) as error:
+                    LOGGER.debug("忽略无法读取的自定义样式预览图：%s", error)
+            detail_path = definition.detail_path
+            if detail_path is not None:
+                try:
+                    item["detailHtml"] = detail_path.read_text(encoding="utf-8-sig")
+                except (OSError, ValueError, UnicodeError) as error:
+                    LOGGER.debug("忽略无法读取的自定义样式详情：%s", error)
+            if item:
+                assets[style_name] = item
+        return {"assets": assets}
 
     def _style_upload(self, payload):
         """选择、校验并上传一个自定义屏幕样式文件。"""
@@ -47,4 +88,3 @@ class StyleApiMixin:
         return self._wait_worker_result(
             self._application.custom_style_delete_messages, 30
         )
-

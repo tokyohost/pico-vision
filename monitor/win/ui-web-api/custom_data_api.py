@@ -1,6 +1,8 @@
 """Web 界面的自定义数据插件管理接口。"""
 
+import base64
 import logging
+import mimetypes
 
 import custom_data
 
@@ -21,6 +23,13 @@ class CustomDataApiMixin:
         items = []
         for state in states:
             definition = state.definition
+            preview_data_url = ""
+            if definition.preview_path:
+                mime_type = mimetypes.guess_type(definition.preview_path.name)[0] or "image/png"
+                preview_data_url = "data:{};base64,{}".format(
+                    mime_type,
+                    base64.b64encode(definition.preview_path.read_bytes()).decode("ascii"),
+                )
             items.append(
                 {
                     "name": definition.name,
@@ -28,6 +37,11 @@ class CustomDataApiMixin:
                     "taskName": definition.task_name,
                     "chineseName": definition.zh_name,
                     "interval": definition.interval,
+                    "boundStyle": definition.style_filename,
+                    "hasDetail": bool(definition.detail_path),
+                    "detailFilename": definition.detail_filename,
+                    "previewFilename": definition.preview_filename,
+                    "previewDataUrl": preview_data_url,
                     "path": str(definition.plugin_directory),
                     "environment": manager.environment_status(definition),
                     "enabled": bool(state.runtime_enabled),
@@ -116,8 +130,55 @@ class CustomDataApiMixin:
         )
         return {"output": result}
 
+    def _custom_data_detail(self, payload):
+        """读取指定插件绑定的 UTF-8 HTML 简介。"""
+        name = str(payload.get("name") or "").strip()
+        definitions = {
+            definition.name: definition
+            for definition in custom_data.get_manager().list_definitions()
+        }
+        definition = definitions.get(name)
+        if definition is None:
+            raise ValueError("插件不存在或尚未加载")
+        if not definition.detail_path:
+            raise ValueError("该插件没有绑定简介 HTML")
+        return {
+            "title": "{} · 插件简介".format(definition.zh_name),
+            "content": definition.detail_path.read_text(encoding="utf-8-sig"),
+        }
+
+    def _custom_data_sync_style(self, payload):
+        """校验插件绑定样式并将其同步到当前连接设备。"""
+        name = str(payload.get("name") or "").strip()
+        definitions = {
+            definition.name: definition
+            for definition in custom_data.get_manager().list_definitions()
+        }
+        definition = definitions.get(name)
+        if definition is None:
+            raise ValueError("插件不存在或尚未加载")
+        if not definition.bind_style or not definition.style_path:
+            raise ValueError("该插件没有绑定可同步的屏幕样式")
+        existing_names = {
+            str(item.get("name") or "")
+            for item in self._application.settings.get("styles", ())
+            if isinstance(item, dict) and item.get("type") == "custom"
+        }
+        self._drain_queue(self._application.custom_style_upload_messages)
+        validated = self._application.request_custom_style_upload(
+            str(definition.style_path),
+            existing_names,
+            bool(payload.get("overwrite")),
+        )
+        result = self._wait_worker_result(
+            self._application.custom_style_upload_messages, 90
+        )
+        result["filename"] = validated.filename
+        self._application._reload_style_catalog()
+        result["catalog"] = self._application.settings.get("styles", [])
+        return result
+
     def _custom_data_delete(self, payload):
         """删除指定自定义数据插件目录和独立环境。"""
         custom_data.get_manager().delete_plugin(str(payload.get("path") or ""))
         return {"deleted": True}
-
