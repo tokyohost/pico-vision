@@ -8,8 +8,9 @@
 window.pywebview.api.invoke(action, payload)
 ```
 
-Python 桥接实现位于相邻的 `win/ui_web.py`。生产构建使用相对资源路径，可被
-PyInstaller 单文件程序从临时解包目录通过 `file://` 直接加载。
+Python 兼容入口位于相邻的 `win/ui_web.py`，按职责拆分后的桥接实现位于
+`win/ui-web-api`。生产构建使用相对资源路径，可被 PyInstaller 单文件程序从
+临时解包目录通过 `file://` 直接加载。
 
 ## 本地开发
 

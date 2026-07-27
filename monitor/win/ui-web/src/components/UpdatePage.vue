@@ -29,7 +29,7 @@ const updateItems = computed(() => [
     key: 'sdk',
     title: '设备 SDK 更新',
     icon: 'SetUp',
-    description: '检查 ESP32-S3 底层 MicroPython SDK 镜像。',
+    description: '检查 SDK 镜像。',
     current: props.device.sdk_version || '等待设备连接',
     disabled: props.device.connected !== true,
   },
