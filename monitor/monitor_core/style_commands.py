@@ -24,9 +24,10 @@ class StyleCommandMixin:
 
     def _synchronize_style_catalog(self):
         """接收 Pico 样式清单并更新 monitor 的 JSON 配置文件。"""
-        catalog = getattr(self.client, "styles", None) or []
-        if not catalog:
+        catalog = getattr(self.client, "styles", None)
+        if catalog is None:
             return
+        catalog = catalog if isinstance(catalog, (list, tuple)) else []
         names = set(BUILTIN_LCD_STYLES)
         names.update({
             item.get("name") for item in catalog
@@ -120,6 +121,7 @@ class StyleCommandMixin:
                 "status": "ok",
                 "styles": catalog["styles"],
                 "flash": catalog["flash"],
+                "active_style": catalog.get("active_style", ""),
             }
         except (OSError, RuntimeError, serial.SerialException) as error:
             result = {"status": "error", "message": str(error), "styles": []}
@@ -162,13 +164,22 @@ class StyleCommandMixin:
         self.custom_style_deletes.put(dict(payload))
 
     def _publish_custom_style_delete(self):
-        """删除 Pico 自定义样式并向托盘发布重启状态。"""
+        """删除设备自定义样式、刷新目录并向托盘发布结果。"""
         payload = self.custom_style_deletes.get_nowait()
         try:
             data = self.client.delete_style(
                 payload["filename"], payload["style_name"],
             )
-            result = {"status": "ok", "data": data}
+            latest_styles = data.get("styles")
+            if not isinstance(latest_styles, list):
+                raise ValueError("设备删除响应缺少最新样式列表")
+            self.client.styles = latest_styles
+            self._synchronize_style_catalog()
+            result = {
+                "status": "ok",
+                "data": data,
+                "styles": latest_styles,
+            }
         except (KeyError, ValueError, OSError, RuntimeError, serial.SerialException) as error:
             result = {"status": "error", "message": str(error)}
         print(
@@ -176,9 +187,6 @@ class StyleCommandMixin:
             + json.dumps(result, ensure_ascii=False, separators=(",", ":")),
             flush=True,
         )
-        if result["status"] == "ok":
-            # Pico 已由删除命令复位，关闭旧串口以立即进入 PONG 重连流程。
-            self.client.close()
 
     def apply_display_config(self, payload):
         """校验并热更新 Windows 托盘下发的显示配置。"""
@@ -227,4 +235,3 @@ class StyleCommandMixin:
         # Windows 的 PySerial 正在 ReadFile 时不能由其他线程执行 close，
         # 否则内部 OVERLAPPED 事件会被置空并触发 ctypes.byref(None) 异常。
         self.stopping.set()
-

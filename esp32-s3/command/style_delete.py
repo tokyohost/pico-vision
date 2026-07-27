@@ -1,18 +1,18 @@
 """实现自定义屏幕样式文件删除命令。"""
 
 import os
-import time
 
 from command.base import CommandError, CommandStrategy
 
 
 class StyleDeleteCommand(CommandStrategy):
-    """从设备 Flash 删除指定自定义样式并重启设备。"""
+    """从设备 Flash 删除指定自定义样式并释放注册缓存。"""
 
     name = "style.delete"
 
     def execute(self, params, context):
-        """校验样式身份、删除对应文件并在响应成功后复位设备。"""
+        """校验样式身份、删除对应文件并返回更新样式目录所需的信息。"""
+        del context
         style_name = params.get("style_name")
         filename = params.get("filename")
         if not isinstance(style_name, str) or not style_name:
@@ -33,12 +33,11 @@ class StyleDeleteCommand(CommandStrategy):
         except OSError as error:
             raise CommandError("STYLE_DELETE_FAILED:" + str(error)) from error
         release_style(style_name)
-        context.respond(
-            "ok", self.name,
-            {"filename": filename, "style_name": style_name, "restarting": True},
-            context.request_id,
-        )
-        self._restart()
+        return {
+            "filename": filename,
+            "style_name": style_name,
+            "styles": custom_style_catalog(),
+        }
 
     @staticmethod
     def _custom_style_path(filename):
@@ -49,17 +48,5 @@ class StyleDeleteCommand(CommandStrategy):
             return absolute_path
         except OSError:
             return "customStyles/" + filename
-
-    @staticmethod
-    def _restart():
-        """短暂等待响应发送完成后执行 ESP32-S3 硬复位。"""
-        sleep_ms = getattr(time, "sleep_ms", None)
-        sleep_ms(100) if sleep_ms else time.sleep(0.1)
-        try:
-            import machine
-            machine.reset()
-        except ImportError:
-            raise SystemExit("设备需要重启")
-
 
 COMMAND_STRATEGY = StyleDeleteCommand()

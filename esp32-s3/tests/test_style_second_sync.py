@@ -2,6 +2,7 @@
 
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -41,7 +42,8 @@ class RecordingLcd:
 class StyleSecondSyncTest(unittest.TestCase):
     """覆盖启动、监控和高频 Style 的独立同步策略。"""
 
-    def test_style_switch_updates_native_second_sync_policy(self):
+    @mock.patch("dashboard.style_exists", return_value=True)
+    def test_style_switch_updates_native_second_sync_policy(self, _style_exists):
         """确认切换 Style 时立即向 LCD 后端下发各自声明的策略。"""
         lcd = RecordingLcd()
         renderer = DashboardRenderer(lcd, style_name="boot")
@@ -52,6 +54,16 @@ class StyleSecondSyncTest(unittest.TestCase):
         self.assertEqual(lcd.sync_policies[-1], True)
         self.assertTrue(renderer.set_style("fps_simple"))
         self.assertEqual(lcd.sync_policies[-1], False)
+
+    @mock.patch("dashboard.style_exists", return_value=False)
+    def test_missing_style_returns_error_and_keeps_current_style(self, _style_exists):
+        """确认目标样式不存在时直接报错并保留当前实际样式。"""
+        renderer = DashboardRenderer(RecordingLcd(), style_name="boot")
+
+        with self.assertRaisesRegex(ValueError, "STYLE_NOT_FOUND:missing"):
+            renderer.set_style("missing")
+
+        self.assertEqual(renderer.style_name(), "boot")
 
 
 if __name__ == "__main__":

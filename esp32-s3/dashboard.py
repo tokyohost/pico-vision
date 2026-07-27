@@ -16,7 +16,7 @@ import time
 
 from canvas_backend import Canvas, canvas_backend_name
 from config import BLACK, LCD_STYLE, WHITE, YELLOW
-from styles.style_plugins import create_style, normalize_style_name, release_style
+from styles.style_plugins import create_style, normalize_style_name, release_style, style_exists
 
 
 class DashboardRenderer:
@@ -70,6 +70,8 @@ class DashboardRenderer:
         normalized_name = normalize_style_name(style_name)
         if normalized_name == self._style_name:
             return False
+        if not style_exists(normalized_name):
+            raise ValueError("STYLE_NOT_FOUND:" + normalized_name)
         self.canvas.clear_glyph_cache()
         previous_style_name = self._style_name
         self.abort_render(release_snapshot=True)

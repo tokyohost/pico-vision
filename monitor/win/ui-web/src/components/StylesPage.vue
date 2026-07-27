@@ -111,12 +111,25 @@ async function loadRemoteStyles() {
     remoteStyles.items = (result.styles || []).filter((item) => item.type === 'custom')
     remoteStyles.flash = result.flash || {}
     if (result.catalog) emit('catalog-updated', result.catalog)
+    applyActiveDeviceStyle(result.active_style, result.catalog)
     await loadCustomStyleAssets()
   } catch (error) {
     ElMessage.error(error?.message || String(error))
   } finally {
     remoteStyles.loading = false
   }
+}
+
+/**
+ * 使用设备渲染器当前生效的样式初始化页面选中态，忽略启动页等非候选样式。
+ */
+function applyActiveDeviceStyle(activeStyle, catalog) {
+  const name = String(activeStyle || '').trim()
+  const items = Array.isArray(catalog) ? catalog : props.styles
+  const activeItem = items.find((item) => item?.name === name)
+  if (!activeItem) return
+  if (activeItem.idle) props.settings.idle_style = name
+  else props.settings.lcd_style = name
 }
 
 /**
@@ -150,12 +163,27 @@ async function uploadStyle() {
  */
 async function deleteStyle(item) {
   try {
-    await ElMessageBox.confirm(`确定删除“${item.chinese_name}”吗？设备将自动重启。`, '删除样式', { type: 'warning' })
-    await invoke('style.delete', { name: item.name, filename: item.filename })
+    await ElMessageBox.confirm(`确定删除“${item.chinese_name}”吗？`, '删除样式', { type: 'warning' })
+    const result = await invoke('style.delete', { name: item.name, filename: item.filename })
+    remoteStyles.items = remoteStyles.items.filter((style) => style.name !== item.name)
+    const catalog = (result.catalog || props.styles).filter((style) => style.name !== item.name)
+    emit('catalog-updated', catalog)
+    repairDeletedStyleSelection(item.name, catalog)
     ElMessage.success('样式已删除')
-    setTimeout(loadRemoteStyles, 4000)
   } catch (error) {
     if (error !== 'cancel') ElMessage.error(error?.message || String(error))
+  }
+}
+
+/**
+ * 删除当前选中样式后切回仍然存在的默认候选项，避免表单继续引用旧名称。
+ */
+function repairDeletedStyleSelection(deletedName, catalog) {
+  if (props.settings.lcd_style === deletedName) {
+    props.settings.lcd_style = catalog.find((style) => !style.idle)?.name || 'default'
+  }
+  if (props.settings.idle_style === deletedName) {
+    props.settings.idle_style = catalog.find((style) => style.idle)?.name || 'idle'
   }
 }
 

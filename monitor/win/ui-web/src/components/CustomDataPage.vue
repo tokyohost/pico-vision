@@ -4,7 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '../bridge'
 import { runWithGlobalLoading } from '../globalLoading'
 
-const emit = defineEmits(['plugins-changed'])
+const emit = defineEmits(['plugins-changed', 'catalog-updated'])
 
 const customData = reactive({
   loading: false,
@@ -142,7 +142,7 @@ async function openPluginDetail(item) {
  */
 async function syncBoundStyle(item, overwrite = false) {
   try {
-    await runWithGlobalLoading({
+    const result = await runWithGlobalLoading({
       title: `正在同步“${item.boundStyle}”`,
       message: '准备校验绑定样式',
       progress: 8,
@@ -150,10 +150,11 @@ async function syncBoundStyle(item, overwrite = false) {
     }, async ({ progress }) => {
       progress(25, '正在校验样式文件名、编码和必需方法')
       progress(45, '正在将样式发送到设备')
-      const result = await invoke('data.syncStyle', { name: item.name, overwrite })
+      const response = await invoke('data.syncStyle', { name: item.name, overwrite })
       progress(88, '设备已接收样式，正在刷新样式目录')
-      return result
+      return response
     })
+    if (result.catalog) emit('catalog-updated', result.catalog)
     ElMessage.success(`绑定样式“${item.boundStyle}”已同步到设备`)
   } catch (error) {
     if (!overwrite && /已存在/.test(error?.message || '')) {

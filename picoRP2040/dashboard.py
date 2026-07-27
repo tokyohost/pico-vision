@@ -23,7 +23,7 @@ from config import (
     LCD_STRIP_HEIGHT,
     LCD_STYLE,
 )
-from styles.style_plugins import create_style, normalize_style_name, release_style
+from styles.style_plugins import create_style, normalize_style_name, release_style, style_exists
 
 
 class DashboardRenderer:
@@ -78,6 +78,8 @@ class DashboardRenderer:
         normalized_name = normalize_style_name(style_name)
         if normalized_name == self._style_name:
             return False
+        if not style_exists(normalized_name):
+            raise ValueError("STYLE_NOT_FOUND:" + normalized_name)
         self.canvas.clear_glyph_cache()
         previous_style_name = self._style_name
         # 大型样式模块首次导入时需要编译源码。必须先断开旧样式、快照和

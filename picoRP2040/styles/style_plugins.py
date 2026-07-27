@@ -62,6 +62,30 @@ def available_styles():
     return tuple(sorted(_STYLE_FACTORIES))
 
 
+def style_exists(name):
+    """判断指定样式是否已注册或存在可加载的内置、自定义源码文件。"""
+    normalized_name = _normalize_name(name)
+    if normalized_name in _STYLE_FACTORIES:
+        return True
+    relative_paths = (
+        "styles/style_" + normalized_name + ".py",
+        "customStyles/style_" + normalized_name + ".py",
+    )
+    module_file = str(globals().get("__file__", "")).replace("\\", "/")
+    firmware_root = module_file.rsplit("/styles/", 1)[0] if "/styles/" in module_file else ""
+    for relative_path in relative_paths:
+        paths = ["/" + relative_path, relative_path]
+        if firmware_root:
+            paths.append(firmware_root + "/" + relative_path)
+        for path in paths:
+            try:
+                os.stat(path)
+                return True
+            except OSError:
+                continue
+    return False
+
+
 def style_catalog():
     """从各样式类声明中读取名称、中文名称和类型。"""
     catalog = list(_scan_style_directory("/styles", "builtin"))

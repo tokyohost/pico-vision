@@ -190,7 +190,7 @@ class PicoCommandMixin:
         return self.request_style_catalog_info(timeout)["styles"]
 
     def delete_style(self, filename, style_name, timeout=5.0):
-        """请求 Pico 删除一个自定义样式文件并重启设备。"""
+        """请求设备删除一个自定义样式文件并返回删除结果。"""
         if not self.is_connected:
             raise RuntimeError("Pico 串口尚未连接")
         request_id = "style-delete-{}".format(int(time.time() * 1000))

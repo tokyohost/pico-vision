@@ -239,6 +239,9 @@ class Application:
         current_style = self._renderer.style_name()
         if style_name == current_style:
             return False
+        from styles.style_plugins import style_exists
+        if not style_exists(style_name):
+            raise ValueError("STYLE_NOT_FOUND:" + str(style_name))
         if style_name == "boot":
             return self._renderer.set_style(style_name)
         self._renderer.set_style("boot")
@@ -378,7 +381,7 @@ class Application:
                     failed_style, error,
                 ).encode("utf-8")
             )
-            self._renderer.set_style(failed_style)
+            self._renderer.set_style("default")
             self._renderer.request_render(snapshot, force=True)
             self._protocol.write(
                 "CONFIG:LCD_STYLE_FALLBACK:{}:default\n".format(

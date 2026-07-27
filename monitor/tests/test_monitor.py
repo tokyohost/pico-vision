@@ -414,8 +414,8 @@ class PicoClientTest(unittest.TestCase):
         self.assertTrue(all(len(chunk) <= 512 for chunk in chunks))
         self.assertEqual(result["action"], "finish")
 
-    def test_style_delete_sends_command_and_waits_for_restart_ack(self):
-        """确认删除样式使用 style.delete 命令并取得重启响应。"""
+    def test_style_delete_sends_command_and_waits_for_delete_ack(self):
+        """确认删除样式使用 style.delete 命令并取得删除响应。"""
         client = PicoJsonClient()
         client.serial = StyleUploadSerial()
 
@@ -1033,6 +1033,30 @@ class PicoClientTest(unittest.TestCase):
         )
 
         self.assertFalse(reconnect)
+
+    def test_empty_connection_fields_have_stable_runtime_signature(self):
+        """确认首次保存时 None 与空字符串不会被误判为连接参数变化。"""
+        before = SimpleNamespace(
+            port=None,
+            websocket_url=None,
+            force_usb_cdc=False,
+            websocket_client_name=" Monitor ",
+            websocket_client_id=" client-1 ",
+            serial_probe_interval=3,
+        )
+        after = SimpleNamespace(
+            port="",
+            websocket_url="",
+            force_usb_cdc=False,
+            websocket_client_name="Monitor",
+            websocket_client_id="client-1",
+            serial_probe_interval=3.0,
+        )
+
+        self.assertEqual(
+            MonitorService._runtime_connection_signature(before),
+            MonitorService._runtime_connection_signature(after),
+        )
 
     def test_disconnected_service_applies_new_websocket_address_immediately(self):
         """未连接时更新 WebSocket 地址应立即唤醒连接流程。"""

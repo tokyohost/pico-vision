@@ -212,7 +212,7 @@ def _run_custom_style_dialog(application):
         style_name, chinese_name, filename = values[:3]
         if not messagebox.askyesno(
             "删除样式",
-            "确定删除 {}（{}）？\nOmniWatch 删除后将自动重启。".format(
+            "确定删除 {}（{}）？".format(
                 chinese_name, filename,
             ),
             parent=root,
@@ -223,18 +223,18 @@ def _run_custom_style_dialog(application):
         except RuntimeError as error:
             messagebox.showerror("删除样式", str(error), parent=root)
             return
-        status.set("正在删除 {}，等待 OmniWatch 重启……".format(filename))
+        status.set("正在删除 {}……".format(filename))
 
     def poll_delete_result():
-        """轮询删除结果，并在 Pico 重启后重新读取样式清单。"""
+        """轮询删除结果，并在成功后立即重新读取样式清单。"""
         try:
             result = application.custom_style_delete_messages.get_nowait()
         except queue.Empty:
             root.after(100, poll_delete_result)
             return
         if result.get("status") == "ok":
-            status.set("样式已删除，OmniWatch 正在重启并更新候选项……")
-            root.after(4000, refresh)
+            status.set("样式已删除，正在更新候选项……")
+            refresh()
         else:
             messagebox.showerror(
                 "删除样式",

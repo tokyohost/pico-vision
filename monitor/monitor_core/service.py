@@ -47,6 +47,18 @@ class MonitorService(
     """管理系统指标采集、Pico 连接以及异常重连。"""
 
     @staticmethod
+    def _runtime_connection_signature(arguments):
+        """生成规范化连接配置签名，将未配置字段统一为空字符串。"""
+        return (
+            str(getattr(arguments, "port", "") or "").strip(),
+            str(getattr(arguments, "websocket_url", "") or "").strip(),
+            bool(getattr(arguments, "force_usb_cdc", False)),
+            str(getattr(arguments, "websocket_client_name", "") or "").strip(),
+            str(getattr(arguments, "websocket_client_id", "") or "").strip(),
+            float(getattr(arguments, "serial_probe_interval", 0)),
+        )
+
+    @staticmethod
     def _runtime_connection_requires_reconnect(before, after, connected):
         """判断运行配置变化是否必须中断当前设备连接。"""
         if not connected:
@@ -187,14 +199,7 @@ class MonitorService(
         ):
             raise ValueError("采集任务频率必须是大于零的对象")
 
-        connection_before = (
-            self.arguments.port,
-            getattr(self.arguments, "websocket_url", ""),
-            bool(getattr(self.arguments, "force_usb_cdc", False)),
-            getattr(self.arguments, "websocket_client_name", ""),
-            getattr(self.arguments, "websocket_client_id", ""),
-            self.arguments.serial_probe_interval,
-        )
+        connection_before = self._runtime_connection_signature(self.arguments)
         for name, value in updated.items():
             setattr(self.arguments, name, value)
         self.arguments.adaptive_transmit = bool(
@@ -240,14 +245,7 @@ class MonitorService(
         self.client.websocket_client_name = self.arguments.websocket_client_name
         self.client.websocket_client_id = self.arguments.websocket_client_id
         self.client.probe_interval = self.arguments.serial_probe_interval
-        connection_after = (
-            self.arguments.port,
-            self.arguments.websocket_url,
-            self.arguments.force_usb_cdc,
-            self.arguments.websocket_client_name,
-            self.arguments.websocket_client_id,
-            self.arguments.serial_probe_interval,
-        )
+        connection_after = self._runtime_connection_signature(self.arguments)
         if self._runtime_connection_requires_reconnect(
             connection_before,
             connection_after,

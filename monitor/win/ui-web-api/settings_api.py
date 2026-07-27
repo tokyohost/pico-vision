@@ -65,6 +65,8 @@ class SettingsApiMixin:
         current = self._application.settings
         updated = dict(current)
         allowed = set(current)
+        # 样式目录由设备查询结果维护，禁止前端旧快照覆盖刚同步的自定义样式。
+        allowed.discard("styles")
         updated.update({key: incoming[key] for key in incoming if key in allowed})
         updated["port"] = str(updated.get("port") or "").strip()
         updated["websocket_client_name"] = str(

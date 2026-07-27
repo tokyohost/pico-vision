@@ -33,21 +33,15 @@ class TestableUploadStyleCommand(UploadStyleCommand):
 
 
 class TestableStyleDeleteCommand(StyleDeleteCommand):
-    """使用测试文件路径并阻止真实设备重启。"""
+    """使用测试文件路径验证删除逻辑。"""
 
     path = None
-    restarted = False
 
     @classmethod
     def _custom_style_path(cls, filename):
         """返回测试创建的样式文件路径。"""
         del filename
         return cls.path
-
-    @classmethod
-    def _restart(cls):
-        """记录重启请求而不终止测试进程。"""
-        cls.restarted = True
 
 
 class RecordingCommandContext:
@@ -210,6 +204,20 @@ class StyleListCommandTest(unittest.TestCase):
         self.assertEqual(flash["free_bytes"], 4096 * 240)
         self.assertEqual(flash["total_bytes"], 4096 * 1000)
 
+    @mock.patch("command.style_list.os.statvfs", create=True)
+    @mock.patch("styles.style_plugins.custom_style_catalog", return_value=())
+    def test_style_list_returns_renderer_active_style(self, _catalog, statvfs):
+        """确认样式清单同时返回渲染器当前实际生效的样式。"""
+        statvfs.return_value = (1, 1, 1, 1, 1, 0, 0, 0, 0, 1)
+        renderer = SimpleNamespace(style_name=lambda: "default")
+        context = SimpleNamespace(
+            service=lambda name, required=True: renderer if name == "renderer" else None,
+        )
+
+        result = StyleListCommand().execute({}, context)
+
+        self.assertEqual(result["active_style"], "default")
+
     def test_custom_style_contains_template_filename_and_size(self):
         """确认自定义样式清单包含模板文件名和模板文件字节数。"""
         source = (
@@ -231,35 +239,38 @@ class StyleListCommandTest(unittest.TestCase):
 
 
 class StyleDeleteCommandTest(unittest.TestCase):
-    """验证自定义样式文件删除和设备重启顺序。"""
+    """验证自定义样式文件删除和注册缓存释放。"""
 
     @mock.patch("styles.style_plugins.release_style")
     @mock.patch("styles.style_plugins.custom_style_catalog")
-    def test_delete_custom_style_then_restart(self, catalog, release_style):
-        """确认清单中的样式文件被删除、响应成功并请求重启。"""
-        catalog.return_value = ({
+    def test_delete_custom_style_and_release_cache(self, catalog, release_style):
+        """确认清单中的样式文件被删除并释放对应注册缓存。"""
+        metadata = {
             "name": "clock",
             "filename": "style_clock.py",
             "type": "custom",
-        },)
+        }
+        catalog.side_effect = ((metadata,), ())
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "style_clock.py")
             with open(path, "wb") as output:
                 output.write(b"source")
             TestableStyleDeleteCommand.path = path
-            TestableStyleDeleteCommand.restarted = False
             context = RecordingCommandContext()
 
-            TestableStyleDeleteCommand().execute({
+            result = TestableStyleDeleteCommand().execute({
                 "style_name": "clock",
                 "filename": "style_clock.py",
             }, context)
 
             self.assertFalse(os.path.exists(path))
         release_style.assert_called_once_with("clock")
-        self.assertEqual(context.responses[0][0:2], ("ok", "style.delete"))
-        self.assertTrue(context.responses[0][2]["restarting"])
-        self.assertTrue(TestableStyleDeleteCommand.restarted)
+        self.assertEqual(result, {
+            "filename": "style_clock.py",
+            "style_name": "clock",
+            "styles": (),
+        })
+        self.assertEqual(context.responses, [])
 
     @mock.patch("styles.style_plugins.custom_style_catalog", return_value=())
     def test_delete_rejects_unknown_custom_style(self, _catalog):

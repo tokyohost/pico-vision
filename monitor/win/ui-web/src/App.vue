@@ -115,7 +115,9 @@ function navigate(page) {
  * 更新设备返回的样式目录。
  */
 function updateStyleCatalog(catalog) {
-  metadata.styles = Array.isArray(catalog) ? catalog : metadata.styles
+  if (!Array.isArray(catalog)) return
+  metadata.styles = catalog
+  settings.styles = catalog
 }
 
 /**
@@ -198,7 +200,11 @@ onBeforeUnmount(() => {
           @save="saveSettings"
           @catalog-updated="updateStyleCatalog"
         />
-        <CustomDataPage v-else-if="activePage === 'data'" @plugins-changed="bootstrap" />
+        <CustomDataPage
+          v-else-if="activePage === 'data'"
+          @plugins-changed="bootstrap"
+          @catalog-updated="updateStyleCatalog"
+        />
         <UpdatePage v-else-if="activePage === 'update'" :device="device" :application-version="metadata.version" />
         <LogsPage v-else-if="activePage === 'logs'" />
         <AboutPage v-else :metadata="metadata" />

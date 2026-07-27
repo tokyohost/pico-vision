@@ -11,12 +11,14 @@ class StyleListCommand(CommandStrategy):
     name = "style.list"
 
     def execute(self, params, context):
-        """扫描自定义样式，并返回 Pico Flash 的剩余空间和总大小。"""
-        del params, context
+        """扫描自定义样式，并返回当前样式及 Pico Flash 空间。"""
+        del params
         from styles.style_plugins import custom_style_catalog
+        renderer = context.service("renderer", required=False)
         return {
             "styles": custom_style_catalog(),
             "flash": self._flash_space(),
+            "active_style": renderer.style_name() if renderer is not None else "",
         }
 
     @staticmethod

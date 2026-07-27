@@ -6,6 +6,8 @@ import mimetypes
 
 import custom_data
 
+from ..settings import normalize_style_catalog
+
 
 LOGGER = logging.getLogger("pico-monitor.web-ui")
 
@@ -85,6 +87,12 @@ class StyleApiMixin:
             str(payload.get("name") or ""),
             str(payload.get("filename") or ""),
         )
-        return self._wait_worker_result(
+        result = self._wait_worker_result(
             self._application.custom_style_delete_messages, 30
         )
+        self._application._reload_style_catalog()
+        device_styles = result.get("styles")
+        if isinstance(device_styles, list):
+            self._application.settings["styles"] = normalize_style_catalog(device_styles)
+        result["catalog"] = self._application.settings.get("styles", [])
+        return result
