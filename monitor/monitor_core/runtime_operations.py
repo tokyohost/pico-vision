@@ -45,12 +45,10 @@ class RuntimeOperationsMixin:
         while not self.stopping.is_set():
             started = time.monotonic()
             self._collection_coordinator.schedule()
-            custom_data_coordinator = getattr(self, "_custom_data_coordinator", None)
-            if custom_data_coordinator is not None:
-                custom_data_coordinator.schedule()
+            custom_data_schedule_delay = self.schedule_custom_data_collection()
             schedule_delay = self._collection_coordinator.next_schedule_delay()
-            if custom_data_coordinator is not None:
-                schedule_delay = min(schedule_delay, custom_data_coordinator.next_schedule_delay())
+            if custom_data_schedule_delay is not None:
+                schedule_delay = min(schedule_delay, custom_data_schedule_delay)
             remaining = min(self.arguments.interval, schedule_delay) - (time.monotonic() - started)
             self.stopping.wait(max(0.0, remaining))
 
@@ -499,23 +497,11 @@ class RuntimeOperationsMixin:
 
     def _custom_data_collection_tasks(self):
         """把启动时发现的每个自定义数据插件封装为独立采集任务。"""
-        tasks = []
-        for definition in self.custom_data_manager.task_definitions():
-            tasks.append((
-                definition.task_name,
-                self._create_custom_data_collector(definition.name),
-                definition.interval,
-                definition.zh_name,
-            ))
-        return tasks
+        return self.custom_data_collection_tasks()
 
     def _create_custom_data_collector(self, name):
         """创建指定自定义数据插件的采集回调。"""
-        def collect():
-            """执行一个自定义数据插件并返回 ext 子字段片段。"""
-            return {"ext": self.custom_data_manager.collect_task_data(name)}
-
-        return collect
+        return self.create_custom_data_collector(name)
 
     def _collect_qbittorrent_fragment(self):
         """读取 qBittorrent 后台采样结果并返回独立快照片段。"""
@@ -601,10 +587,7 @@ class RuntimeOperationsMixin:
         self._apply_disk_health_test(snapshot)
         disk_test_elapsed = time.monotonic() - stage_started
         stage_started = time.monotonic()
-        custom_ext = {}
-        for definition in self.custom_data_manager.task_definitions():
-            custom_ext.update(self.custom_data_manager.collect_task_data(definition.name))
-        snapshot["ext"] = custom_ext
+        snapshot["ext"] = self.collect_all_custom_data()
         custom_elapsed = time.monotonic() - stage_started
         total_elapsed = time.monotonic() - started
         log_method = LOGGER.warning if total_elapsed > 0.5 else LOGGER.debug

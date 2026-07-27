@@ -14,14 +14,13 @@ from urllib.parse import urlsplit
 import serial
 
 from collectTask import CollectionCoordinator, LockFreeSnapshotStore
-from custom_data import CustomDataCollectionCoordinator
-from custom_data import get_manager as get_custom_data_manager
 from pico_client import PicoJsonClient
 from net import LanWebSocketScanner
 from qbittorrent_monitor import QbittorrentMonitor
 from system_monitor import SystemInformationCollector
 
 from .runtime_operations import RuntimeOperationsMixin
+from .custom_data import CustomDataServiceMixin
 from .style_commands import BUILTIN_LCD_STYLES, StyleCommandMixin
 from .wifi_commands import WifiCommandMixin
 from .websocket_client_commands import WebSocketClientCommandMixin
@@ -37,7 +36,13 @@ LINUX_WEBSOCKET_FAST_PROBE_TIMEOUT = 0.15
 LINUX_WEBSOCKET_FAST_SCAN_WORKERS = 16
 
 
-class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommandMixin, RuntimeOperationsMixin):
+class MonitorService(
+    WebSocketClientCommandMixin,
+    WifiCommandMixin,
+    StyleCommandMixin,
+    CustomDataServiceMixin,
+    RuntimeOperationsMixin,
+):
     """管理系统指标采集、Pico 连接以及异常重连。"""
 
     @staticmethod
@@ -113,8 +118,6 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
         self._transmit_error = None
         self._transmit_error_event = threading.Event()
         self._transmit_dropped_snapshots = 0
-        self.custom_data_manager = get_custom_data_manager()
-        self.custom_data_manager.prepare_environments_async()
         extra_collection_tasks = [
             ("qbittorrent", self._collect_qbittorrent_fragment, 1.0, "qBittorrent")
         ]
@@ -126,23 +129,7 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
             arguments.collection_task_intervals,
             arguments.collection_task_logs,
         )
-        self._custom_data_coordinator = CustomDataCollectionCoordinator(
-            self.custom_data_manager,
-            self._snapshot_store,
-            self._complete_collection_fragment,
-            arguments.collection_task_intervals,
-            arguments.collection_task_logs,
-        )
-
-    def activate_custom_data_plugin(self, name):
-        """将运行中新加载的自定义数据插件实时加入采集任务。"""
-        definition = self._custom_data_coordinator.activate_plugin(name)
-        LOGGER.info(
-            "自定义数据插件实时加入 Monitor 任务：插件=%s，任务=%s",
-            definition.name,
-            definition.task_name,
-        )
-        return definition
+        self.initialize_custom_data()
 
     def apply_runtime_config(self, payload):
         """校验并热更新托盘管理的完整运行配置。"""
@@ -232,10 +219,7 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
             self.arguments.collection_task_intervals,
             self.arguments.collection_task_logs,
         )
-        self._custom_data_coordinator.update_runtime_settings(
-            self.arguments.collection_task_intervals,
-            self.arguments.collection_task_logs,
-        )
+        self.update_custom_data_runtime_settings()
         self._apply_runtime_qbittorrent(payload)
         self.apply_display_config(payload)
         self.apply_dev_config(
@@ -445,12 +429,7 @@ class MonitorService(WebSocketClientCommandMixin, WifiCommandMixin, StyleCommand
         coordinator = getattr(self, "_collection_coordinator", None)
         if coordinator is not None:
             coordinator.close(wait=True)
-        custom_data_coordinator = getattr(self, "_custom_data_coordinator", None)
-        if custom_data_coordinator is not None:
-            custom_data_coordinator.close(wait=True)
-        custom_data_manager = getattr(self, "custom_data_manager", None)
-        if custom_data_manager is not None:
-            custom_data_manager.close()
+        self.close_custom_data()
         qbittorrent_monitor = getattr(self, "qbittorrent_monitor", None)
         if qbittorrent_monitor is not None:
             qbittorrent_monitor.close()
