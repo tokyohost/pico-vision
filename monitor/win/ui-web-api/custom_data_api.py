@@ -44,7 +44,13 @@ class CustomDataApiMixin:
                     "previewDataUrl": preview_data_url,
                     "path": str(definition.plugin_directory),
                     "environment": manager.environment_status(definition),
-                    "enabled": bool(state.runtime_enabled),
+                    "enabled": bool(
+                        self._application.settings.get(
+                            "custom_data_enabled", {}
+                        ).get(definition.name, state.runtime_enabled)
+                    ),
+                    "hasUninstall": definition.has_uninstall,
+                    "hasActions": bool(definition.actions),
                     "error": state.error or state.environment_error,
                 }
             )
@@ -61,7 +67,7 @@ class CustomDataApiMixin:
         path = (
             str(payload.get("sourcePath") or "").strip()
             if payload.get("overwrite")
-            else self._select_file(("自定义数据插件 (*.zip)",))
+            else self._select_file(("插件包 (*.zip)",))
         )
         if not path:
             return {"cancelled": True}
@@ -78,8 +84,7 @@ class CustomDataApiMixin:
             return {"cancelled": True}
         return self._import_custom_data_source(path, payload)
 
-    @staticmethod
-    def _import_custom_data_source(path, payload):
+    def _import_custom_data_source(self, path, payload):
         """导入指定插件来源，并把重复冲突转换为可确认的界面结果。"""
         manager = custom_data.get_manager()
         try:
@@ -98,14 +103,59 @@ class CustomDataApiMixin:
                     for conflict in error.conflicts
                 ],
             }
+        enabled = dict(
+            custom_data.normalize_plugin_enabled(
+                self._application.settings.get("custom_data_enabled")
+            )
+        )
+        enabled[definition.name] = False
+        self._application.settings["custom_data_enabled"] = enabled
+        self._application.settings["custom_data_configs"] = (
+            custom_data.normalize_plugin_configs(
+                self._application.settings.get("custom_data_configs")
+            )
+        )
+        self._application.settings_store.save(self._application.settings)
         return {"name": definition.name, "chineseName": definition.zh_name}
 
     def _custom_data_activate(self, payload):
-        """激活指定插件并同步通知后台工作进程。"""
-        name = str(payload.get("name") or "")
-        custom_data.get_manager().activate_plugin(name)
-        applied = self._application._activate_custom_data_plugin(name)
-        return {"activated": True, "applied": applied}
+        """兼容旧界面激活动作，并转为持久启用状态。"""
+        result = self._custom_data_set_enabled(
+            {"name": payload.get("name"), "enabled": True}
+        )
+        return {"activated": True, "applied": True, **result}
+
+    def _custom_data_set_enabled(self, payload):
+        """持久化指定插件启用状态并热更新 Monitor 采集任务。"""
+        name = str(payload.get("name") or "").strip()
+        enabled = bool(payload.get("enabled"))
+        definitions = {
+            definition.name: definition
+            for definition in custom_data.get_manager().list_definitions()
+        }
+        if name not in definitions:
+            raise ValueError("插件不存在或尚未加载")
+        states = dict(
+            custom_data.normalize_plugin_enabled(
+                self._application.settings.get("custom_data_enabled")
+            )
+        )
+        states[name] = enabled
+        self._application.settings["custom_data_enabled"] = states
+        self._application.settings_store.save(self._application.settings)
+        custom_data.get_manager().set_plugin_enabled(name, enabled)
+        if not self._application._apply_runtime_settings(wait=True):
+            raise RuntimeError("后台监控未运行，启用状态将在下次启动时生效")
+        return {"name": name, "enabled": enabled}
+
+    def _custom_data_invoke_action(self, payload):
+        """调用插件清单公开动作，并返回受校验的配置补丁。"""
+        name = str(payload.get("name") or "").strip()
+        action = str(payload.get("action") or "").strip()
+        config = payload.get("config")
+        if not isinstance(config, dict):
+            raise ValueError("插件动作缺少有效配置快照")
+        return custom_data.get_manager().invoke_action(name, action, config)
 
     def _custom_data_install_dependencies(self, payload):
         """创建指定插件的独立环境并安装依赖。"""
@@ -179,6 +229,43 @@ class CustomDataApiMixin:
         return result
 
     def _custom_data_delete(self, payload):
-        """删除指定自定义数据插件目录和独立环境。"""
-        custom_data.get_manager().delete_plugin(str(payload.get("path") or ""))
+        """执行插件卸载钩子并删除插件目录和独立环境。"""
+        manager = custom_data.get_manager()
+        path = str(payload.get("path") or "")
+        definitions = {
+            str(definition.plugin_directory): definition
+            for definition in manager.list_definitions()
+        }
+        definition = definitions.get(path)
+        if definition is None:
+            raise ValueError("插件不存在或尚未加载")
+        configs = self._application.settings.get("custom_data_configs", {})
+        enabled = dict(self._application.settings.get("custom_data_enabled", {}))
+        was_enabled = bool(enabled.get(definition.name, True))
+        enabled[definition.name] = False
+        self._application.settings["custom_data_enabled"] = enabled
+        applied = self._application._apply_runtime_settings(wait=True)
+        process = getattr(self._application, "worker_process", None)
+        if (
+            not applied
+            and process is not None
+            and process.poll() is None
+        ):
+            raise RuntimeError("无法确认后台采集任务已停止，已取消删除")
+        try:
+            manager.set_plugin_enabled(definition.name, False)
+            manager.delete_plugin(path, configs.get(definition.name, {}))
+        except Exception:
+            enabled[definition.name] = was_enabled
+            self._application.settings["custom_data_enabled"] = enabled
+            manager.set_plugin_enabled(definition.name, was_enabled)
+            self._application._apply_runtime_settings(wait=False)
+            raise
+        configs = dict(configs)
+        enabled.pop(definition.name, None)
+        configs.pop(definition.name, None)
+        self._application.settings["custom_data_enabled"] = enabled
+        self._application.settings["custom_data_configs"] = configs
+        self._application.settings_store.save(self._application.settings)
+        self._application._apply_runtime_settings(wait=False)
         return {"deleted": True}

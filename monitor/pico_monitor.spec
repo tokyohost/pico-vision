@@ -11,7 +11,7 @@ for binary_name in ("PresentMon.exe", "adlx_fps_bridge.dll"):
     binary_path = Path("win/fps/bin") / binary_name
     if binary_path.is_file():
         optional_fps_binaries.append((str(binary_path), "win/fps/bin"))
-optional_datas = [("icon/icon.png", "icon"), ("assert/fishQr.png", "assert"), ("win/fps/PRESENTMON_LICENSE.txt", "win/fps"), ("custom_data_runner.py", "."), ("win/ui-web/dist", "win/ui-web/dist")]
+optional_datas = [("icon/icon.png", "icon"), ("assert/fishQr.png", "assert"), ("win/fps/PRESENTMON_LICENSE.txt", "win/fps"), ("custom_data/runner.py", "custom_data"), ("win/ui-web/dist", "win/ui-web/dist")]
 optional_datas.extend(collect_data_files("esptool"))
 optional_datas.extend(collect_data_files("webview"))
 sensor_host_directory = Path("sensorhost")

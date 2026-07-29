@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 import serial
 
 from collectTask import CollectionCoordinator, LockFreeSnapshotStore
-from custom_data import normalize_plugin_configs
+from custom_data import normalize_plugin_configs, normalize_plugin_enabled
 from pico_client import PicoJsonClient
 from net import LanWebSocketScanner
 from qbittorrent_monitor import QbittorrentMonitor
@@ -222,6 +222,9 @@ class MonitorService(
         }
         self.arguments.custom_data_configs = normalize_plugin_configs(
             payload.get("custom_data_configs", getattr(self.arguments, "custom_data_configs", {}))
+        )
+        self.arguments.custom_data_enabled = normalize_plugin_enabled(
+            payload.get("custom_data_enabled", getattr(self.arguments, "custom_data_enabled", {}))
         )
         self.collector.ping_monitor.target = self.arguments.ping_target
         self._collection_coordinator.update_runtime_settings(

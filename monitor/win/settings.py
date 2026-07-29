@@ -5,7 +5,7 @@ import platform
 import uuid
 from pathlib import Path
 
-from custom_data import normalize_plugin_configs
+from custom_data import normalize_plugin_configs, normalize_plugin_enabled
 from collectTask import system_task_defaults, system_task_zh_names
 from collectTask.system_tasks import system_task_aliases
 
@@ -54,6 +54,7 @@ DEFAULT_SETTINGS = {
     "lan_probe_max_workers": 256,
     "collection_task_intervals": dict(DEFAULT_COLLECTION_TASK_INTERVALS),
     "custom_data_configs": normalize_plugin_configs({}),
+    "custom_data_enabled": normalize_plugin_enabled({}),
     "collection_task_logs": True,
     "screen_rotation": 0,
     "lcd_brightness": 100,
@@ -85,6 +86,7 @@ ARGUMENT_NAMES = {
     "--lan-probe-max-workers": "lan_probe_max_workers",
     "--collection-task-intervals": "collection_task_intervals",
     "--custom-data-configs": "custom_data_configs",
+    "--custom-data-enabled": "custom_data_enabled",
     "--screen-rotation": "screen_rotation",
     "--lcd-brightness": "lcd_brightness",
     "--network-unit": "network_unit",
@@ -185,6 +187,9 @@ class TraySettingsStore:
             settings.get("custom_data_configs"),
             legacy_intervals=legacy_intervals,
         )
+        settings["custom_data_enabled"] = normalize_plugin_enabled(
+            settings.get("custom_data_enabled"),
+        )
         if settings["lcd_style"] not in style_names(settings, idle=False):
             settings["lcd_style"] = DEFAULT_SETTINGS["lcd_style"]
         if settings["idle_style"] not in style_names(settings, idle=True):
@@ -274,6 +279,8 @@ def apply_worker_arguments(arguments, settings):
             value = json.dumps(normalize_collection_task_intervals(value), ensure_ascii=False)
         elif name == "custom_data_configs":
             value = json.dumps(normalize_plugin_configs(value), ensure_ascii=False)
+        elif name == "custom_data_enabled":
+            value = json.dumps(normalize_plugin_enabled(value), ensure_ascii=False)
         retained.extend((option, str(value)))
     retained.append("--qbittorrent-enabled" if settings["qbittorrent_enabled"] else "--no-qbittorrent")
     retained.append("--adaptive-transmit" if settings["adaptive_transmit"] else "--no-adaptive-transmit")
@@ -294,6 +301,7 @@ def settings_from_arguments(arguments, base=None):
         "qbittorrent_interval": float,
         "collection_task_intervals": lambda value: normalize_collection_task_intervals(json.loads(value)),
         "custom_data_configs": lambda value: normalize_plugin_configs(json.loads(value)),
+        "custom_data_enabled": lambda value: normalize_plugin_enabled(json.loads(value)),
     }
     index = 0
     while index < len(arguments):
@@ -328,4 +336,7 @@ def settings_from_arguments(arguments, base=None):
             settings["dev"] = False
         index += 1
     settings["collection_task_intervals"] = normalize_collection_task_intervals(settings.get("collection_task_intervals"))
+    settings["custom_data_enabled"] = normalize_plugin_enabled(
+        settings.get("custom_data_enabled")
+    )
     return settings

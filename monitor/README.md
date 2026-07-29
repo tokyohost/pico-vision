@@ -123,6 +123,11 @@ build-exe.bat
 `options`。所有面板值（包括 `interval`）会组成 JSON 字符串传给 `collect(config_json)`，
 插件通过 `json.loads(config_json)` 自行解析。为兼容已有插件，无参数 `collect()` 仍可运行。
 
+插件启用状态由 Monitor 单独持久化，不属于面板业务配置。协议 2 可声明配置动作按钮，
+通过白名单方法返回受校验的配置补丁；也可声明删除前执行的 `uninstall(context)` 清理
+钩子。完整清单格式、安全边界和迁移规则见
+[`docs/custom_data_plugin_protocol_v2.md`](docs/custom_data_plugin_protocol_v2.md)。
+
 插件还可声明 `"bind_style": true` 和插件根目录内的 Python 文件名 `"style"`。导入后
 自定义数据插件表会显示该绑定样式，并允许通过“同步样式”校验后上传到当前设备。
 声明 `"bind_detail": true` 与 `"detail": "demo_detail.html"` 可绑定不超过 1 MB 的

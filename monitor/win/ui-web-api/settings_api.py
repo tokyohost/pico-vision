@@ -2,7 +2,11 @@
 
 import base64
 
-from custom_data import custom_data_panels, normalize_plugin_configs
+from custom_data import (
+    custom_data_panels,
+    normalize_plugin_configs,
+    normalize_plugin_enabled,
+)
 
 from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
 from qbittorrent_monitor import QbittorrentApiClient
@@ -32,6 +36,9 @@ class SettingsApiMixin:
         settings["custom_data_configs"] = normalize_plugin_configs(
             settings.get("custom_data_configs"),
             legacy_intervals=settings.get("collection_task_intervals"),
+        )
+        settings["custom_data_enabled"] = normalize_plugin_enabled(
+            settings.get("custom_data_enabled"),
         )
         qr_path = application._resource_path("assert", "fishQr.png")
         qr_data_url = ""
@@ -94,6 +101,9 @@ class SettingsApiMixin:
         updated["custom_data_configs"] = normalize_plugin_configs(
             updated.get("custom_data_configs"),
             legacy_intervals=current.get("collection_task_intervals"),
+        )
+        updated["custom_data_enabled"] = normalize_plugin_enabled(
+            updated.get("custom_data_enabled"),
         )
         if updated["lcd_style"] not in style_names(updated, idle=False):
             raise ValueError("界面样式无效")

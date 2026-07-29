@@ -88,6 +88,8 @@ class WebViewBridge(
             "data.importDirectory": self._custom_data_import_directory,
             "data.installDependencies": self._custom_data_install_dependencies,
             "data.activate": self._custom_data_activate,
+            "data.setEnabled": self._custom_data_set_enabled,
+            "data.invokeAction": self._custom_data_invoke_action,
             "data.test": self._custom_data_test,
             "data.detail": self._custom_data_detail,
             "data.syncStyle": self._custom_data_sync_style,

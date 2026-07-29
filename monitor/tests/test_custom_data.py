@@ -497,6 +497,245 @@ class CustomDataTaskTest(unittest.TestCase):
             self.assertFalse(definition.plugin_directory.exists())
             self.assertFalse(definition.environment_directory.exists())
 
+    def test_protocol_two_action_returns_authorized_config_patch(self):
+        """确认协议二动作只能回填清单明确授权的配置项。"""
+        with tempfile.TemporaryDirectory() as directory:
+            plugin = self._create_plugin(directory)
+            manifest = json.loads((plugin / "plugin.json").read_text(encoding="utf-8"))
+            manifest.update(
+                {
+                    "protocol": 2,
+                    "config_panel": [
+                        {
+                            "kind": "field",
+                            "key": "application_path",
+                            "zh_name": "应用目录",
+                            "type": "string",
+                            "readonly": True,
+                        },
+                        {
+                            "kind": "action",
+                            "action": "detect_application",
+                            "zh_name": "自动检测",
+                        },
+                    ],
+                    "actions": {
+                        "detect_application": {
+                            "method": "detect_application",
+                            "config_keys": ["application_path"],
+                        }
+                    },
+                }
+            )
+            (plugin / "plugin.json").write_text(
+                json.dumps(manifest, ensure_ascii=False),
+                encoding="utf-8",
+                newline="\n",
+            )
+            (plugin / "main.py").write_text(
+                'def collect(config_json):\n'
+                '    """返回空采集结果。"""\n'
+                '    return {}\n\n'
+                'def detect_application(context):\n'
+                '    """返回检测到的应用目录。"""\n'
+                '    return {"message": "检测成功", "config_patch": {"application_path": "C:/Demo"}}\n',
+                encoding="utf-8",
+                newline="\n",
+            )
+            manager = custom_data.CustomDataManager(directory, Path(directory) / "envs")
+            definition = manager.list_definitions()[0]
+            self._create_test_environment(definition)
+            manager.reload_scripts()
+
+            result = manager.invoke_action(
+                definition.name,
+                "detect_application",
+                {},
+            )
+            manager.close()
+
+        self.assertEqual(result["config_patch"], {"application_path": "C:/Demo"})
+        self.assertEqual(definition.panel_items[-1]["kind"], "action")
+        self.assertTrue(definition.config_panel[0]["readonly"])
+
+    def test_action_rejects_unauthorized_config_patch(self):
+        """确认插件动作不能借助配置补丁修改未授权字段。"""
+        with tempfile.TemporaryDirectory() as directory:
+            plugin = self._create_plugin(directory)
+            manifest = json.loads((plugin / "plugin.json").read_text(encoding="utf-8"))
+            manifest.update(
+                {
+                    "protocol": 2,
+                    "config_panel": [
+                        {"key": "target", "zh_name": "目标", "type": "string"},
+                        {"kind": "action", "action": "detect", "zh_name": "检测"},
+                    ],
+                    "actions": {
+                        "detect": {
+                            "method": "detect",
+                            "config_keys": [],
+                        }
+                    },
+                }
+            )
+            (plugin / "plugin.json").write_text(
+                json.dumps(manifest, ensure_ascii=False),
+                encoding="utf-8",
+                newline="\n",
+            )
+            (plugin / "main.py").write_text(
+                'def collect():\n'
+                '    """返回空采集结果。"""\n'
+                '    return {}\n\n'
+                'def detect(context):\n'
+                '    """尝试返回未授权配置补丁。"""\n'
+                '    return {"config_patch": {"target": "越权值"}}\n',
+                encoding="utf-8",
+                newline="\n",
+            )
+            manager = custom_data.CustomDataManager(directory, Path(directory) / "envs")
+            definition = manager.list_definitions()[0]
+            self._create_test_environment(definition)
+            manager.reload_scripts()
+
+            with self.assertRaisesRegex(custom_data.CustomDataError, "未授权"):
+                manager.invoke_action(definition.name, "detect", {})
+            manager.close()
+
+    def test_protocol_one_rejects_action_declarations(self):
+        """确认协议一插件不能意外启用协议二动作能力。"""
+        with tempfile.TemporaryDirectory() as directory:
+            plugin = self._create_plugin(directory)
+            manifest = json.loads((plugin / "plugin.json").read_text(encoding="utf-8"))
+            manifest.update(
+                {
+                    "config_panel": [
+                        {"kind": "action", "action": "detect", "zh_name": "检测"}
+                    ],
+                    "actions": {"detect": {"method": "detect"}},
+                }
+            )
+            (plugin / "plugin.json").write_text(
+                json.dumps(manifest, ensure_ascii=False),
+                encoding="utf-8",
+                newline="\n",
+            )
+
+            manager = custom_data.CustomDataManager(directory, Path(directory) / "envs")
+
+            self.assertEqual(manager.list_definitions(), ())
+            self.assertIn("protocol 2", "\n".join(manager.load_errors.values()))
+            manager.close()
+
+    def test_monitor_enabled_state_controls_tasks_without_entering_plugin_config(self):
+        """确认 Monitor 启用状态控制任务，且不会混入插件业务配置。"""
+        with tempfile.TemporaryDirectory() as directory:
+            self._create_plugin(directory)
+            manager = custom_data.CustomDataManager(directory, Path(directory) / "envs")
+            definition = manager.list_definitions()[0]
+
+            manager.update_plugin_enabled({definition.name: False})
+
+            self.assertEqual(manager.task_definitions(), ())
+            configs = custom_data.normalize_plugin_configs(
+                {definition.name: {"interval": 3}},
+                (definition,),
+            )
+            self.assertNotIn("enabled", configs[definition.name])
+
+            with mock.patch.object(manager, "prepare_environments_async"):
+                manager.set_plugin_enabled(definition.name, True)
+            self.assertEqual(manager.task_definitions()[0].name, definition.name)
+            manager.close()
+
+    def test_delete_calls_uninstall_hook_before_removing_plugin(self):
+        """确认删除插件前执行 uninstall，并向钩子传递已校验配置。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "uninstalled.txt"
+            plugin = self._create_plugin(root / "source")
+            manifest = json.loads((plugin / "plugin.json").read_text(encoding="utf-8"))
+            manifest.update(
+                {
+                    "protocol": 2,
+                    "uninstall": True,
+                    "config_panel": [
+                        {
+                            "key": "marker_path",
+                            "zh_name": "清理标记",
+                            "type": "string",
+                            "required": True,
+                        }
+                    ],
+                }
+            )
+            (plugin / "plugin.json").write_text(
+                json.dumps(manifest, ensure_ascii=False),
+                encoding="utf-8",
+                newline="\n",
+            )
+            (plugin / "main.py").write_text(
+                'from pathlib import Path\n\n'
+                'def collect():\n'
+                '    """返回空采集结果。"""\n'
+                '    return {}\n\n'
+                'def uninstall(context):\n'
+                '    """清理插件自行创建的数据。"""\n'
+                '    Path(context["config"]["marker_path"]).write_text("cleaned", encoding="utf-8")\n'
+                '    return {"message": "清理完成"}\n',
+                encoding="utf-8",
+                newline="\n",
+            )
+            manager = custom_data.CustomDataManager(root / "customData", root / "envs")
+            definition = manager.import_plugin(plugin)
+            self._create_test_environment(definition)
+            manager.reload_scripts()
+            definition = manager.list_definitions()[0]
+
+            manager.delete_plugin(
+                definition.plugin_directory,
+                {"marker_path": str(marker)},
+            )
+
+            self.assertEqual(marker.read_text(encoding="utf-8"), "cleaned")
+            self.assertFalse(definition.plugin_directory.exists())
+            self.assertFalse(definition.environment_directory.exists())
+
+    def test_failed_uninstall_preserves_plugin_and_environment(self):
+        """确认 uninstall 失败时中止删除，保留插件以便重试清理。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plugin = self._create_plugin(root / "source")
+            manifest = json.loads((plugin / "plugin.json").read_text(encoding="utf-8"))
+            manifest.update({"protocol": 2, "uninstall": True})
+            (plugin / "plugin.json").write_text(
+                json.dumps(manifest, ensure_ascii=False),
+                encoding="utf-8",
+                newline="\n",
+            )
+            (plugin / "main.py").write_text(
+                'def collect():\n'
+                '    """返回空采集结果。"""\n'
+                '    return {}\n\n'
+                'def uninstall(context):\n'
+                '    """模拟清理失败。"""\n'
+                '    raise RuntimeError("清理失败")\n',
+                encoding="utf-8",
+                newline="\n",
+            )
+            manager = custom_data.CustomDataManager(root / "customData", root / "envs")
+            definition = manager.import_plugin(plugin)
+            self._create_test_environment(definition)
+            manager.reload_scripts()
+            definition = manager.list_definitions()[0]
+
+            with self.assertRaisesRegex(custom_data.CustomDataError, "清理失败"):
+                manager.delete_plugin(definition.plugin_directory)
+
+            self.assertTrue(definition.plugin_directory.exists())
+            self.assertTrue(definition.environment_directory.exists())
+            manager.close()
+
 
 if __name__ == "__main__":
     unittest.main()

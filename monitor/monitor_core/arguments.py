@@ -3,7 +3,14 @@
 import argparse
 import os
 
-from .config import config_flag, config_value, load_monitor_config, parse_collection_task_intervals, parse_custom_data_configs
+from .config import (
+    config_flag,
+    config_value,
+    load_monitor_config,
+    parse_collection_task_intervals,
+    parse_custom_data_configs,
+    parse_custom_data_enabled,
+)
 from .console import MonitorVersionAction
 
 def create_argument_parser(config=None):
@@ -33,6 +40,7 @@ def create_argument_parser(config=None):
     parser.set_defaults(adaptive_transmit=config_flag(config, "PICO_MONITOR_ADAPTIVE_TRANSMIT", True))
     parser.add_argument("--collection-task-intervals", type=parse_collection_task_intervals, default=parse_collection_task_intervals(config_value(config, "PICO_MONITOR_COLLECTION_TASK_INTERVALS")), help="各系统采集任务频率 JSON 或 YAML 对象，键为英文任务标识，值为支持小数的秒数，例如 0.8")
     parser.add_argument("--custom-data-configs", type=parse_custom_data_configs, default=parse_custom_data_configs(config_value(config, "PICO_MONITOR_CUSTOM_DATA_CONFIGS")), help="各自定义数据插件的面板配置 JSON 对象")
+    parser.add_argument("--custom-data-enabled", type=parse_custom_data_enabled, default=parse_custom_data_enabled(config_value(config, "PICO_MONITOR_CUSTOM_DATA_ENABLED")), help="由 Monitor 管理的自定义数据插件启用状态 JSON 对象")
     collection_task_logs_group = parser.add_mutually_exclusive_group()
     collection_task_logs_group.add_argument("--collection-task-logs", dest="collection_task_logs", action="store_true", help="开启采集任务提交、开始、完成和线程池状态日志")
     collection_task_logs_group.add_argument("--no-collection-task-logs", dest="collection_task_logs", action="store_false", help="关闭采集任务常规运行日志，错误和告警仍会输出")

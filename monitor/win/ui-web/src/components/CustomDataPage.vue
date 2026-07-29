@@ -12,7 +12,9 @@ const customData = reactive({
   errors: [],
   output: '',
   installingNames: [],
+  togglingNames: [],
   detail: { visible: false, title: '', content: '' },
+  testResult: { visible: false, title: '', content: '' },
 })
 
 /**
@@ -40,7 +42,7 @@ async function importCustomData(action, sourceLabel) {
     if (result.requiresOverwrite) {
       await ElMessageBox.confirm(
         `${result.message}\n\n覆盖会删除旧插件目录及其独立环境，确定继续吗？`,
-        '覆盖自定义数据插件',
+        '覆盖插件',
         { type: 'warning', confirmButtonText: '确认覆盖' },
       )
       result = await invoke(action, {
@@ -99,15 +101,21 @@ async function installEnvironment(item) {
 }
 
 /**
- * 激活一个尚未运行的自定义数据插件。
+ * 立即持久化插件启用状态并同步采集工作进程。
  */
-async function activateCustomData(item) {
+async function setCustomDataEnabled(item, enabled) {
+  if (customData.togglingNames.includes(item.name)) return
+  customData.togglingNames.push(item.name)
   try {
-    await invoke('data.activate', { name: item.name })
-    ElMessage.success('插件已加入采集任务')
+    await invoke('data.setEnabled', { name: item.name, enabled })
+    ElMessage.success(enabled ? '插件已启用' : '插件已停用')
     await loadCustomData()
+    emit('plugins-changed')
   } catch (error) {
+    item.enabled = !enabled
     ElMessage.error(error?.message || String(error))
+  } finally {
+    customData.togglingNames = customData.togglingNames.filter((name) => name !== item.name)
   }
 }
 
@@ -117,7 +125,9 @@ async function activateCustomData(item) {
 async function testCustomData(item) {
   try {
     const result = await invoke('data.test', { name: item.name })
-    customData.output = result.output || ''
+    customData.testResult.title = `${item.chineseName} · 测试结果`
+    customData.testResult.content = result.output || '测试完成，插件未返回内容。'
+    customData.testResult.visible = true
   } catch (error) {
     ElMessage.error(error?.message || String(error))
   }
@@ -175,7 +185,12 @@ async function syncBoundStyle(item, overwrite = false) {
  */
 async function deleteCustomData(item) {
   try {
-    await ElMessageBox.confirm(`确定删除插件“${item.chineseName}”及其独立环境吗？`, '删除插件', { type: 'warning' })
+    const cleanupHint = item.hasUninstall ? '，并先执行插件 uninstall 清理钩子' : ''
+    await ElMessageBox.confirm(
+      `确定删除插件“${item.chineseName}”及其独立环境${cleanupHint}吗？`,
+      '删除插件',
+      { type: 'warning' },
+    )
     await invoke('data.delete', { path: item.path })
     await loadCustomData()
     emit('plugins-changed')
@@ -188,56 +203,66 @@ onMounted(loadCustomData)
 </script>
 
 <template>
-  <div class="page-title card-header">
-    <div><h2>自定义数据插件</h2><p>通过 ZIP 包或本地插件目录导入、测试和管理隔离运行的插件。</p></div>
-    <div>
-      <el-button @click="importCustomData('data.importDirectory', '目录插件')">导入目录</el-button>
-      <el-button type="primary" @click="importCustomData('data.import', '插件')">导入 ZIP</el-button>
-    </div>
+  <div class="custom-data-toolbar">
+    <el-button @click="importCustomData('data.importDirectory', '目录插件')">导入目录</el-button>
+    <el-button type="primary" @click="importCustomData('data.import', '插件')">导入 ZIP</el-button>
   </div>
-  <el-card shadow="never" class="section-gap" v-loading="customData.loading">
-    <el-table
-      :data="customData.items"
-      class="theme-table custom-data-table"
-      empty-text="暂无自定义数据插件"
-    >
-      <el-table-column prop="chineseName" label="插件" min-width="120" />
-      <el-table-column label="预览" width="100">
-        <template #default="{ row }">
-          <img
-            v-if="row.previewDataUrl"
-            :src="row.previewDataUrl"
-            :alt="`${row.chineseName}预览图`"
-            class="custom-data-preview"
-          />
-          <span v-else>无</span>
-        </template>
-      </el-table-column>
-      <el-table-column prop="key" label="JSON Key" min-width="110" />
-      <el-table-column prop="interval" label="间隔（秒）" width="100" />
-      <el-table-column prop="boundStyle" label="绑定样式" min-width="120">
-        <template #default="{ row }">{{ row.boundStyle || '未绑定' }}</template>
-      </el-table-column>
-      <el-table-column prop="environment" label="独立环境" min-width="130" />
-      <el-table-column label="状态" width="90">
-        <template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '运行中' : '未激活' }}</el-tag></template>
-      </el-table-column>
-      <el-table-column label="操作" width="440">
-        <template #default="{ row }">
+  <section class="custom-data-section section-gap" v-loading="customData.loading">
+    <el-empty v-if="!customData.items.length" description="暂无插件" />
+    <div v-else class="custom-data-card-list">
+      <el-card
+        v-for="item in customData.items"
+        :key="item.name"
+        shadow="never"
+        class="custom-data-card"
+      >
+        <div class="custom-data-card-main">
+          <div class="custom-data-preview-wrap">
+            <img
+              v-if="item.previewDataUrl"
+              :src="item.previewDataUrl"
+              :alt="`${item.chineseName}预览图`"
+              class="custom-data-preview"
+            />
+            <span v-else>暂无预览</span>
+          </div>
+          <div class="custom-data-card-content">
+            <div class="custom-data-card-header">
+              <div>
+                <h3>{{ item.chineseName }}</h3>
+                <p>{{ item.name }}</p>
+              </div>
+              <div class="custom-data-enabled">
+                <span>启用</span>
+                <el-switch
+                  v-model="item.enabled"
+                  :loading="customData.togglingNames.includes(item.name)"
+                  @change="(enabled) => setCustomDataEnabled(item, enabled)"
+                />
+              </div>
+            </div>
+            <div class="custom-data-meta">
+              <div><span>JSON Key</span><strong>{{ item.key }}</strong></div>
+              <div><span>采集间隔</span><strong>{{ item.interval }} 秒</strong></div>
+              <div><span>绑定样式</span><strong>{{ item.boundStyle || '未绑定' }}</strong></div>
+              <div><span>独立环境</span><strong>{{ item.environment }}</strong></div>
+            </div>
+          </div>
+        </div>
+        <div class="custom-data-actions">
           <el-button
             text
             size="small"
-            :loading="isInstallingEnvironment(row)"
-            @click="installEnvironment(row)"
+            :loading="isInstallingEnvironment(item)"
+            @click="installEnvironment(item)"
           >安装环境</el-button>
-          <el-button v-if="!row.enabled" text size="small" type="primary" @click="activateCustomData(row)">激活</el-button>
-          <el-button text size="small" @click="testCustomData(row)">测试</el-button>
-          <el-button v-if="row.hasDetail" text size="small" @click="openPluginDetail(row)">查看简介</el-button>
-          <el-button v-if="row.boundStyle" text size="small" type="primary" @click="syncBoundStyle(row)">同步样式</el-button>
-          <el-button text size="small" type="danger" @click="deleteCustomData(row)">删除</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+          <el-button text size="small" @click="testCustomData(item)">测试</el-button>
+          <el-button v-if="item.hasDetail" text size="small" @click="openPluginDetail(item)">查看简介</el-button>
+          <el-button v-if="item.boundStyle" text size="small" type="primary" @click="syncBoundStyle(item)">同步样式</el-button>
+          <el-button text size="small" type="danger" @click="deleteCustomData(item)">删除</el-button>
+        </div>
+      </el-card>
+    </div>
     <el-alert
       v-for="error in customData.errors"
       :key="error.path"
@@ -247,8 +272,19 @@ onMounted(loadCustomData)
       show-icon
       class="section-gap"
     />
-  </el-card>
+  </section>
   <pre v-if="customData.output" class="terminal">{{ customData.output }}</pre>
+  <el-dialog
+    v-model="customData.testResult.visible"
+    :title="customData.testResult.title"
+    width="min(760px, 88vw)"
+    class="plugin-test-result-dialog"
+  >
+    <pre class="terminal plugin-test-result">{{ customData.testResult.content }}</pre>
+    <template #footer>
+      <el-button type="primary" @click="customData.testResult.visible = false">关闭</el-button>
+    </template>
+  </el-dialog>
   <el-dialog
     v-model="customData.detail.visible"
     :title="customData.detail.title"

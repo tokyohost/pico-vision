@@ -185,3 +185,21 @@ def parse_custom_data_configs(value):
         return normalize_plugin_configs(payload)
     except Exception as error:
         raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def parse_custom_data_enabled(value):
+    """解析由 Monitor 管理的插件启用状态 JSON 对象。"""
+    from custom_data import normalize_plugin_enabled
+
+    if not value:
+        return normalize_plugin_enabled({})
+    if isinstance(value, dict):
+        payload = value
+    else:
+        try:
+            payload = json.loads(value)
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise argparse.ArgumentTypeError("自定义数据插件启用状态必须是 JSON 对象") from error
+    if not isinstance(payload, dict):
+        raise argparse.ArgumentTypeError("自定义数据插件启用状态必须是 JSON 对象")
+    return normalize_plugin_enabled(payload)

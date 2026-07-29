@@ -1,6 +1,6 @@
 <script setup>
-import { computed } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, reactive } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '../bridge'
 
 const props = defineProps({
@@ -13,6 +13,7 @@ const emit = defineEmits(['save'])
 
 const normalStyles = computed(() => props.metadata.styles.filter((item) => !item.idle))
 const idleStyles = computed(() => props.metadata.styles.filter((item) => item.idle))
+const runningActions = reactive({})
 
 /**
  * 验证 qBittorrent WebUI 账号。
@@ -57,6 +58,53 @@ function optionLabel(option) {
  */
 function optionValue(option) {
   return typeof option === 'object' ? option.value : option
+}
+
+/**
+ * 返回插件面板的兼容元素集合。
+ */
+function panelItems(panel) {
+  return Array.isArray(panel.items) ? panel.items : panel.fields
+}
+
+/**
+ * 调用插件公开动作并把受校验的补丁回填到当前表单。
+ */
+async function invokePluginAction(panel, item) {
+  const loadingKey = `${panel.name}:${item.action}`
+  if (runningActions[loadingKey]) return
+  try {
+    if (item.confirm) {
+      await ElMessageBox.confirm(
+        `确定执行“${item.zh_name || item.action}”吗？`,
+        '执行插件动作',
+        { type: 'warning' },
+      )
+    }
+    runningActions[loadingKey] = true
+    const config = props.settings.custom_data_configs?.[panel.name] || {}
+    const result = await invoke('data.invokeAction', {
+      name: panel.name,
+      action: item.action,
+      config: JSON.parse(JSON.stringify(config)),
+    })
+    Object.assign(config, result.config_patch || {})
+    for (const warning of result.warnings || []) ElMessage.warning(String(warning))
+    ElMessage.success(result.message || '插件动作执行成功，配置已回填，请保存后生效')
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(error?.message || String(error))
+    }
+  } finally {
+    delete runningActions[loadingKey]
+  }
+}
+
+/**
+ * 判断指定插件动作是否正在执行。
+ */
+function isActionRunning(panel, item) {
+  return Boolean(runningActions[`${panel.name}:${item.action}`])
 }
 </script>
 
@@ -139,12 +187,34 @@ function optionValue(option) {
     </el-card>
 
     <el-card v-for="panel in metadata.customDataPanels" :key="panel.name" shadow="never">
-      <template #header><span>{{ panel.chineseName }}（{{ panel.name }}）</span></template>
+      <template #header>
+        <div class="card-header">
+          <span>{{ panel.chineseName }}（{{ panel.name }}）</span>
+          <el-switch
+            v-model="settings.custom_data_enabled[panel.name]"
+            inline-prompt
+            active-text="启用"
+            inactive-text="停用"
+          />
+        </div>
+      </template>
       <el-form v-if="settings.custom_data_configs?.[panel.name]" label-position="top">
         <div class="form-grid">
-          <el-form-item v-for="field in panel.fields" :key="field.key" :label="field.zh_name || field.name">
+          <el-form-item
+            v-for="field in panelItems(panel)"
+            :key="field.kind === 'action' ? `action:${field.action}` : field.key"
+            :label="field.kind === 'action' ? '' : (field.zh_name || field.name)"
+          >
+            <el-button
+              v-if="field.kind === 'action'"
+              :type="field.style || 'primary'"
+              :loading="isActionRunning(panel, field)"
+              @click="invokePluginAction(panel, field)"
+            >
+              {{ isActionRunning(panel, field) ? field.loading_text : field.zh_name }}
+            </el-button>
             <el-input-number
-              v-if="field.type === 'number'"
+              v-else-if="field.type === 'number'"
               v-model="settings.custom_data_configs[panel.name][field.key]"
               :min="field.min"
               :max="field.max"
@@ -171,6 +241,7 @@ function optionValue(option) {
               v-model="settings.custom_data_configs[panel.name][field.key]"
               :type="field.type === 'password' ? 'password' : field.type === 'textarea' ? 'textarea' : 'text'"
               :show-password="field.type === 'password'"
+              :readonly="field.readonly"
             />
           </el-form-item>
         </div>

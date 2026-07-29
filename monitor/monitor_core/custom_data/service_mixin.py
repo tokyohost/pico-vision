@@ -23,6 +23,7 @@ class CustomDataServiceMixin:
             self.arguments.collection_task_intervals,
             self.arguments.collection_task_logs,
             getattr(self.arguments, "custom_data_configs", {}),
+            getattr(self.arguments, "custom_data_enabled", {}),
         )
 
     def activate_custom_data_plugin(self, name):
@@ -44,6 +45,7 @@ class CustomDataServiceMixin:
             self.arguments.collection_task_intervals,
             getattr(self.arguments, "custom_data_configs", {}),
             self.arguments.collection_task_logs,
+            getattr(self.arguments, "custom_data_enabled", {}),
         )
 
     def schedule_custom_data_collection(self):

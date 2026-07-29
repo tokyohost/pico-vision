@@ -8,14 +8,14 @@
 import shutil
 import time
 
-import custom_data_support as _support
-from custom_data_manager import CustomDataManager, get_manager
-from custom_data_runtime import (
+from . import support as _support
+from .manager import CustomDataManager, get_manager
+from .runtime import (
     CustomDataCollectionCoordinator,
     CustomDataCollectionTask,
     CustomDataWorker,
 )
-from custom_data_support import (
+from .support import (
     CUSTOM_DATA_COLLECTION_POOL_CORE_WORKERS,
     CUSTOM_DATA_COLLECTION_POOL_MAX_WORKERS,
     CUSTOM_DATA_COLLECTION_QUEUE_CAPACITY,
@@ -45,6 +45,8 @@ from custom_data_support import (
     get_environment_root,
     get_runtime_python,
     normalize_plugin_configs,
+    normalize_plugin_enabled,
+    normalize_action_config,
 )
 
 _create_plugin_template = _support._create_plugin_template
