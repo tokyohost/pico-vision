@@ -69,6 +69,7 @@ DEFAULT_SETTINGS = {
     "qbittorrent_username": "",
     "qbittorrent_password": "",
     "qbittorrent_interval": 2.0,
+    "market_url": "",
     "update_url": "",
 }
 ARGUMENT_NAMES = {
@@ -215,6 +216,7 @@ class TraySettingsStore:
             settings.get("websocket_client_id") or DEFAULT_SETTINGS["websocket_client_id"]
         ).strip()[:96]
         settings["collection_task_logs"] = bool(settings.get("collection_task_logs", True))
+        settings["market_url"] = str(settings.get("market_url") or "").strip()
         try:
             settings["lan_probe_port"] = int(settings["lan_probe_port"])
             if not 1 <= settings["lan_probe_port"] <= 65535:

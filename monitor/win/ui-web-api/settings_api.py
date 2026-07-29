@@ -95,6 +95,11 @@ class SettingsApiMixin:
         updated["force_usb_cdc"] = bool(updated.get("force_usb_cdc", False))
         updated["collection_task_logs"] = bool(updated["collection_task_logs"])
         updated["qbittorrent_enabled"] = bool(updated["qbittorrent_enabled"])
+        updated["market_url"] = str(updated.get("market_url") or "").strip()
+        if updated["market_url"] and not updated["market_url"].lower().startswith(
+            ("https://", "http://")
+        ):
+            raise ValueError("插件市场地址必须以 http:// 或 https:// 开头")
         updated["collection_task_intervals"] = normalize_collection_task_intervals(
             updated.get("collection_task_intervals")
         )

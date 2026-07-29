@@ -8,6 +8,7 @@ import CustomDataPage from './components/CustomDataPage.vue'
 import DevicePage from './components/DevicePage.vue'
 import GlobalLoadingOverlay from './components/GlobalLoadingOverlay.vue'
 import LogsPage from './components/LogsPage.vue'
+import MarketPage from './components/MarketPage.vue'
 import NetworkPage from './components/NetworkPage.vue'
 import SettingsPage from './components/SettingsPage.vue'
 import StylesPage from './components/StylesPage.vue'
@@ -42,6 +43,7 @@ const menuItems = [
   ['network', '无线与客户端', 'Connection', '管理无线网络档案、连接优先级与客户端访问状态。'],
   ['styles', '屏幕样式', 'Brush', '选择屏幕与待机样式，预览详情或管理设备自定义样式。'],
   ['data', '插件管理', 'DataAnalysis', '管理数据采集插件及其运行配置。'],
+  ['market', '插件市场', 'Shop', '浏览、下载并管理 OmniWatch 数据采集插件。'],
   ['update', '检查更新', 'Upload', '检查设备固件、底层 SDK 与桌面控制中心的新版本。'],
   ['logs', '运行日志', 'Document', '查看实时运行记录，定位采集、通信与设备异常。'],
   ['about', '关于', 'InfoFilled', '查看应用版本、作者信息与本地数据目录。'],
@@ -166,7 +168,7 @@ onBeforeUnmount(() => {
     />
 
     <el-container>
-      <el-header class="topbar">
+      <el-header v-if="activePage !== 'market'" class="topbar">
         <div>
           <h1>{{ pageTitle }}</h1>
           <p>{{ pageDescription }}</p>
@@ -176,7 +178,7 @@ onBeforeUnmount(() => {
         </el-button>
       </el-header>
 
-      <el-main class="content">
+      <el-main class="content" :class="{ 'market-content': activePage === 'market' }">
         <SettingsPage
           v-if="activePage === 'settings'"
           :metadata="metadata"
@@ -204,6 +206,11 @@ onBeforeUnmount(() => {
           v-else-if="activePage === 'data'"
           @plugins-changed="bootstrap"
           @catalog-updated="updateStyleCatalog"
+        />
+        <MarketPage
+          v-else-if="activePage === 'market'"
+          :application-version="metadata.version"
+          :configured-url="settings.market_url"
         />
         <UpdatePage v-else-if="activePage === 'update'" :device="device" :application-version="metadata.version" />
         <LogsPage v-else-if="activePage === 'logs'" />

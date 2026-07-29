@@ -117,6 +117,15 @@ body {
 .topbar h1, .page-title h2 { margin: 0; color: #f6f8fc; font-size: 24px; }
 .topbar p, .page-title p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
 .content { position: relative; padding: 26px 32px 92px; overflow: auto; }
+.content.market-content { padding: 0; overflow: hidden; }
+.market-frame-page { width: 100%; height: 100%; min-height: 0; }
+.market-frame {
+  display: block; width: 100%; height: 100%; border: 0; background: #0b1020;
+}
+.market-frame-empty {
+  display: grid; height: 100%; min-height: 360px; place-items: center; padding: 32px;
+}
+.market-frame-empty .el-empty { max-width: 520px; }
 .page-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
 .two-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }

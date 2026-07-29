@@ -21,6 +21,12 @@ npm run dev
 
 Vite 开发页不具备 Python 桥接对象，业务动作需要在 pywebview 宿主内联调。
 
+## 插件市场
+
+“插件市场”菜单通过 iframe 加载市场页面，并自动附加
+`embed=1&theme=dark`。Monitor 版本为 `development` 时使用
+`http://localhost/market`；正式版本使用控制中心“设置 → 插件市场”中保存的地址。
+
 ## 生产构建
 
 ```powershell

@@ -186,6 +186,24 @@ function isActionRunning(panel, item) {
       </div>
     </el-card>
 
+    <el-card shadow="never">
+      <template #header><span>插件市场</span></template>
+      <el-form label-position="top">
+        <el-form-item label="正式版市场地址">
+          <el-input
+            v-model="settings.market_url"
+            placeholder="https://example.com/market"
+          />
+        </el-form-item>
+        <el-alert
+          title="development 版本固定使用 http://localhost/market，正式版本使用此地址。"
+          type="info"
+          :closable="false"
+          show-icon
+        />
+      </el-form>
+    </el-card>
+
     <el-card v-for="panel in metadata.customDataPanels" :key="panel.name" shadow="never">
       <template #header>
         <div class="card-header">
