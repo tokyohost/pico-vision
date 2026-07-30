@@ -18,14 +18,13 @@ class UploadStyleCommand(CommandStrategy):
 
     def execute(self, params, context):
         """根据动作开始上传、追加源码块或完成样式校验。"""
-        del context
         action = params.get("action")
         if action == "begin":
             return self._begin(params)
         if action == "data":
             return self._append(params)
         if action == "finish":
-            return self._finish(params)
+            return self._finish(params, context)
         if action == "abort":
             self._abort()
             return {"aborted": True}
@@ -110,7 +109,7 @@ class UploadStyleCommand(CommandStrategy):
         session["sequence"] += 1
         return {"sequence": sequence, "written": written}
 
-    def _finish(self, params):
+    def _finish(self, params, context=None):
         """核对接收长度，将临时文件原子改名并加载样式完成校验。"""
         session = self._require_session(params)
         if session["written"] != session["size"]:
@@ -120,6 +119,11 @@ class UploadStyleCommand(CommandStrategy):
         filename = session["filename"]
         style_name = session["style_name"]
         backup_path = session["backup_path"]
+        renderer = (
+            context.service("renderer", required=False)
+            if context is not None else None
+        )
+        reloaded = False
         try:
             from styles.style_plugins import create_style, release_style
             if session["overwrite"] and self._exists(target_path):
@@ -131,6 +135,12 @@ class UploadStyleCommand(CommandStrategy):
             if getattr(style, "name", None) != style_name:
                 raise ValueError("样式类返回了冲突的样式名")
             release_style(style_name)
+            if (
+                renderer is not None
+                and renderer.style_name() == style_name
+            ):
+                renderer.reload_style(style_name)
+                reloaded = True
             self._remove(backup_path)
         except Exception as error:
             try:
@@ -148,7 +158,11 @@ class UploadStyleCommand(CommandStrategy):
             self._session = None
             raise CommandError("STYLE_VALIDATION_FAILED:" + str(error)) from error
         self._session = None
-        return {"filename": filename, "style_name": style_name}
+        return {
+            "filename": filename,
+            "style_name": style_name,
+            "reloaded": reloaded,
+        }
 
     def _require_session(self, params):
         """返回匹配上传标识的活动会话，拒绝串线的数据块。"""
