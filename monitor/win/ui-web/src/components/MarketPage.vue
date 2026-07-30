@@ -10,6 +10,7 @@ const props = defineProps({
 })
 const marketFrame = ref(null)
 const installedPlugins = ref([])
+const inventoryReady = ref(false)
 const monitorChannel = (
   window.crypto?.randomUUID?.()
   || `monitor-${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -45,24 +46,37 @@ function delay(milliseconds) {
 /**
  * 将 Monitor 身份和通信通道注入已加载的市场 iframe。
  */
-async function injectMonitorHook() {
-  if (!marketFrame.value?.contentWindow || !marketUrl.value) return
+async function loadInstalledPlugins() {
   try {
     const result = await invoke('data.list')
     installedPlugins.value = (result.items || []).map((item) => ({
       key: String(item.key || ''),
       version: String(item.version || '')
     })).filter((item) => item.key)
-  } catch {
+  } catch (error) {
     installedPlugins.value = []
+    ElMessage.warning(`读取已安装插件失败：${error?.message || String(error)}`)
+  } finally {
+    inventoryReady.value = true
   }
+}
+
+/**
+ * 将 Monitor 身份、通信通道和已安装插件注入市场 iframe。
+ */
+function injectMonitorHook() {
+  if (!marketFrame.value?.contentWindow || !marketUrl.value || !inventoryReady.value) return
   const targetOrigin = new URL(marketUrl.value).origin
+  const installedPluginSnapshot = installedPlugins.value.map((plugin) => ({
+    key: String(plugin.key || ''),
+    version: String(plugin.version || ''),
+  }))
   marketFrame.value.contentWindow.postMessage({
     source: 'omniwatch-monitor',
     type: 'host-ready',
     channel: monitorChannel,
     version: props.applicationVersion,
-    installedPlugins: installedPlugins.value,
+    installedPlugins: installedPluginSnapshot,
   }, targetOrigin)
 }
 
@@ -96,6 +110,7 @@ async function installMarketPlugin(payload) {
     }
   })
   ElMessage.success(`插件“${pluginName}”已安装，可在插件管理中启用`)
+  await loadInstalledPlugins()
   injectMonitorHook()
 }
 
@@ -123,14 +138,14 @@ async function handleMarketMessage(event) {
 }
 
 window.addEventListener('message', handleMarketMessage)
-onMounted(injectMonitorHook)
+onMounted(loadInstalledPlugins)
 onBeforeUnmount(() => window.removeEventListener('message', handleMarketMessage))
 </script>
 
 <template>
   <section class="market-frame-page">
     <iframe
-      v-if="marketUrl"
+      v-if="marketUrl && inventoryReady"
       ref="marketFrame"
       class="market-frame"
       :src="marketUrl"
@@ -139,12 +154,16 @@ onBeforeUnmount(() => window.removeEventListener('message', handleMarketMessage)
       allow="clipboard-read; clipboard-write"
       @load="injectMonitorHook"
     />
-    <div v-else class="market-frame-empty">
+    <div v-else-if="!marketUrl" class="market-frame-empty">
       <el-empty description="尚未配置有效的插件市场地址">
         <template #description>
           <p>请在“设置 → 插件市场”中填写以 http:// 或 https:// 开头的市场地址。</p>
         </template>
       </el-empty>
+    </div>
+    <div v-else class="market-frame-empty">
+      <el-icon class="is-loading"><Loading /></el-icon>
+      <p>正在读取已安装插件...</p>
     </div>
   </section>
 </template>

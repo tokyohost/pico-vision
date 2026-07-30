@@ -1,0 +1,781 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AIAssistantCustomInstructionsStorage">
+    <option name="instructions">
+      <map>
+        <entry key="AIAssistant.VCS.GenerateCommitMessage">
+          <value>
+            <AIAssistantStoredInstruction>
+              <option name="actionId" value="AIAssistant.VCS.GenerateCommitMessage" />
+              <option name="content" value="Avoid overly verbose descriptions or unnecessary details.use chinese,fix/feat ... style" />
+            </AIAssistantStoredInstruction>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="9f3d9afc-1d7d-4695-bdc4-14914860e0f1" name="Changes" comment="feat: 新增 HTTP 管理页面并优化 Web 界面功能&#10;&#10;- 引入跨平台 HTTP 管理页面，支持浏览器访问与操作，增加鉴权和配置管理功能&#10;- 添加 WebSocket 代理，兼容 invoke 调用协议，支持 HTTP 与桌面调用交互一致性&#10;- 更新设置页面，支持启用 HTTP 管理服务并配置端口和密钥&#10;- 优化 UI 布局和样式，调整多列布局适应不同屏幕宽度&#10;- 添加完整测试用例，覆盖服务启动、鉴权、请求代理及端口冲突处理">
+      <change afterPath="$PROJECT_DIR$/.idea/copyright/profiles_settings.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/Project_Default.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/micropython-tools-settings.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/pico-project.iml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/monitor/win/ui-web/package-lock.json" beforeDir="false" afterPath="$PROJECT_DIR$/monitor/win/ui-web/package-lock.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/monitor/win/ui-web/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/monitor/win/ui-web/package.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/monitor/win/ui-web/src/components/MarketPage.vue" beforeDir="false" afterPath="$PROJECT_DIR$/monitor/win/ui-web/src/components/MarketPage.vue" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="ChangesViewManager">
+    <option name="groupingKeys">
+      <option value="directory" />
+      <option value="repository" />
+    </option>
+  </component>
+  <component name="EmbeddingIndexingInfo">
+    <option name="cachedIndexableFilesCount" value="3390" />
+    <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+    <option name="RESET_MODE" value="HARD" />
+  </component>
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;tokyohost&quot;
+  }
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/tokyohost/pico-vision&quot;,
+    &quot;accountId&quot;: &quot;4ef49eee-e68d-4892-890c-aa5f0adb5830&quot;
+  }
+}</component>
+  <component name="McpProjectServerCommands">
+    <commands />
+    <urls />
+  </component>
+  <component name="ProblemsViewState">
+    <option name="selectedTabId" value="AISelfReview" />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 0
+}</component>
+  <component name="ProjectId" id="3Fq04GK6YCAm0hwSzkWx92b5etu" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;Python tests.Python tests in test_monitor.py.executor&quot;: &quot;Run&quot;,
+    &quot;Python.mpremote_stream_copy.executor&quot;: &quot;Run&quot;,
+    &quot;Python.omniwatch_sensor_host.executor&quot;: &quot;Run&quot;,
+    &quot;Python.pico_client.executor&quot;: &quot;Run&quot;,
+    &quot;Python.pico_monitor.executor&quot;: &quot;Run&quot;,
+    &quot;Python.python -m pip install -r requirements.txt.executor&quot;: &quot;Run&quot;,
+    &quot;Python.send_frame.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,
+    &quot;ai.playground.ignore.import.keys.banner.in.settings&quot;: &quot;true&quot;,
+    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;master&quot;,
+    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;E:/WorkSpace/fn-vision/pico-project/3d/2in1/2p4-10pin/verify-v7/3mf&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;dev.micropythontools.configurable&quot;,
+    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
+    &quot;ts.external.directory.path&quot;: &quot;D:\\JetbrainsApp\\PyCharm Professional\\plugins\\javascript-plugin\\jsLanguageServicesImpl\\external&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
+  }
+}</component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="E:\WorkSpace\fn-vision\pico-project\3d\2in1\2p4-10pin\verify-v7\3mf" />
+      <recent name="E:\WorkSpace\fn-vision\pico-project\pcb\2in1PCB" />
+      <recent name="E:\WorkSpace\fn-vision\pico-project\3d\2in1\2p4-10pin\verify-v7" />
+      <recent name="E:\WorkSpace\fn-vision\pico-project\esp32\tools" />
+      <recent name="E:\WorkSpace\fn-vision\pico-project\3d\2in1\2p4-10pin\verify-v6" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="E:\WorkSpace\fn-vision\pico-project\driver\2040" />
+      <recent name="E:\WorkSpace\fn-vision\pico-project\picoDoc" />
+      <recent name="E:\WorkSpace\fn-vision\pico-project\pico" />
+    </key>
+  </component>
+  <component name="RunManager" selected="Python.mpremote_stream_copy">
+    <configuration name="mpremote_stream_copy" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="pico-project" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/tools" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="RUN_TOOL" value="" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/tools/mpremote_stream_copy.py" />
+      <option name="PARAMETERS" value="COM25" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="omniwatch_sensor_host" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="pico-project" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/monitor/sensorhost/python" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="RUN_TOOL" value="" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/monitor/sensorhost/python/omniwatch_sensor_host.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="pico_client" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="pico-project" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="RUN_TOOL" value="" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/pico_client.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="pico_monitor" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="pico-project" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="SDK_NAME" value="Python 3.13 (pico-project)" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/monitor" />
+      <option name="IS_MODULE_SDK" value="false" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="RUN_TOOL" value="" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/monitor/pico_monitor.py" />
+      <option name="PARAMETERS" value="--disk-health-test-index 2 --disk-health-test-level 3 --qbittorrent-address http://113.20.8.174:48080 --qbittorrent-username admin --qbittorrent-password Iloveyou520..! --lcd-style game2 --dev --interval 0.5" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="Python tests in test_monitor.py" type="tests" factoryName="Autodetect" temporary="true" nameIsGenerated="true">
+      <module name="pico-project" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="RUN_TOOL" value="" />
+      <option name="_new_additionalArguments" value="&quot;&quot;" />
+      <option name="_new_target" value="&quot;$PROJECT_DIR$/monitor/tests/test_monitor.py&quot;" />
+      <option name="_new_targetType" value="&quot;PATH&quot;" />
+      <method v="2" />
+    </configuration>
+    <list>
+      <item itemvalue="Python.mpremote_stream_copy" />
+      <item itemvalue="Python.omniwatch_sensor_host" />
+      <item itemvalue="Python.pico_client" />
+      <item itemvalue="Python.pico_monitor" />
+      <item itemvalue="Python tests.Python tests in test_monitor.py" />
+    </list>
+    <recent_temporary>
+      <list>
+        <item itemvalue="Python.mpremote_stream_copy" />
+        <item itemvalue="Python.omniwatch_sensor_host" />
+        <item itemvalue="Python.pico_monitor" />
+        <item itemvalue="Python tests.Python tests in test_monitor.py" />
+        <item itemvalue="Python.pico_client" />
+      </list>
+    </recent_temporary>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-js-predefined-d6986cc7102b-9b0f141eb926-JavaScript-PY-253.29346.308" />
+        <option value="bundled-python-sdk-ca5e2b39c7df-6e1f45a539f7-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-253.29346.308" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="9f3d9afc-1d7d-4695-bdc4-14914860e0f1" name="Changes" comment="" />
+      <created>1782787098643</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1782787098643</updated>
+      <workItem from="1782787099771" duration="14991000" />
+      <workItem from="1782869271125" duration="62157000" />
+      <workItem from="1783085498032" duration="122000" />
+      <workItem from="1783085637509" duration="331000" />
+      <workItem from="1783085979812" duration="9332000" />
+      <workItem from="1783300249857" duration="101521000" />
+      <workItem from="1783588162520" duration="394000" />
+      <workItem from="1783588627802" duration="68492000" />
+      <workItem from="1783997387750" duration="22161000" />
+      <workItem from="1784075330260" duration="112395000" />
+      <workItem from="1785285745592" duration="18252000" />
+      <workItem from="1785381652830" duration="2680000" />
+    </task>
+    <task id="LOCAL-00164" summary="feat: 添加 esp32-s3 支持到 Github Actions 构建配置">
+      <option name="closed" value="true" />
+      <created>1783931452713</created>
+      <option name="number" value="00164" />
+      <option name="presentableId" value="LOCAL-00164" />
+      <option name="project" value="LOCAL" />
+      <updated>1783931452713</updated>
+    </task>
+    <task id="LOCAL-00165" summary="feat: 添加 ESP32-S3 Wi-Fi 管理命令、字体测试及 LCD 驱动相关单元测试">
+      <option name="closed" value="true" />
+      <created>1783994373285</created>
+      <option name="number" value="00165" />
+      <option name="presentableId" value="LOCAL-00165" />
+      <option name="project" value="LOCAL" />
+      <updated>1783994373285</updated>
+    </task>
+    <task id="LOCAL-00166" summary="feat: 添加 Wi-Fi 设置支持，优化 Wi-Fi 操作流程并更新设备 UI">
+      <option name="closed" value="true" />
+      <created>1783995113535</created>
+      <option name="number" value="00166" />
+      <option name="presentableId" value="LOCAL-00166" />
+      <option name="project" value="LOCAL" />
+      <updated>1783995113535</updated>
+    </task>
+    <task id="LOCAL-00167" summary="fix: 删除 Fusion Pixel 字库与相关脚本、测试  &#10;feat: 添加 WebSocket 与传输管理器测试, 新增日志控制选项优化任务日志">
+      <option name="closed" value="true" />
+      <created>1784010654163</created>
+      <option name="number" value="00167" />
+      <option name="presentableId" value="LOCAL-00167" />
+      <option name="project" value="LOCAL" />
+      <updated>1784010654163</updated>
+    </task>
+    <task id="LOCAL-00168" summary="fix/feat: 添加 ESP32-S3 USB 传输优化及 CDC 框架功能，新增 JSON ACK 支持与超时处理逻辑">
+      <option name="closed" value="true" />
+      <created>1784014391635</created>
+      <option name="number" value="00168" />
+      <option name="presentableId" value="LOCAL-00168" />
+      <option name="project" value="LOCAL" />
+      <updated>1784014391635</updated>
+    </task>
+    <task id="LOCAL-00169" summary="feat: 添加批量渲染时间预算和发送间隔测试，优化 ESP32-S3 渲染逻辑">
+      <option name="closed" value="true" />
+      <created>1784015813096</created>
+      <option name="number" value="00169" />
+      <option name="presentableId" value="LOCAL-00169" />
+      <option name="project" value="LOCAL" />
+      <updated>1784015813096</updated>
+    </task>
+    <task id="LOCAL-00170" summary="feat: 添加 ESP32-S3 双核渲染及通信优化方案文档，新增时钟刷新与垃圾回收策略单元测试">
+      <option name="closed" value="true" />
+      <created>1784017881834</created>
+      <option name="number" value="00170" />
+      <option name="presentableId" value="LOCAL-00170" />
+      <option name="project" value="LOCAL" />
+      <updated>1784017881834</updated>
+    </task>
+    <task id="LOCAL-00171" summary="feat: 添加 ESP32-S3 模块及脚本，包括 LCD 渲染、色彩管理、字体支持和画布绘图功能">
+      <option name="closed" value="true" />
+      <created>1784019624697</created>
+      <option name="number" value="00171" />
+      <option name="presentableId" value="LOCAL-00171" />
+      <option name="project" value="LOCAL" />
+      <updated>1784019624697</updated>
+    </task>
+    <task id="LOCAL-00172" summary="feat: 添加 ESP32-S3 渲染服务及线程优化支持，增加固定邮箱、控制队列实现及单元测试">
+      <option name="closed" value="true" />
+      <created>1784021047639</created>
+      <option name="number" value="00172" />
+      <option name="presentableId" value="LOCAL-00172" />
+      <option name="project" value="LOCAL" />
+      <updated>1784021047640</updated>
+    </task>
+    <task id="LOCAL-00173" summary="feat: 添加 ESP32-S3 LCD 渲染优化及传输后端切换支持，新增原生 DMA 实现、配置文档与单元测试 @固件DMA 适配version">
+      <option name="closed" value="true" />
+      <created>1784080761542</created>
+      <option name="number" value="00173" />
+      <option name="presentableId" value="LOCAL-00173" />
+      <option name="project" value="LOCAL" />
+      <updated>1784080761542</updated>
+    </task>
+    <task id="LOCAL-00174" summary="feat: 添加 Wi-Fi 忘记网络功能及相关测试&#10;&#10;- 为 ESP32-S3 和 PicoRP2040 添加 `wifi.forget` 命令策略，支持删除已保存的 Wi-Fi 凭据&#10;- 优化扫描及连接的状态恢复逻辑，新增防冲突控制流程&#10;- 更新 Wi-Fi 管理及 UI 页面，支持忘记网络的用户交互功能&#10;- 添加单元测试、命令解析验证与接口文档更新">
+      <option name="closed" value="true" />
+      <created>1784081987299</created>
+      <option name="number" value="00174" />
+      <option name="presentableId" value="LOCAL-00174" />
+      <option name="project" value="LOCAL" />
+      <updated>1784081987299</updated>
+    </task>
+    <task id="LOCAL-00175" summary="feat: 添加 Pico 客户端 JSON ACK 状态机、设备命令管理及协议帧编解码支持&#10;&#10;- 增加 JSON ACK 状态机，用于请求 ID 管理、超时处理及端到端耗时记录功能 (pico_ack.py)  &#10;- 封装 Pico 的 Wi-Fi、设备重启、截图及样式管理等业务命令 (pico_commands.py)  &#10;- 完成协议帧的构建、解析及 JSONZ 数据包压缩功能 (pico_protocol.py)  &#10;- 新增快照分片与转换逻辑，用于缩减传输数据量 (pico_snapshot.py)  &#10;- 优化 WebSocket 模块异常处理，增强连接可靠性 (websocket_transport.py)  &#10;- 添加局域网探测参数配置及子网扫描限制 (lan_websocket_discovery.py)  &#10;- 加入 LAN 扫描相关设置及优化后台任务管理逻辑 (settings.py, worker_controller.py)">
+      <option name="closed" value="true" />
+      <created>1784085413697</created>
+      <option name="number" value="00175" />
+      <option name="presentableId" value="LOCAL-00175" />
+      <option name="project" value="LOCAL" />
+      <updated>1784085413697</updated>
+    </task>
+    <task id="LOCAL-00176" summary="feat: 添加 ESP32-S3 C 固件帧缓冲与脏区检测优化支持  &#10;&#10;- 增加配置选项 `RENDER_FRAME_POLICY`，支持最新帧覆盖与阻塞等待策略  &#10;- 引入完整 RAM 画布模式，实现全屏绘制与原生后端增量传输优化  &#10;- 提升 C 固件脏区检测效率，并合并相邻瓦片优化改动区域  &#10;- 更新 LCD 渲染接口，支持横竖屏切换与画布尺寸动态调整  &#10;- 修改 `transfer_backend.py` 支持 Native DMA API 版本 2  &#10;- 添加新单元测试确保脏区检测与失败帧哈希基线一致性  &#10;- 更新文档，详细说明内存与 LCD 传输后端切换策略">
+      <option name="closed" value="true" />
+      <created>1784087757948</created>
+      <option name="number" value="00176" />
+      <option name="presentableId" value="LOCAL-00176" />
+      <option name="project" value="LOCAL" />
+      <updated>1784087757948</updated>
+    </task>
+    <task id="LOCAL-00177" summary="feat: 添加 ESP32-S3 WebSocket 客户端管理及策略更新支持&#10;&#10;- 增加 WebSocket 客户端启用状态和优先级更新命令 (websocket_client_update.py)&#10;- 添加客户端连接记录查询命令及实现 (websocket_clients_list.py)&#10;- 实现 WebSocket 客户端持久化策略管理与传输服务交互 (websocket_clients.py)&#10;- 扩展监控服务支持串行执行客户端管理任务 (websocket_client_commands.py)&#10;- 开发针对 WebSocket 客户端优先级和连接策略的单元测试 (test_esp32_websocket_clients.py)&#10;- 新增管理窗口，用于显示客户端清单及修改策略 (websocket_clients_window.py)">
+      <option name="closed" value="true" />
+      <created>1784099474180</created>
+      <option name="number" value="00177" />
+      <option name="presentableId" value="LOCAL-00177" />
+      <option name="project" value="LOCAL" />
+      <updated>1784099474180</updated>
+    </task>
+    <task id="LOCAL-00178" summary="feat: 添加 ESP32-S3 文泉驿点阵字体测试样式及相关测试&#10;&#10;- 新增 `wqy_8x16_test` 样式，用于展示文泉驿 8x16 点阵字体及清晰度测试&#10;- 添加 `test_esp32_wqy_style.py` 用于验证样式注册、脏区刷新及字体绘制一致性&#10;- 优化设备 `show_pico_information` 方法，支持探测失败时安全返回状态&#10;- 更新局域网 WebSocket 扫描逻辑，完善端口筛查与连接握手流程">
+      <option name="closed" value="true" />
+      <created>1784100269563</created>
+      <option name="number" value="00178" />
+      <option name="presentableId" value="LOCAL-00178" />
+      <option name="project" value="LOCAL" />
+      <updated>1784100269563</updated>
+    </task>
+    <task id="LOCAL-00179" summary="feat: 更新设备管理窗口及样式优化&#10;&#10;- 增加设备连接方式与连接地址的显示支持&#10;- 实现连接方式与地址的格式化工具函数&#10;- 优化设备探测逻辑，补充 Wi-Fi 属性支持&#10;- 更新游戏监控样式，拆分功耗显示及增加历史图&#10;- 修复 `_history` 方法填充逻辑，增强绘图灵活性">
+      <option name="closed" value="true" />
+      <created>1784101797789</created>
+      <option name="number" value="00179" />
+      <option name="presentableId" value="LOCAL-00179" />
+      <option name="project" value="LOCAL" />
+      <updated>1784101797789</updated>
+    </task>
+    <task id="LOCAL-00180" summary="feat: 添加 ESP32-S3 热力监控样式及测试&#10;&#10;- 新增 `thermal_watch` 样式，实现横屏热力监控 UI 设计&#10;- 支持动态脏区刷新、卡片布局、色彩编码及趋势图绘制&#10;- 添加 `test_thermal_watch_style.py` 测试文件，验证样式注册、绘图指令及脏区选择逻辑">
+      <option name="closed" value="true" />
+      <created>1784104227736</created>
+      <option name="number" value="00180" />
+      <option name="presentableId" value="LOCAL-00180" />
+      <option name="project" value="LOCAL" />
+      <updated>1784104227737</updated>
+    </task>
+    <task id="LOCAL-00181" summary="feat: 添加待机时钟样式及系统待机支持&#10;&#10;- 新增 `idle` 待机时钟样式，适配 ESP32-S3 和 PicoRP2040&#10;- 支持动态刷新区域及中文时间、星期显示&#10;- 添加待机超时 (`idle_timeout`) 配置及样式切换逻辑&#10;- 增强 JSON 快照管理，记录最后更新时间供待机状态判断&#10;- 更新主循环逻辑，支持待机启用和自动刷新">
+      <option name="closed" value="true" />
+      <created>1784111184676</created>
+      <option name="number" value="00181" />
+      <option name="presentableId" value="LOCAL-00181" />
+      <option name="project" value="LOCAL" />
+      <updated>1784111184676</updated>
+    </task>
+    <task id="LOCAL-00182" summary="feat: 添加 ESP32-S3 SDK 受控 USB 刷写及测试支持&#10;&#10;- 新增 `sdk.bootloader` 命令，仅支持通过物理 USB 进入 ROM 下载模式&#10;- 添加 SDK 镜像校验工具，验证分区表、factory 应用及 SHA-256&#10;- 通过隔离子进程调用 esptool 刷写 ESP32-S3 完整合并 bin&#10;- 支持设备握手日志解析，显示 SDK 版本及刷写能力&#10;- 更新设备管理窗口，增加 SDK 刷写按钮及验证逻辑&#10;- 添加引导流程锁及全新单元测试，确保多串口环境稳定性">
+      <option name="closed" value="true" />
+      <created>1784173070606</created>
+      <option name="number" value="00182" />
+      <option name="presentableId" value="LOCAL-00182" />
+      <option name="project" value="LOCAL" />
+      <updated>1784173070606</updated>
+    </task>
+    <task id="LOCAL-00183" summary="feat: 优化待机样式支持秒级时间与 Wi-Fi 状态显示，并改进 JSON ACK 逻辑&#10;&#10;- 调整待机样式时间显示，支持秒级进度和实时更新&#10;- 添加 Wi-Fi 状态提取与屏幕右上角信息显示&#10;- 优化 `adaptive transmit` 逻辑，增加快速启动、慢 ACK 检测及超时指数退避机制&#10;- 增强 SDK 刷写，提供默认复位策略支持及多端口验证&#10;- 持续改进安装指引及重新设计 2.4 寸屏幕固定方案">
+      <option name="closed" value="true" />
+      <created>1784262447599</created>
+      <option name="number" value="00183" />
+      <option name="presentableId" value="LOCAL-00183" />
+      <option name="project" value="LOCAL" />
+      <updated>1784262447599</updated>
+    </task>
+    <task id="LOCAL-00184" summary="feat: 添加 ST7789 2.4 英寸 10 针屏幕支持及相关测试&#10;&#10;- 新增 ST7789 2.4 英寸 10 针 A 款屏幕设备档案&#10;- 配置屏幕参数、固定 SPI2 脚位及外部低端 MOSFET 背光方案&#10;- 添加屏幕档案测试，验证型号解析、脚位定义及反色支持&#10;- 更新默认屏幕配置和色彩档案映射表&#10;- 补充屏幕连接说明及背光模块接线示例">
+      <option name="closed" value="true" />
+      <created>1784378620904</created>
+      <option name="number" value="00184" />
+      <option name="presentableId" value="LOCAL-00184" />
+      <option name="project" value="LOCAL" />
+      <updated>1784378620904</updated>
+    </task>
+    <task id="LOCAL-00185" summary="feat: 添加 ST7789 2.4 英寸 10 针屏幕支持及相关测试">
+      <option name="closed" value="true" />
+      <created>1784688045053</created>
+      <option name="number" value="00185" />
+      <option name="presentableId" value="LOCAL-00185" />
+      <option name="project" value="LOCAL" />
+      <updated>1784688045053</updated>
+    </task>
+    <task id="LOCAL-00186" summary="feat: 整秒显示">
+      <option name="closed" value="true" />
+      <created>1784779297799</created>
+      <option name="number" value="00186" />
+      <option name="presentableId" value="LOCAL-00186" />
+      <option name="project" value="LOCAL" />
+      <updated>1784779297799</updated>
+    </task>
+    <task id="LOCAL-00187" summary="feat: 添加自定义数据热更新及 Web UI 接口支持&#10;&#10;- 新增 `update_runtime_settings` 方法，支持任务频率及日志开关热更新  &#10;- 添加 Web UI 接口模块及其相关依赖（Vue, Element Plus）  &#10;- 优化 Windows 托盘逻辑，集成 Web UI 启动和关闭环节  &#10;- 调整 UI 模块引用，精简依赖及功能模块">
+      <option name="closed" value="true" />
+      <created>1784789290134</created>
+      <option name="number" value="00187" />
+      <option name="presentableId" value="LOCAL-00187" />
+      <option name="project" value="LOCAL" />
+      <updated>1784789290134</updated>
+    </task>
+    <task id="LOCAL-00188" summary="feat: 添加设备管理中 ESP32-S3 SDK USB 刷写支持及相关界面更新&#10;&#10;- 引入动态设备状态刷新，合并实时数据及设备详情&#10;- 支持 SDK 镜像选择与校验，并新增串口强刷模式&#10;- 优化界面交互，新增 Log 页实时查看与滚动控制&#10;- 更新样式，调整表格及日志显示的暗色主题">
+      <option name="closed" value="true" />
+      <created>1784791252152</created>
+      <option name="number" value="00188" />
+      <option name="presentableId" value="LOCAL-00188" />
+      <option name="project" value="LOCAL" />
+      <updated>1784791252152</updated>
+    </task>
+    <task id="LOCAL-00189" summary="fix: 优化界面样式与语言描述，增强用户体验&#10;&#10;- 更新多处界面提示语，移除冗余信息，优化文案表述&#10;- 替换深色表格样式为主题化表格，提升可读性及一致性&#10;- 添加滚动条样式及加载组件的统一设计&#10;- 改进自定义数据插件管理，加入环境安装及依赖检测逻辑&#10;- 扩展设备 SDK 更新检查，支持多类别与资源匹配验证&#10;- 优化 `StylesPage` 样式详情功能，增加预览及键盘导航">
+      <option name="closed" value="true" />
+      <created>1784864500417</created>
+      <option name="number" value="00189" />
+      <option name="presentableId" value="LOCAL-00189" />
+      <option name="project" value="LOCAL" />
+      <updated>1784864500417</updated>
+    </task>
+    <task id="LOCAL-00190" summary="fix: 优化界面样式与语言描述，增强用户体验&#10;&#10;- 更新多处界面提示语，移除冗余信息，优化文案表述&#10;- 替换深色表格样式为主题化表格，提升可读性及一致性&#10;- 添加滚动条样式及加载组件的统一设计&#10;- 改进自定义数据插件管理，加入环境安装及依赖检测逻辑&#10;- 扩展设备 SDK 更新检查，支持多类别与资源匹配验证&#10;- 优化 `StylesPage` 样式详情功能，增加预览及键盘导航">
+      <option name="closed" value="true" />
+      <created>1784864913406</created>
+      <option name="number" value="00190" />
+      <option name="presentableId" value="LOCAL-00190" />
+      <option name="project" value="LOCAL" />
+      <updated>1784864913406</updated>
+    </task>
+    <task id="LOCAL-00191" summary="fix: 增强 ESP32-S3 待机界面样式及 MicroPython 兼容支持&#10;&#10;- 新增 MicroPython 原生代码装饰器的跨解释器兼容模块&#10;- 调整待机日志字体配置，统一引用 `LOG_FONT_NAME`&#10;- 优化日志文本样式，改为全大写提高可读性">
+      <option name="closed" value="true" />
+      <created>1784868126019</created>
+      <option name="number" value="00191" />
+      <option name="presentableId" value="LOCAL-00191" />
+      <option name="project" value="LOCAL" />
+      <updated>1784868126019</updated>
+    </task>
+    <task id="LOCAL-00192" summary="fix: 优化界面样式与功能，改善用户体验&#10;&#10;- 更新多处界面提示文案，精简描述，移除冗余信息&#10;- 添加自定义屏幕样式教程链接及样式滚动条主题&#10;- 调整表格及布局样式，提升表格可读性及排版一致性&#10;- 优化更新页面，新增固件和 SDK 更新确认提示及进度展示&#10;- 增强 Web UI 图标支持，统一加载及转换图标格式">
+      <option name="closed" value="true" />
+      <created>1784878297763</created>
+      <option name="number" value="00192" />
+      <option name="presentableId" value="LOCAL-00192" />
+      <option name="project" value="LOCAL" />
+      <updated>1784878297763</updated>
+    </task>
+    <task id="LOCAL-00193" summary="fix: 调整 ST7789 2.4 寸屏幕外壳设计及固定方案&#10;&#10;- 修正显示凹槽位置与裸屏中心偏移问题，偏移距离增加 1mm，总偏移 2.92mm  &#10;- 优化对侧插片卡槽和 +Y 螺丝侧设计，增强屏幕固定稳定性  &#10;- 更新 Type-C 开孔与接口压盖设计，改进限位和安装便捷性  &#10;- 调整外壳整体尺寸至 50 x 72.4mm，改进边框对称性  &#10;- 优化结构参数输出和设计校验逻辑">
+      <option name="closed" value="true" />
+      <created>1784888082003</created>
+      <option name="number" value="00193" />
+      <option name="presentableId" value="LOCAL-00193" />
+      <option name="project" value="LOCAL" />
+      <updated>1784888082003</updated>
+    </task>
+    <task id="LOCAL-00194" summary="fix: 添加强制 USB-CDC 支持，修复相关处理逻辑和界面适配  &#10;&#10;- 增加 `--force-usb-cdc` 参数，支持强制使用 USB-CDC 连接并停止 WebSocket 搜索  &#10;- 在配置文件和界面中新增 `force_usb_cdc` 设置项及持久化逻辑  &#10;- 调整 WebSocket 连接逻辑，避免强制 USB-CDC 时重复扫描和探测  &#10;- 优化设备更新界面，新增更新任务进度、状态和实时日志显示  &#10;- 修复多处串口设备检测及任务重连过程中的细节问题">
+      <option name="closed" value="true" />
+      <created>1784891629554</created>
+      <option name="number" value="00194" />
+      <option name="presentableId" value="LOCAL-00194" />
+      <option name="project" value="LOCAL" />
+      <updated>1784891629554</updated>
+    </task>
+    <task id="LOCAL-00195" summary="fix: 增加主动设备探测支持，优化连接保持及错误处理&#10;&#10;- 新增 `_request_device_probe` 方法，支持常驻监控主动探测设备并保留连接&#10;- 优化握手阶段逻辑，防止探测期间握手成功后触发意外重连&#10;- 更新设备探测相关测试，覆盖常驻进程交互及多连接场景&#10;- 简化独立探测逻辑，改为调用常驻工作进程以增强稳定性">
+      <option name="closed" value="true" />
+      <created>1784892834901</created>
+      <option name="number" value="00195" />
+      <option name="presentableId" value="LOCAL-00195" />
+      <option name="project" value="LOCAL" />
+      <updated>1784892834901</updated>
+    </task>
+    <task id="LOCAL-00196" summary="fix: 添加 SDK Bootloader 支持，优化主循环安全点切换逻辑&#10;&#10;- 引入 `SdkBootloaderController`，支持主循环安全点 USB 切换&#10;- 调整 Bootloader 相关命令逻辑，改为通过安全点控制释放&#10;- 优化主动探测逻辑，增强设备重连及错误处理能力&#10;- 添加多个测试，涵盖安全点切换及设备探测场景&#10;- 更新相关界面与日志提示，改进用户操作反馈">
+      <option name="closed" value="true" />
+      <created>1784894773263</created>
+      <option name="number" value="00196" />
+      <option name="presentableId" value="LOCAL-00196" />
+      <option name="project" value="LOCAL" />
+      <updated>1784894773263</updated>
+    </task>
+    <task id="LOCAL-00197" summary="fix: 移除整秒同步逻辑，兼容旧接口并优化 DMA 刷新策略&#10;&#10;- 调整 `NATIVE_DMA_API_VERSION` 为 2，强化旧版本兼容性&#10;- 移除整秒帧同步路径，新增异常处理防止静默恢复&#10;- 更新相关测试逻辑，优化脏区域合并与连续 DMA 处理&#10;- 精简原生接口使用，移除未使用的异步任务及同步方法">
+      <option name="closed" value="true" />
+      <created>1784897243060</created>
+      <option name="number" value="00197" />
+      <option name="presentableId" value="LOCAL-00197" />
+      <option name="project" value="LOCAL" />
+      <updated>1784897243060</updated>
+    </task>
+    <task id="LOCAL-00198" summary="fix: 添加按键提示功能，优化界面交互与设备重连逻辑&#10;&#10;- 新增按键操作时的提示框逻辑，提升用户操作反馈&#10;- 调整设备重连条件，优化运行时配置热更新处理&#10;- 更新渲染逻辑，支持按键提示的动态显示&#10;- 添加 PCB Layout 文件 `FPC10_PWM_20x30_V8`，完善硬件设计">
+      <option name="closed" value="true" />
+      <created>1784986288162</created>
+      <option name="number" value="00198" />
+      <option name="presentableId" value="LOCAL-00198" />
+      <option name="project" value="LOCAL" />
+      <updated>1784986288162</updated>
+    </task>
+    <task id="LOCAL-00199" summary="fix: 增强屏幕样式管理与按键事件处理逻辑  &#10;&#10;- 更新按键去抖时间逻辑，支持禁用去抖并兼容更灵敏的按键触发  &#10;- 新增设备样式切换事件处理，支持屏幕样式的实时同步与保存  &#10;- 优化 Web 界面事件监听及样式更新逻辑，增强动态交互体验  &#10;- 添加多项相关测试，覆盖按键事件处理与样式同步场景">
+      <option name="closed" value="true" />
+      <created>1784987234667</created>
+      <option name="number" value="00199" />
+      <option name="presentableId" value="LOCAL-00199" />
+      <option name="project" value="LOCAL" />
+      <updated>1784987234667</updated>
+    </task>
+    <task id="LOCAL-00200" summary="fix: 增强按键交互与配置同步逻辑&#10;&#10;- 添加长按与连发事件支持，优化按键消抖与交互体验&#10;- 引入通用 `configChange` 事件，支持多键配置动态同步&#10;- 更新测试覆盖按键处理与配置同步场景&#10;- 修复远端文件拷贝逻辑，忽略无效文件及多层次测试目录&#10;- 添加硬件设计数据文件，完善开发资源">
+      <option name="closed" value="true" />
+      <created>1784988451607</created>
+      <option name="number" value="00200" />
+      <option name="presentableId" value="LOCAL-00200" />
+      <option name="project" value="LOCAL" />
+      <updated>1784988451607</updated>
+    </task>
+    <task id="LOCAL-00201" summary="fix: 添加按键命令分派与消抖测试支持&#10;&#10;- 新增按键命令模式和事件分派器实现，支持样式切换、亮度调节等命令&#10;- 实现 GPIO 按键测试与零消抖、长按连发事件验证&#10;- 增强测试覆盖，验证按键事件处理及模式循环行为">
+      <option name="closed" value="true" />
+      <created>1785112193410</created>
+      <option name="number" value="00201" />
+      <option name="presentableId" value="LOCAL-00201" />
+      <option name="project" value="LOCAL" />
+      <updated>1785112193410</updated>
+    </task>
+    <task id="LOCAL-00202" summary="fix: 重构 Web 界面逻辑，拆分 pywebview 生命周期及增强导航能力&#10;&#10;- 新增 `ui-web-api` 模块，拆分 Web 界面相关逻辑，提升代码可维护性&#10;- 实现统一的 pywebview 生命周期管理与界面导航支持&#10;- 优化窗口图标格式转换及跨模块重用能力&#10;- 更新 README，描述模块职责及结构">
+      <option name="closed" value="true" />
+      <created>1785119298516</created>
+      <option name="number" value="00202" />
+      <option name="presentableId" value="LOCAL-00202" />
+      <option name="project" value="LOCAL" />
+      <updated>1785119298516</updated>
+    </task>
+    <task id="LOCAL-00203" summary="fix: 添加设备 UUID 支持并优化 WebView2 启动逻辑&#10;&#10;- 新增设备 UUID 支持，优化硬件信息采集及显示&#10;- 增强 WebView2 启动前环境校验，新增安装下载支持&#10;- 修复 Windows 托盘退出时的窗口销毁与图标清理问题&#10;- 更新亮度调节命令逻辑，支持释放时同步最终值&#10;- 新增待机页面 Wi-Fi 状态验证及设备 UUID 测试">
+      <option name="closed" value="true" />
+      <created>1785136781512</created>
+      <option name="number" value="00203" />
+      <option name="presentableId" value="LOCAL-00203" />
+      <option name="project" value="LOCAL" />
+      <updated>1785136781512</updated>
+    </task>
+    <task id="LOCAL-00204" summary="fix: 重构自定义数据逻辑，拆分生命周期管理并优化调度处理&#10;&#10;- 新增 `CustomDataServiceMixin`，封装自定义数据初始化、调度及资源释放&#10;- 移除旧版自定义数据管理代码，改用独立 Mixin 提升代码复用性&#10;- 优化运行时调度逻辑，对接新接口以增强任务动态调整能力&#10;- 更新相关函数实现，统一使用 Mixin 方法简化任务定义和采集流程">
+      <option name="closed" value="true" />
+      <created>1785137938754</created>
+      <option name="number" value="00204" />
+      <option name="presentableId" value="LOCAL-00204" />
+      <option name="project" value="LOCAL" />
+      <updated>1785137938754</updated>
+    </task>
+    <task id="LOCAL-00205" summary="fix: 重构自定义数据逻辑，拆分生命周期管理并优化调度处理&#10;&#10;- 新增 `CustomDataServiceMixin`，封装自定义数据初始化、调度及资源释放&#10;- 移除旧版自定义数据管理代码，改用独立 Mixin 提升代码复用性&#10;- 优化运行时调度逻辑，对接新接口以增强任务动态调整能力&#10;- 更新相关函数实现，统一使用 Mixin 方法简化任务定义和采集流程">
+      <option name="closed" value="true" />
+      <created>1785145561732</created>
+      <option name="number" value="00205" />
+      <option name="presentableId" value="LOCAL-00205" />
+      <option name="project" value="LOCAL" />
+      <updated>1785145561732</updated>
+    </task>
+    <task id="LOCAL-00206" summary="fix: 验证样式存在时抛出异常修复及同步逻辑优化&#10;&#10;- 添加 `style_exists` 方法，在样式不存在时抛出异常，提高样式切换稳定性&#10;- 优化 `style.delete` 命令，移除重启逻辑并返回样式目录更新结果&#10;- 更新样式清单返回字段，包含当前激活样式信息&#10;- 增强 Web 界面及后台样式管理逻辑，支持目录动态同步与操作反馈&#10;- 添加多项测试，验证异常处理、样式切换及清单同步">
+      <option name="closed" value="true" />
+      <created>1785151253246</created>
+      <option name="number" value="00206" />
+      <option name="presentableId" value="LOCAL-00206" />
+      <option name="project" value="LOCAL" />
+      <updated>1785151253246</updated>
+    </task>
+    <task id="LOCAL-00207" summary="fix: 重构自定义数据逻辑，拆分模块职责并优化兼容性&#10;&#10;- 调整 `custom_data.py`，拆分支持、调度和生命周期管理模块&#10;- 移除冗余实现，优化现有调用方的功能兼容性&#10;- 引入 `custom_data_support` 和其他模块，简化代码复用&#10;- 提升模块间隔离性，增强维护性和扩展性">
+      <option name="closed" value="true" />
+      <created>1785288139181</created>
+      <option name="number" value="00207" />
+      <option name="presentableId" value="LOCAL-00207" />
+      <option name="project" value="LOCAL" />
+      <updated>1785288139181</updated>
+    </task>
+    <task id="LOCAL-00208" summary="fix: 重构并新增自定义数据管理功能，支持插件启用状态及动作处理  &#10;&#10;- 移除旧版 `custom_data.py` 和 `custom_data_runner.py`，改用新模块拆分职责  &#10;- 新增插件协议 2 支持，包括动作按钮与卸载钩子逻辑  &#10;- 引入 `runtime.py` 和 `support.py` 模块，优化插件隔离运行与调度  &#10;- 更新配置解析及参数注入，支持插件启用状态 JSON 持久化  &#10;- 增强 Web 界面动态交互，新增插件启用切换和动作执行功能  &#10;- 添加详细文档说明 `custom_data_plugin_protocol_v2.md`">
+      <option name="closed" value="true" />
+      <created>1785309700413</created>
+      <option name="number" value="00208" />
+      <option name="presentableId" value="LOCAL-00208" />
+      <option name="project" value="LOCAL" />
+      <updated>1785309700414</updated>
+    </task>
+    <task id="LOCAL-00209" summary="feat: 新增插件市场功能，支持市场地址配置与动态主题加载&#10;&#10;- 添加 MarketPage 组件，通过 iframe 加载插件市场页面，并自动附加嵌入模式与深色主题参数&#10;- 更新 SettingsPage 页面，支持配置正式版插件市场地址&#10;- 优化配置逻辑，校验市场地址有效性并限制以 http:// 或 https:// 开头&#10;- 调整设置存储与加载逻辑，确保市场地址的读取与更新&#10;- 添加市场页面样式和文档说明，完善使用指引与交互体验">
+      <option name="closed" value="true" />
+      <created>1785321742929</created>
+      <option name="number" value="00209" />
+      <option name="presentableId" value="LOCAL-00209" />
+      <option name="project" value="LOCAL" />
+      <updated>1785321742929</updated>
+    </task>
+    <task id="LOCAL-00210" summary="feat: 增强插件市场功能，支持插件下载、安装与任务状态查询&#10;&#10;- 为 MarketPage 组件添加插件下载与安装逻辑，包括下载进度展示与状态更新&#10;- 引入插件市场 API，支持校验下载地址、限制同源及导入 ZIP 包功能&#10;- 完善 iframe 加载的通信机制，通过消息事件处理安装请求并注入身份信息&#10;- 重构样式及工具栏布局，优化界面交互与样式一致性&#10;- 添加完整测试用例，验证插件下载、安装流程及接口功能">
+      <option name="closed" value="true" />
+      <created>1785373657952</created>
+      <option name="number" value="00210" />
+      <option name="presentableId" value="LOCAL-00210" />
+      <option name="project" value="LOCAL" />
+      <updated>1785373657952</updated>
+    </task>
+    <task id="LOCAL-00211" summary="fix: 增强插件管理与版本支持，优化通信及显示逻辑&#10;&#10;- 为 MarketPage 添加插件版本管理逻辑，支持安装插件后立即刷新 iframe 状态  &#10;- 更新插件模板支持显式声明版本号，并增加版本格式校验  &#10;- Web 界面自定义数据模块新增版本号显示及样式调整  &#10;- 修复插件通信逻辑，确保版本信息准确传递">
+      <option name="closed" value="true" />
+      <created>1785376803525</created>
+      <option name="number" value="00211" />
+      <option name="presentableId" value="LOCAL-00211" />
+      <option name="project" value="LOCAL" />
+      <updated>1785376803525</updated>
+    </task>
+    <task id="LOCAL-00212" summary="feat: 新增 HTTP 管理页面并优化 Web 界面功能&#10;&#10;- 引入跨平台 HTTP 管理页面，支持浏览器访问与操作，增加鉴权和配置管理功能&#10;- 添加 WebSocket 代理，兼容 invoke 调用协议，支持 HTTP 与桌面调用交互一致性&#10;- 更新设置页面，支持启用 HTTP 管理服务并配置端口和密钥&#10;- 优化 UI 布局和样式，调整多列布局适应不同屏幕宽度&#10;- 添加完整测试用例，覆盖服务启动、鉴权、请求代理及端口冲突处理">
+      <option name="closed" value="true" />
+      <created>1785383198895</created>
+      <option name="number" value="00212" />
+      <option name="presentableId" value="LOCAL-00212" />
+      <option name="project" value="LOCAL" />
+      <updated>1785383198896</updated>
+    </task>
+    <option name="localTasksCounter" value="213" />
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="feat: 添加设备管理中 ESP32-S3 SDK USB 刷写支持及相关界面更新&#10;&#10;- 引入动态设备状态刷新，合并实时数据及设备详情&#10;- 支持 SDK 镜像选择与校验，并新增串口强刷模式&#10;- 优化界面交互，新增 Log 页实时查看与滚动控制&#10;- 更新样式，调整表格及日志显示的暗色主题" />
+    <MESSAGE value="fix: 优化界面样式与语言描述，增强用户体验&#10;&#10;- 更新多处界面提示语，移除冗余信息，优化文案表述&#10;- 替换深色表格样式为主题化表格，提升可读性及一致性&#10;- 添加滚动条样式及加载组件的统一设计&#10;- 改进自定义数据插件管理，加入环境安装及依赖检测逻辑&#10;- 扩展设备 SDK 更新检查，支持多类别与资源匹配验证&#10;- 优化 `StylesPage` 样式详情功能，增加预览及键盘导航" />
+    <MESSAGE value="fix: 增强 ESP32-S3 待机界面样式及 MicroPython 兼容支持&#10;&#10;- 新增 MicroPython 原生代码装饰器的跨解释器兼容模块&#10;- 调整待机日志字体配置，统一引用 `LOG_FONT_NAME`&#10;- 优化日志文本样式，改为全大写提高可读性" />
+    <MESSAGE value="fix: 优化界面样式与功能，改善用户体验&#10;&#10;- 更新多处界面提示文案，精简描述，移除冗余信息&#10;- 添加自定义屏幕样式教程链接及样式滚动条主题&#10;- 调整表格及布局样式，提升表格可读性及排版一致性&#10;- 优化更新页面，新增固件和 SDK 更新确认提示及进度展示&#10;- 增强 Web UI 图标支持，统一加载及转换图标格式" />
+    <MESSAGE value="fix: 调整 ST7789 2.4 寸屏幕外壳设计及固定方案&#10;&#10;- 修正显示凹槽位置与裸屏中心偏移问题，偏移距离增加 1mm，总偏移 2.92mm  &#10;- 优化对侧插片卡槽和 +Y 螺丝侧设计，增强屏幕固定稳定性  &#10;- 更新 Type-C 开孔与接口压盖设计，改进限位和安装便捷性  &#10;- 调整外壳整体尺寸至 50 x 72.4mm，改进边框对称性  &#10;- 优化结构参数输出和设计校验逻辑" />
+    <MESSAGE value="fix: 添加强制 USB-CDC 支持，修复相关处理逻辑和界面适配  &#10;&#10;- 增加 `--force-usb-cdc` 参数，支持强制使用 USB-CDC 连接并停止 WebSocket 搜索  &#10;- 在配置文件和界面中新增 `force_usb_cdc` 设置项及持久化逻辑  &#10;- 调整 WebSocket 连接逻辑，避免强制 USB-CDC 时重复扫描和探测  &#10;- 优化设备更新界面，新增更新任务进度、状态和实时日志显示  &#10;- 修复多处串口设备检测及任务重连过程中的细节问题" />
+    <MESSAGE value="fix: 增加主动设备探测支持，优化连接保持及错误处理&#10;&#10;- 新增 `_request_device_probe` 方法，支持常驻监控主动探测设备并保留连接&#10;- 优化握手阶段逻辑，防止探测期间握手成功后触发意外重连&#10;- 更新设备探测相关测试，覆盖常驻进程交互及多连接场景&#10;- 简化独立探测逻辑，改为调用常驻工作进程以增强稳定性" />
+    <MESSAGE value="fix: 添加 SDK Bootloader 支持，优化主循环安全点切换逻辑&#10;&#10;- 引入 `SdkBootloaderController`，支持主循环安全点 USB 切换&#10;- 调整 Bootloader 相关命令逻辑，改为通过安全点控制释放&#10;- 优化主动探测逻辑，增强设备重连及错误处理能力&#10;- 添加多个测试，涵盖安全点切换及设备探测场景&#10;- 更新相关界面与日志提示，改进用户操作反馈" />
+    <MESSAGE value="fix: 移除整秒同步逻辑，兼容旧接口并优化 DMA 刷新策略&#10;&#10;- 调整 `NATIVE_DMA_API_VERSION` 为 2，强化旧版本兼容性&#10;- 移除整秒帧同步路径，新增异常处理防止静默恢复&#10;- 更新相关测试逻辑，优化脏区域合并与连续 DMA 处理&#10;- 精简原生接口使用，移除未使用的异步任务及同步方法" />
+    <MESSAGE value="fix: 添加按键提示功能，优化界面交互与设备重连逻辑&#10;&#10;- 新增按键操作时的提示框逻辑，提升用户操作反馈&#10;- 调整设备重连条件，优化运行时配置热更新处理&#10;- 更新渲染逻辑，支持按键提示的动态显示&#10;- 添加 PCB Layout 文件 `FPC10_PWM_20x30_V8`，完善硬件设计" />
+    <MESSAGE value="fix: 增强屏幕样式管理与按键事件处理逻辑  &#10;&#10;- 更新按键去抖时间逻辑，支持禁用去抖并兼容更灵敏的按键触发  &#10;- 新增设备样式切换事件处理，支持屏幕样式的实时同步与保存  &#10;- 优化 Web 界面事件监听及样式更新逻辑，增强动态交互体验  &#10;- 添加多项相关测试，覆盖按键事件处理与样式同步场景" />
+    <MESSAGE value="fix: 增强按键交互与配置同步逻辑&#10;&#10;- 添加长按与连发事件支持，优化按键消抖与交互体验&#10;- 引入通用 `configChange` 事件，支持多键配置动态同步&#10;- 更新测试覆盖按键处理与配置同步场景&#10;- 修复远端文件拷贝逻辑，忽略无效文件及多层次测试目录&#10;- 添加硬件设计数据文件，完善开发资源" />
+    <MESSAGE value="fix: 添加按键命令分派与消抖测试支持&#10;&#10;- 新增按键命令模式和事件分派器实现，支持样式切换、亮度调节等命令&#10;- 实现 GPIO 按键测试与零消抖、长按连发事件验证&#10;- 增强测试覆盖，验证按键事件处理及模式循环行为" />
+    <MESSAGE value="fix: 重构 Web 界面逻辑，拆分 pywebview 生命周期及增强导航能力&#10;&#10;- 新增 `ui-web-api` 模块，拆分 Web 界面相关逻辑，提升代码可维护性&#10;- 实现统一的 pywebview 生命周期管理与界面导航支持&#10;- 优化窗口图标格式转换及跨模块重用能力&#10;- 更新 README，描述模块职责及结构" />
+    <MESSAGE value="fix: 添加设备 UUID 支持并优化 WebView2 启动逻辑&#10;&#10;- 新增设备 UUID 支持，优化硬件信息采集及显示&#10;- 增强 WebView2 启动前环境校验，新增安装下载支持&#10;- 修复 Windows 托盘退出时的窗口销毁与图标清理问题&#10;- 更新亮度调节命令逻辑，支持释放时同步最终值&#10;- 新增待机页面 Wi-Fi 状态验证及设备 UUID 测试" />
+    <MESSAGE value="feat: 扩展自定义数据自定义样式" />
+    <MESSAGE value="feat: 扩展自定义数据自定义样式" />
+    <MESSAGE value="fix: 重构自定义数据逻辑，拆分生命周期管理并优化调度处理&#10;&#10;- 新增 `CustomDataServiceMixin`，封装自定义数据初始化、调度及资源释放&#10;- 移除旧版自定义数据管理代码，改用独立 Mixin 提升代码复用性&#10;- 优化运行时调度逻辑，对接新接口以增强任务动态调整能力&#10;- 更新相关函数实现，统一使用 Mixin 方法简化任务定义和采集流程" />
+    <MESSAGE value="fix: 验证样式存在时抛出异常修复及同步逻辑优化&#10;&#10;- 添加 `style_exists` 方法，在样式不存在时抛出异常，提高样式切换稳定性&#10;- 优化 `style.delete` 命令，移除重启逻辑并返回样式目录更新结果&#10;- 更新样式清单返回字段，包含当前激活样式信息&#10;- 增强 Web 界面及后台样式管理逻辑，支持目录动态同步与操作反馈&#10;- 添加多项测试，验证异常处理、样式切换及清单同步" />
+    <MESSAGE value="fix: 重构自定义数据逻辑，拆分模块职责并优化兼容性&#10;&#10;- 调整 `custom_data.py`，拆分支持、调度和生命周期管理模块&#10;- 移除冗余实现，优化现有调用方的功能兼容性&#10;- 引入 `custom_data_support` 和其他模块，简化代码复用&#10;- 提升模块间隔离性，增强维护性和扩展性" />
+    <MESSAGE value="fix: 重构并新增自定义数据管理功能，支持插件启用状态及动作处理  &#10;&#10;- 移除旧版 `custom_data.py` 和 `custom_data_runner.py`，改用新模块拆分职责  &#10;- 新增插件协议 2 支持，包括动作按钮与卸载钩子逻辑  &#10;- 引入 `runtime.py` 和 `support.py` 模块，优化插件隔离运行与调度  &#10;- 更新配置解析及参数注入，支持插件启用状态 JSON 持久化  &#10;- 增强 Web 界面动态交互，新增插件启用切换和动作执行功能  &#10;- 添加详细文档说明 `custom_data_plugin_protocol_v2.md`" />
+    <MESSAGE value="feat: 新增插件市场功能，支持市场地址配置与动态主题加载&#10;&#10;- 添加 MarketPage 组件，通过 iframe 加载插件市场页面，并自动附加嵌入模式与深色主题参数&#10;- 更新 SettingsPage 页面，支持配置正式版插件市场地址&#10;- 优化配置逻辑，校验市场地址有效性并限制以 http:// 或 https:// 开头&#10;- 调整设置存储与加载逻辑，确保市场地址的读取与更新&#10;- 添加市场页面样式和文档说明，完善使用指引与交互体验" />
+    <MESSAGE value="feat: 增强插件市场功能，支持插件下载、安装与任务状态查询&#10;&#10;- 为 MarketPage 组件添加插件下载与安装逻辑，包括下载进度展示与状态更新&#10;- 引入插件市场 API，支持校验下载地址、限制同源及导入 ZIP 包功能&#10;- 完善 iframe 加载的通信机制，通过消息事件处理安装请求并注入身份信息&#10;- 重构样式及工具栏布局，优化界面交互与样式一致性&#10;- 添加完整测试用例，验证插件下载、安装流程及接口功能" />
+    <MESSAGE value="fix: 增强插件管理与版本支持，优化通信及显示逻辑&#10;&#10;- 为 MarketPage 添加插件版本管理逻辑，支持安装插件后立即刷新 iframe 状态  &#10;- 更新插件模板支持显式声明版本号，并增加版本格式校验  &#10;- Web 界面自定义数据模块新增版本号显示及样式调整  &#10;- 修复插件通信逻辑，确保版本信息准确传递" />
+    <MESSAGE value="feat: 新增 HTTP 管理页面并优化 Web 界面功能&#10;&#10;- 引入跨平台 HTTP 管理页面，支持浏览器访问与操作，增加鉴权和配置管理功能&#10;- 添加 WebSocket 代理，兼容 invoke 调用协议，支持 HTTP 与桌面调用交互一致性&#10;- 更新设置页面，支持启用 HTTP 管理服务并配置端口和密钥&#10;- 优化 UI 布局和样式，调整多列布局适应不同屏幕宽度&#10;- 添加完整测试用例，覆盖服务启动、鉴权、请求代理及端口冲突处理" />
+    <option name="LAST_COMMIT_MESSAGE" value="feat: 新增 HTTP 管理页面并优化 Web 界面功能&#10;&#10;- 引入跨平台 HTTP 管理页面，支持浏览器访问与操作，增加鉴权和配置管理功能&#10;- 添加 WebSocket 代理，兼容 invoke 调用协议，支持 HTTP 与桌面调用交互一致性&#10;- 更新设置页面，支持启用 HTTP 管理服务并配置端口和密钥&#10;- 优化 UI 布局和样式，调整多列布局适应不同屏幕宽度&#10;- 添加完整测试用例，覆盖服务启动、鉴权、请求代理及端口冲突处理" />
+  </component>
+  <component name="XDebuggerManager">
+    <breakpoint-manager>
+      <breakpoints>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/monitor/pico_client.py</url>
+          <line>434</line>
+          <option name="timeStamp" value="6" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/monitor/json_ack_timing_cache.py</url>
+          <line>27</line>
+          <option name="timeStamp" value="7" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/monitor/json_ack_timing_cache.py</url>
+          <line>37</line>
+          <option name="timeStamp" value="8" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/monitor/json_ack_timing_cache.py</url>
+          <line>50</line>
+          <option name="timeStamp" value="9" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/monitor/json_ack_timing_cache.py</url>
+          <line>58</line>
+          <option name="timeStamp" value="10" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/monitor/win/sensor_host.py</url>
+          <line>257</line>
+          <option name="timeStamp" value="17" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/monitor/win/sensor_host.py</url>
+          <line>256</line>
+          <option name="timeStamp" value="18" />
+        </line-breakpoint>
+      </breakpoints>
+    </breakpoint-manager>
+  </component>
+  <component name="com.intellij.coverage.CoverageDataManagerImpl">
+    <SUITE FILE_PATH="coverage/pico_project$pico_monitor.coverage" NAME="pico_monitor Coverage Results" MODIFIED="1784100901838" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/monitor" />
+    <SUITE FILE_PATH="coverage/pico_project$test.coverage" NAME="test Coverage Results" MODIFIED="1782973650261" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pico_project$omniwatch_sensor_host.coverage" NAME="omniwatch_sensor_host Coverage Results" MODIFIED="1784378853998" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/monitor/sensorhost/python" />
+    <SUITE FILE_PATH="coverage/pico_project$pico_client.coverage" NAME="pico_client Coverage Results" MODIFIED="1782976962160" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pico_project$python__m_pip_install__r_requirements_txt.coverage" NAME="python -m pip install -r requirements.txt Coverage Results" MODIFIED="1782791198413" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pico_project$send_frame.coverage" NAME="send_frame Coverage Results" MODIFIED="1782889830830" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pico_project$mpremote_stream_copy.coverage" NAME="mpremote_stream_copy Coverage Results" MODIFIED="1785150988034" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/tools" />
+    <SUITE FILE_PATH="coverage/pico_project$.coverage" NAME=" Coverage Results" MODIFIED="1783040803765" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+  </component>
+</project>

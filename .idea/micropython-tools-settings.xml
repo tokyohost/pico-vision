@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="MicroPythonTools">
+    <option name="lastShownVersion" value="2025.3.3" />
+    <option name="legacyVolumeSupportEnabled" value="true" />
+    <option name="pluginEnabled" value="true" />
+    <option name="portName" value="COM14" />
+  </component>
+</project>
