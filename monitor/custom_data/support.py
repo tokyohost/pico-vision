@@ -34,6 +34,7 @@ CUSTOM_DATA_ACTION_RESULT_MAX_BYTES = 256 * 1024
 
 TEMPLATE_MANIFEST_CONTENT = '''{
   "protocol": 2,
+  "version": "1.0.0",
   "key": "my_data",
   "name": "my_data",
   "zh_name": "我的数据",
@@ -82,6 +83,7 @@ class CustomDataDefinition:
     path: Path
     plugin_directory: Path
     key: str
+    version: str
     name: str
     zh_name: str
     interval: float
@@ -615,6 +617,14 @@ def _load_definition(plugin_path, environment_root):
     plugin_directory = plugin_path
     requirements_path = plugin_path / CUSTOM_DATA_REQUIREMENTS_NAME
     key = _validate_identifier(values.get("CUSTOM_DATA_KEY", values.get("key")), "CUSTOM_DATA_KEY")
+    # 兼容升级前已经安装的本地插件；新建模板与市场上传均要求显式声明版本。
+    version = values.get("version", "0.0.0")
+    if (
+        not isinstance(version, str)
+        or len(version.split(".")) != 3
+        or not all(part.isdigit() and (part == "0" or not part.startswith("0")) for part in version.split("."))
+    ):
+        raise CustomDataError("plugin.json version 必须使用1.0.0格式的三段版本号")
     name = _validate_identifier(values.get("CUSTOM_DATA_NAME", values.get("name", key)), "CUSTOM_DATA_NAME")
     zh_name = values.get("CUSTOM_DATA_ZH_NAME", values.get("zh_name", name))
     if not isinstance(zh_name, str) or not zh_name.strip():
@@ -664,6 +674,7 @@ def _load_definition(plugin_path, environment_root):
         path=script_path,
         plugin_directory=plugin_directory,
         key=key,
+        version=version,
         name=name,
         zh_name=zh_name.strip(),
         interval=float(interval),

@@ -244,8 +244,9 @@ onMounted(loadCustomData)
             <div class="custom-data-meta">
               <div><span>JSON Key</span><strong>{{ item.key }}</strong></div>
               <div><span>采集间隔</span><strong>{{ item.interval }} 秒</strong></div>
-              <div><span>绑定样式</span><strong>{{ item.boundStyle || '未绑定' }}</strong></div>
               <div><span>独立环境</span><strong>{{ item.environment }}</strong></div>
+              <div class="custom-data-meta-full"><span>绑定样式</span><strong>{{ item.boundStyle || '未绑定' }}</strong></div>
+              <div class="custom-data-meta-full"><span>版本号</span><strong>{{ item.version || '未知' }}</strong></div>
             </div>
           </div>
         </div>

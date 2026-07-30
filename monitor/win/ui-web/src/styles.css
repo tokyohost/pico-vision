@@ -452,6 +452,9 @@ body {
 .custom-data-meta div {
   min-width: 0;
 }
+.custom-data-meta .custom-data-meta-full {
+  grid-column: 1 / -1;
+}
 .custom-data-meta span,
 .custom-data-meta strong {
   display: block;

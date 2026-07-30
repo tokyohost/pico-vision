@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { invoke } from '../bridge'
 import { runWithGlobalLoading } from '../globalLoading'
@@ -9,6 +9,7 @@ const props = defineProps({
   configuredUrl: { type: String, default: '' },
 })
 const marketFrame = ref(null)
+const installedPlugins = ref([])
 const monitorChannel = (
   window.crypto?.randomUUID?.()
   || `monitor-${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -44,14 +45,24 @@ function delay(milliseconds) {
 /**
  * 将 Monitor 身份和通信通道注入已加载的市场 iframe。
  */
-function injectMonitorHook() {
+async function injectMonitorHook() {
   if (!marketFrame.value?.contentWindow || !marketUrl.value) return
+  try {
+    const result = await invoke('data.list')
+    installedPlugins.value = (result.items || []).map((item) => ({
+      key: String(item.key || ''),
+      version: String(item.version || '')
+    })).filter((item) => item.key)
+  } catch {
+    installedPlugins.value = []
+  }
   const targetOrigin = new URL(marketUrl.value).origin
   marketFrame.value.contentWindow.postMessage({
     source: 'omniwatch-monitor',
     type: 'host-ready',
     channel: monitorChannel,
     version: props.applicationVersion,
+    installedPlugins: installedPlugins.value,
   }, targetOrigin)
 }
 
@@ -85,6 +96,7 @@ async function installMarketPlugin(payload) {
     }
   })
   ElMessage.success(`插件“${pluginName}”已安装，可在插件管理中启用`)
+  injectMonitorHook()
 }
 
 /**
@@ -111,6 +123,7 @@ async function handleMarketMessage(event) {
 }
 
 window.addEventListener('message', handleMarketMessage)
+onMounted(injectMonitorHook)
 onBeforeUnmount(() => window.removeEventListener('message', handleMarketMessage))
 </script>
 

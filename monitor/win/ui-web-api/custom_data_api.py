@@ -34,6 +34,7 @@ class CustomDataApiMixin:
                 {
                     "name": definition.name,
                     "key": definition.key,
+                    "version": definition.version,
                     "taskName": definition.task_name,
                     "chineseName": definition.zh_name,
                     "interval": definition.interval,
