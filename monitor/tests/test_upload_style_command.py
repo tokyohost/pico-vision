@@ -205,7 +205,7 @@ class StyleListCommandTest(unittest.TestCase):
         self.assertEqual(flash["total_bytes"], 4096 * 1000)
 
     @mock.patch("command.style_list.os.statvfs", create=True)
-    @mock.patch("styles.style_plugins.custom_style_catalog", return_value=())
+    @mock.patch("styles.style_plugins.style_catalog", return_value=())
     def test_style_list_returns_renderer_active_style(self, _catalog, statvfs):
         """确认样式清单同时返回渲染器当前实际生效的样式。"""
         statvfs.return_value = (1, 1, 1, 1, 1, 0, 0, 0, 0, 1)
@@ -217,6 +217,27 @@ class StyleListCommandTest(unittest.TestCase):
         result = StyleListCommand().execute({}, context)
 
         self.assertEqual(result["active_style"], "default")
+
+    @mock.patch("command.style_list.os.statvfs", create=True)
+    @mock.patch("styles.style_plugins.style_catalog")
+    def test_style_list_returns_all_styles_deduplicated_by_name(self, catalog, statvfs):
+        """确认刷新设备会读取全部样式，并按样式名保留唯一目录项。"""
+        statvfs.return_value = (1, 1, 1, 1, 1, 0, 0, 0, 0, 1)
+        catalog.return_value = (
+            {"name": "default", "type": "builtin"},
+            {"name": "thermal_watch", "type": "builtin"},
+            {"name": "clock", "type": "custom"},
+            {"name": "thermal_watch", "type": "custom"},
+        )
+        context = SimpleNamespace(service=lambda _name, required=True: None)
+
+        result = StyleListCommand().execute({}, context)
+
+        self.assertEqual(
+            [item["name"] for item in result["styles"]],
+            ["default", "thermal_watch", "clock"],
+        )
+        self.assertEqual(result["styles"][1]["type"], "builtin")
 
     def test_custom_style_contains_template_filename_and_size(self):
         """确认自定义样式清单包含模板文件名和模板文件字节数。"""

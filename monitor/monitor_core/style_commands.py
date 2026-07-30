@@ -113,17 +113,22 @@ class StyleCommandMixin:
         )
 
     def _publish_custom_style_catalog(self):
-        """通过 Pico 指令查询自定义样式并输出给托盘进程。"""
+        """通过 Pico 指令查询全部样式，同步配置后输出给托盘进程。"""
         self.custom_style_catalog_requested.clear()
         try:
             catalog = self.client.request_style_catalog_info()
+            latest_styles = catalog["styles"]
+            if not isinstance(latest_styles, list):
+                raise ValueError("设备样式目录格式无效")
+            self.client.styles = latest_styles
+            self._synchronize_style_catalog()
             result = {
                 "status": "ok",
-                "styles": catalog["styles"],
+                "styles": latest_styles,
                 "flash": catalog["flash"],
                 "active_style": catalog.get("active_style", ""),
             }
-        except (OSError, RuntimeError, serial.SerialException) as error:
+        except (KeyError, ValueError, OSError, RuntimeError, serial.SerialException) as error:
             result = {"status": "error", "message": str(error), "styles": []}
         print(
             "CUSTOM_STYLE_LIST_RESULT:"
