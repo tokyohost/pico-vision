@@ -2,6 +2,8 @@
 
 import queue
 import time
+import webbrowser
+from urllib.parse import urlparse
 
 
 class CommonBridgeMixin:
@@ -84,3 +86,12 @@ class CommonBridgeMixin:
             return result
         return result[0] if result else None
 
+    def _open_external_url(self, payload):
+        """校验 HTTP 地址并使用系统默认浏览器打开。"""
+        address = str(payload.get("url") or "").strip()
+        parsed = urlparse(address)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError("仅允许打开有效的 http:// 或 https:// 地址")
+        if not webbrowser.open_new_tab(address):
+            raise RuntimeError("无法调用系统默认浏览器")
+        return {"url": address}

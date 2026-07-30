@@ -37,7 +37,7 @@ function navigate(page) {
       <div class="brand-mark"><el-icon><Cpu /></el-icon></div>
       <div>
         <strong>{{ applicationName }}</strong>
-        <small>桌面控制中心</small>
+        <small>控制中心</small>
       </div>
     </div>
     <el-menu :default-active="activePage" class="navigation" @select="navigate">

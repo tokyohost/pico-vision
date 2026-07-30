@@ -5,6 +5,7 @@ import logging
 
 from ..constants import APPLICATION_NAME
 from .bridge import WebViewBridge
+from web_admin import HttpAdminServer
 
 
 LOGGER = logging.getLogger("pico-monitor.web-ui")
@@ -128,7 +129,10 @@ class WebUiMixin:
         entry = self._resource_path("win", "ui-web", "dist", "index.html")
         if not entry.is_file():
             raise FileNotFoundError("Web 界面构建产物不存在：{}".format(entry))
-        bridge = WebViewBridge(self)
+        bridge = getattr(self, "webview_bridge", None)
+        if bridge is None:
+            bridge = WebViewBridge(self)
+            self.webview_bridge = bridge
         window = webview.create_window(
             "{} — 控制中心".format(APPLICATION_NAME),
             entry.resolve().as_uri(),
@@ -159,6 +163,81 @@ class WebUiMixin:
         self.webview_window = window
         self.settings_window = window
         return window
+
+    def _apply_http_admin_settings(self):
+        """按照当前 Windows 设置启动、停止或重建 HTTP 管理服务。"""
+        enabled = bool(self.settings.get("http_enabled", False))
+        current = getattr(self, "http_admin_server", None)
+        desired = (
+            int(self.settings.get("http_port", 9876)),
+            str(self.settings.get("http_auth") or "").strip(),
+        )
+        if current is not None:
+            unchanged = (
+                current.port == desired[0]
+                and current.auth == desired[1]
+            )
+            if enabled and unchanged:
+                return
+            current.stop()
+            self.http_admin_server = None
+        if not enabled:
+            return
+        bridge = getattr(self, "webview_bridge", None)
+        if bridge is None:
+            bridge = WebViewBridge(self)
+            self.webview_bridge = bridge
+        try:
+            server = HttpAdminServer(
+                bridge=bridge,
+                static_directory=self._resource_path("win", "ui-web", "dist"),
+                host="0.0.0.0",
+                port=desired[0],
+                auth=desired[1],
+            )
+            server.start()
+            self.http_admin_server = server
+            if server.port != desired[0]:
+                self.settings["http_port"] = server.port
+                self.settings_store.save(self.settings)
+                icon = getattr(self, "icon", None)
+                if icon is not None:
+                    icon.notify(
+                        "配置端口 {} 无法监听，HTTP 管理页面已自动切换到端口 {}".format(
+                            desired[0],
+                            server.port,
+                        ),
+                        APPLICATION_NAME,
+                    )
+            return True
+        except Exception as error:
+            LOGGER.exception("应用 HTTP 管理页面设置失败")
+            self.http_admin_server = None
+            icon = getattr(self, "icon", None)
+            if icon is not None:
+                icon.notify(
+                    "HTTP 管理页面启动失败，请检查端口 {} 是否被占用或被系统保留：{}".format(
+                        desired[0],
+                        error,
+                    ),
+                    APPLICATION_NAME,
+                )
+            return False
+
+    def _schedule_http_admin_settings(self):
+        """延迟应用 HTTP 设置，确保当前 WebSocket 保存响应可以先发送完成。"""
+        import threading
+
+        timer = threading.Timer(0.25, self._apply_http_admin_settings)
+        timer.daemon = True
+        timer.start()
+
+    def _stop_http_admin(self):
+        """停止 Windows HTTP 管理服务并释放监听端口。"""
+        server = getattr(self, "http_admin_server", None)
+        if server is not None:
+            server.stop()
+            self.http_admin_server = None
 
     def _prepare_webview_runtime(self):
         """在启动后台线程前校验 Edge WebView2 与 .NET 运行环境。"""

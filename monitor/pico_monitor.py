@@ -11,6 +11,7 @@ import ctypes
 import logging
 import signal
 import sys
+from pathlib import Path
 
 from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
 from monitor_update import LinuxDebUpdater
@@ -133,6 +134,21 @@ def main():
         LinuxDebUpdater(GITHUB_REPOSITORY, MONITOR_VERSION).update()
         return 0
     service = MonitorService(arguments)
+    http_admin_server = None
+    if arguments.http_enabled:
+        from web_admin import HttpAdminServer, LinuxInvokeBridge
+
+        http_admin_server = HttpAdminServer(
+            bridge=LinuxInvokeBridge(service),
+            static_directory=Path(__file__).resolve().parent
+            / "win"
+            / "ui-web"
+            / "dist",
+            host=arguments.http_host,
+            port=arguments.http_port,
+            auth=arguments.http_auth,
+        )
+        http_admin_server.start()
     if arguments.worker and getattr(sys, "stdin", None) is not None:
         start_tray_command_listener(service, sys.stdin)
     signal.signal(signal.SIGINT, service.stop)
@@ -141,6 +157,8 @@ def main():
     try:
         return service.run()
     finally:
+        if http_admin_server is not None:
+            http_admin_server.stop()
         service.close()
 
 

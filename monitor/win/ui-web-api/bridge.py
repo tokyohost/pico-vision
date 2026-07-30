@@ -118,6 +118,7 @@ class WebViewBridge(
             "log.clear": self._clear_log,
             "log.export": self._export_log,
             "system.openDataDirectory": self._open_data_directory,
+            "system.openExternalUrl": self._open_external_url,
         }
         handler = handlers.get(str(action))
         if handler is None:

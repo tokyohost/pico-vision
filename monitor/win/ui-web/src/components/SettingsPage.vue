@@ -32,6 +32,24 @@ async function verifyQbittorrent() {
 }
 
 /**
+ * 使用系统默认浏览器打开本机 HTTP 管理页面。
+ */
+async function openHttpManagement() {
+  const port = Number(props.settings.http_port)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    ElMessage.warning('请先填写有效的 HTTP 管理端口')
+    return
+  }
+  try {
+    await invoke('system.openExternalUrl', {
+      url: `http://127.0.0.1:${port}`,
+    })
+  } catch (error) {
+    ElMessage.error(error?.message || String(error))
+  }
+}
+
+/**
  * 请求根组件保存完整配置。
  */
 function saveSettings() {
@@ -201,6 +219,46 @@ function isActionRunning(panel, item) {
           :closable="false"
           show-icon
         />
+      </el-form>
+    </el-card>
+
+    <el-card shadow="never">
+      <template #header><span>HTTP 管理页面</span></template>
+      <el-form label-position="top">
+        <el-switch
+          v-model="settings.http_enabled"
+          active-text="启用局域网 HTTP 管理页面"
+        />
+        <div class="form-grid section-gap">
+          <el-form-item label="监听端口">
+            <el-input-number
+              v-model="settings.http_port"
+              :min="1"
+              :max="65535"
+            />
+          </el-form-item>
+          <el-form-item label="Auth">
+            <el-input
+              v-model="settings.http_auth"
+              type="password"
+              show-password
+            />
+          </el-form-item>
+        </div>
+        <el-alert
+          title="默认端口为 9876。浏览器首次访问时输入 Auth，之后保存在当前浏览器缓存中。"
+          type="info"
+          :closable="false"
+          show-icon
+        />
+        <el-button
+          class="section-gap"
+          type="primary"
+          :disabled="!settings.http_enabled"
+          @click="openHttpManagement"
+        >
+          立即访问
+        </el-button>
       </el-form>
     </el-card>
 

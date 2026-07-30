@@ -38,15 +38,15 @@ let deviceRefreshTimer = null
 let deviceRefreshPending = false
 
 const menuItems = [
-  ['settings', '设置', 'Setting', '配置屏幕显示、数据采集、设备连接与任务频率。'],
-  ['device', '设备管理', 'Monitor', '查看设备状态，管理固件升级与底层 SDK 刷写。'],
-  ['network', '无线与客户端', 'Connection', '管理无线网络档案、连接优先级与客户端访问状态。'],
-  ['styles', '屏幕样式', 'Brush', '选择屏幕与待机样式，预览详情或管理设备自定义样式。'],
-  ['data', '插件管理', 'DataAnalysis', '管理数据采集插件及其运行配置。'],
-  ['market', '插件市场', 'Shop', '浏览、下载并管理 OmniWatch 数据采集插件。'],
-  ['update', '检查更新', 'Upload', '检查设备固件、底层 SDK 与桌面控制中心的新版本。'],
-  ['logs', '运行日志', 'Document', '查看实时运行记录，定位采集、通信与设备异常。'],
-  ['about', '关于', 'InfoFilled', '查看应用版本、作者信息与本地数据目录。'],
+  ['settings', '设置', 'Setting', '配置屏幕显示、数据采集、设备连接与任务频率'],
+  ['device', '设备管理', 'Monitor', '查看设备状态，管理固件升级与底层 SDK 刷写'],
+  ['network', '无线与客户端', 'Connection', '管理无线网络档案、连接优先级与客户端访问状态'],
+  ['styles', '屏幕样式', 'Brush', '选择屏幕与待机样式，预览详情或管理设备自定义样式'],
+  ['data', '插件管理', 'DataAnalysis', '管理数据采集插件及其运行配置'],
+  ['market', '插件市场', 'Shop', '浏览、下载并管理 OmniWatch 数据采集插件'],
+  ['update', '检查更新', 'Upload', '检查设备固件、底层 SDK 与桌面控制中心的版本更新'],
+  ['logs', '运行日志', 'Document', '查看实时运行记录'],
+  ['about', '关于', 'InfoFilled', '关于此应用信息'],
 ]
 
 const pageTitle = computed(

@@ -616,6 +616,16 @@ body {
 @media (max-width: 1050px) {
   .page-grid, .two-columns { grid-template-columns: 1fr; }
   .update-card-main { gap: 16px; }
-  .style-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .about-layout { grid-template-columns: 1fr; }
+}
+
+/* 屏幕样式随可视区域扩展为四至六列，窄窗口仍保持最少三列。 */
+@media (min-width: 1050px) {
+  .style-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (min-width: 1300px) {
+  .style-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+}
+@media (min-width: 1600px) {
+  .style-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 }

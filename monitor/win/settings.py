@@ -2,6 +2,7 @@
 
 import json
 import platform
+import secrets
 import uuid
 from pathlib import Path
 
@@ -71,6 +72,9 @@ DEFAULT_SETTINGS = {
     "qbittorrent_interval": 2.0,
     "market_url": "",
     "update_url": "",
+    "http_enabled": False,
+    "http_port": 9876,
+    "http_auth": secrets.token_urlsafe(24),
 }
 ARGUMENT_NAMES = {
     "--port": "port",
@@ -217,6 +221,16 @@ class TraySettingsStore:
         ).strip()[:96]
         settings["collection_task_logs"] = bool(settings.get("collection_task_logs", True))
         settings["market_url"] = str(settings.get("market_url") or "").strip()
+        settings["http_enabled"] = bool(settings.get("http_enabled", False))
+        try:
+            settings["http_port"] = int(settings.get("http_port", 9876))
+            if not 1 <= settings["http_port"] <= 65535:
+                raise ValueError
+        except (TypeError, ValueError):
+            settings["http_port"] = 9876
+        settings["http_auth"] = str(settings.get("http_auth") or "").strip()
+        if not settings["http_auth"]:
+            settings["http_auth"] = secrets.token_urlsafe(24)
         try:
             settings["lan_probe_port"] = int(settings["lan_probe_port"])
             if not 1 <= settings["lan_probe_port"] <= 65535:

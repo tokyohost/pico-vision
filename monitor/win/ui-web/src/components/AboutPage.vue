@@ -23,7 +23,7 @@ async function openDataDirectory() {
     <el-card shadow="never" class="about-card">
       <div class="about-heading">
         <div class="about-logo"><el-icon><Cpu /></el-icon></div>
-        <div><h2>{{ metadata.applicationName }}</h2><p>Windows 桌面控制中心</p></div>
+        <div><h2>{{ metadata.applicationName }}</h2><p>控制中心</p></div>
       </div>
       <el-descriptions :column="1" border class="section-gap">
         <el-descriptions-item label="版本号">{{ metadata.version }}</el-descriptions-item>

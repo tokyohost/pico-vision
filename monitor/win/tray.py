@@ -120,6 +120,8 @@ class WindowsTrayApplication(
         self.settings_store = TraySettingsStore(data_directory / "settings.json")
         settings_existed = self.settings_store.path.exists()
         self.settings = self.settings_store.load()
+        # 新增随机 Auth 等默认配置必须在首次读取后落盘，确保重启后保持稳定。
+        self.settings_store.save(self.settings)
         if not settings_existed:
             self.settings = settings_from_arguments(self.worker_arguments, self.settings)
             self.settings_store.save(self.settings)
@@ -555,6 +557,7 @@ class WindowsTrayApplication(
             self._start_worker()
             self.icon = pystray.Icon("pico-monitor", self._create_image(), APPLICATION_NAME, self._build_menu())
             self._initialize_webview()
+            self._apply_http_admin_settings()
             self.icon.run_detached()
             self._start_webview_loop()
             return 0
@@ -568,6 +571,7 @@ class WindowsTrayApplication(
             return 1
         finally:
             self.stopping.set()
+            self._stop_http_admin()
             if self.icon is not None:
                 try:
                     self.icon.stop()

@@ -100,6 +100,13 @@ class SettingsApiMixin:
             ("https://", "http://")
         ):
             raise ValueError("插件市场地址必须以 http:// 或 https:// 开头")
+        updated["http_enabled"] = bool(updated.get("http_enabled", False))
+        updated["http_port"] = int(updated.get("http_port", 9876))
+        if not 1 <= updated["http_port"] <= 65535:
+            raise ValueError("HTTP 管理页面端口必须在 1 至 65535 之间")
+        updated["http_auth"] = str(updated.get("http_auth") or "").strip()
+        if not updated["http_auth"]:
+            raise ValueError("HTTP 管理页面 Auth 不能为空")
         updated["collection_task_intervals"] = normalize_collection_task_intervals(
             updated.get("collection_task_intervals")
         )
@@ -144,6 +151,7 @@ class SettingsApiMixin:
         if self._application.icon is not None:
             self._application.icon.update_menu()
             self._application.icon.notify("配置已保存并生效", APPLICATION_NAME)
+        self._application._schedule_http_admin_settings()
         return {"saved": True}
 
     def _verify_qbittorrent(self, payload):

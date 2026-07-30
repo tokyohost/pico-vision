@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-APPLICATION_NAME = "OmniWatch USB监控屏"
+APPLICATION_NAME = "OmniWatch"
 WINDOWS_APP_USER_MODEL_ID = "OmniWatch.USBMonitor.Tray"
 AUTOSTART_NAME = "PicoHardwareMonitor"
 MONITOR_DIRECTORY = Path(__file__).resolve().parent.parent

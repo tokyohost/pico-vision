@@ -45,6 +45,10 @@ CONFIG_ENV_MAP = {
     "PICO_MONITOR_DISK_HEALTH_TEST_LEVEL": ("disk_health_test", "level"),
     "PICO_MONITOR_UPGRADE_URL": ("upgrade", "url"),
     "PICO_MONITOR_UPGRADE_SHA256": ("upgrade", "sha256"),
+    "PICO_MONITOR_HTTP_ENABLED": ("http", "enabled"),
+    "PICO_MONITOR_HTTP_HOST": ("http", "host"),
+    "PICO_MONITOR_HTTP_PORT": ("http", "port"),
+    "PICO_MONITOR_HTTP_AUTH": ("http", "auth"),
 }
 
 def environment_flag(name, default=False):

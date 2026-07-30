@@ -84,6 +84,13 @@ def create_argument_parser(config=None):
     parser.add_argument("--upgrade-url", default=config_value(config, "PICO_MONITOR_UPGRADE_URL") or None, help="覆盖 Pico 升级包下载地址")
     parser.add_argument("--upgrade-sha256", default=config_value(config, "PICO_MONITOR_UPGRADE_SHA256") or None, help="可选的升级包 SHA-256 摘要")
     parser.add_argument("--update", action="store_true", help="从 GitHub 最新 Release 下载并安装当前架构的 Linux DEB")
+    http_group = parser.add_mutually_exclusive_group()
+    http_group.add_argument("--http-enabled", dest="http_enabled", action="store_true", help="启用 HTTP 管理页面")
+    http_group.add_argument("--no-http", dest="http_enabled", action="store_false", help="关闭 HTTP 管理页面")
+    parser.set_defaults(http_enabled=config_flag(config, "PICO_MONITOR_HTTP_ENABLED", False))
+    parser.add_argument("--http-host", default=config_value(config, "PICO_MONITOR_HTTP_HOST", "0.0.0.0"), help="HTTP 管理页面监听地址")
+    parser.add_argument("--http-port", type=int, default=int(config_value(config, "PICO_MONITOR_HTTP_PORT", "9876")), help="HTTP 管理页面监听端口")
+    parser.add_argument("--http-auth", default=str(config_value(config, "PICO_MONITOR_HTTP_AUTH", "") or ""), help="HTTP 管理页面鉴权密钥；留空时启动时随机生成")
     return parser
 
 
@@ -91,6 +98,8 @@ def create_argument_parser(config=None):
 def validate_arguments(arguments):
     """校验通用间隔以及启用 qBittorrent 后的必填连接参数。"""
     arguments.log_level = str(arguments.log_level).strip().upper()
+    if not 1 <= int(arguments.http_port) <= 65535:
+        raise SystemExit("HTTP 管理页面端口必须在 1 至 65535 之间")
     exclusive_actions = sum(bool(value) for value in (
         arguments.pico_info, arguments.upgrade_pico, arguments.update,
     ))
