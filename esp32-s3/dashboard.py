@@ -70,6 +70,17 @@ class DashboardRenderer:
         normalized_name = normalize_style_name(style_name)
         if normalized_name == self._style_name:
             return False
+        return self._replace_style(normalized_name)
+
+    def reload_style(self, style_name):
+        """强制重新加载当前样式，使覆盖上传后的实现立即生效。"""
+        normalized_name = normalize_style_name(style_name)
+        if normalized_name != self._style_name:
+            return self.set_style(normalized_name)
+        return self._replace_style(normalized_name)
+
+    def _replace_style(self, normalized_name):
+        """释放当前样式实例并从注册表重新创建指定样式。"""
         if not style_exists(normalized_name):
             raise ValueError("STYLE_NOT_FOUND:" + normalized_name)
         self.canvas.clear_glyph_cache()

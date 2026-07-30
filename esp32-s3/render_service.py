@@ -418,6 +418,8 @@ class RenderService:
                 request.result = renderer.preload_style(*arguments)
             elif action == "set_style":
                 request.result = renderer.set_style(*arguments)
+            elif action == "reload_style":
+                request.result = renderer.reload_style(*arguments)
             elif action == "set_rotation":
                 request.result = renderer.set_rotation(*arguments)
             elif action == "abort_render":
@@ -545,6 +547,12 @@ class RenderService:
         if self._threaded:
             self._mailbox.discard_pending()
         return self._submit_control("set_style", style_name)
+
+    def reload_style(self, style_name):
+        """丢弃过期待处理帧并强制重新加载覆盖后的当前样式。"""
+        if self._threaded:
+            self._mailbox.discard_pending()
+        return self._submit_control("reload_style", style_name)
 
     def set_rotation(self, rotation):
         """在渲染所有者线程切换 LCD 方向。"""
