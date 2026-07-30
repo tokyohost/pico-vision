@@ -157,10 +157,46 @@ async function syncBoundStyle(item, overwrite = false) {
       message: '准备校验绑定样式',
       progress: 8,
       successMessage: '绑定样式同步完成',
-    }, async ({ progress }) => {
+    }, async ({ progress, log }) => {
       progress(25, '正在校验样式文件名、编码和必需方法')
       progress(45, '正在将样式发送到设备')
-      const response = await invoke('data.syncStyle', { name: item.name, overwrite })
+      let polling = true
+      let lastProgressKey = ''
+      const pollingTask = (async () => {
+        while (polling) {
+          try {
+            const state = await invoke('data.syncStyleProgress')
+            for (const item of state.progresses || []) {
+              const progressKey = `${item.stage}:${item.completed}`
+              if (progressKey === lastProgressKey) continue
+              lastProgressKey = progressKey
+              if (item.stage === 'sent') {
+                const percent = item.total_bytes
+                  ? Math.round(item.uploaded_bytes * 1000 / item.total_bytes) / 10
+                  : 0
+                progress(
+                  45 + Math.round(percent * 0.38),
+                  `正在将样式发送到设备：${item.uploaded_bytes}/${item.total_bytes} 字节`,
+                )
+              } else if (item.stage === 'begin') {
+                log(`设备已准备接收，共 ${item.total_bytes} 字节`)
+              } else if (item.stage === 'finish') {
+                progress(85, `样式发送完成：${item.total_bytes}/${item.total_bytes} 字节`)
+              }
+            }
+          } catch {
+            // 上传主请求负责报告错误，进度轮询失败不应中断上传。
+          }
+          if (polling) await new Promise((resolve) => window.setTimeout(resolve, 500))
+        }
+      })()
+      let response
+      try {
+        response = await invoke('data.syncStyle', { name: item.name, overwrite })
+      } finally {
+        polling = false
+        await pollingTask
+      }
       progress(88, '设备已接收样式，正在刷新样式目录')
       return response
     })

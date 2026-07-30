@@ -147,11 +147,25 @@ class StyleCommandMixin:
             import base64
 
             content = base64.b64decode(payload["content"], validate=True)
+
+            def publish_progress(progress):
+                """输出样式上传进度，供管理界面实时展示已发送字节数。"""
+                print(
+                    "CUSTOM_STYLE_UPLOAD_PROGRESS:"
+                    + json.dumps(
+                        progress,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    flush=True,
+                )
+
             data = self.client.upload_style(
                 payload["filename"],
                 payload["style_name"],
                 content,
                 overwrite=payload.get("overwrite") is True,
+                progress_callback=publish_progress,
             )
             result = {"status": "ok", "data": data}
             self.client.styles = self.client.request_style_catalog()

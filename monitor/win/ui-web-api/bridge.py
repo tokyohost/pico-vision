@@ -111,6 +111,7 @@ class WebViewBridge(
             "data.test": self._custom_data_test,
             "data.detail": self._custom_data_detail,
             "data.syncStyle": self._custom_data_sync_style,
+            "data.syncStyleProgress": self._custom_data_sync_style_progress,
             "data.delete": self._custom_data_delete,
             "market.install": self._market_install,
             "market.installStatus": self._market_install_status,

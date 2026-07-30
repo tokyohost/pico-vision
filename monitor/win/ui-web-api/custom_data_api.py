@@ -1,8 +1,10 @@
 """Web 界面的自定义数据插件管理接口。"""
 
 import base64
+import json
 import logging
 import mimetypes
+import queue
 
 import custom_data
 
@@ -228,6 +230,31 @@ class CustomDataApiMixin:
         self._application._reload_style_catalog()
         result["catalog"] = self._application.settings.get("styles", [])
         return result
+
+    def _custom_data_sync_style_progress(self, payload):
+        """返回绑定样式上传期间设备已确认的最新发送进度。"""
+        del payload
+        active = self._application.custom_style_upload_active.is_set()
+        progresses = []
+        while True:
+            try:
+                line = self._application.custom_style_upload_logs.get_nowait()
+            except queue.Empty:
+                break
+            if not line.startswith("CUSTOM_STYLE_UPLOAD_PROGRESS:"):
+                continue
+            if not active:
+                continue
+            try:
+                progresses.append(
+                    json.loads(line.split(":", 1)[1])
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                LOGGER.warning("忽略无法解析的样式上传进度：%s", line)
+        return {
+            "active": active,
+            "progresses": progresses,
+        }
 
     def _custom_data_delete(self, payload):
         """执行插件卸载钩子并删除插件目录和独立环境。"""

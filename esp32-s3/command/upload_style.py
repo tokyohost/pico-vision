@@ -10,7 +10,7 @@ class UploadStyleCommand(CommandStrategy):
     """通过 Flash 临时文件分块接收、校验并保存自定义样式。"""
 
     name = "uploadStyle"
-    max_file_size = 16 * 1024
+    max_file_size = 32 * 1024
 
     def __init__(self):
         """初始化当前上传会话，源码内容不在内存中累计。"""

@@ -208,7 +208,15 @@ class PicoCommandMixin:
         )
         return result.get("data") or {}
 
-    def upload_style(self, filename, style_name, content, timeout=10.0, overwrite=False):
+    def upload_style(
+        self,
+        filename,
+        style_name,
+        content,
+        timeout=10.0,
+        overwrite=False,
+        progress_callback=None,
+    ):
         """把样式源码分块写入 Pico 的 Flash 临时文件并完成校验。"""
         if not self.is_connected:
             raise RuntimeError("Pico 串口尚未连接")
@@ -236,6 +244,19 @@ class PicoCommandMixin:
             timeout,
             "begin",
         )
+        total_chunks = (
+            len(content) + STYLE_UPLOAD_CHUNK_SIZE - 1
+        ) // STYLE_UPLOAD_CHUNK_SIZE
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "stage": "begin",
+                    "completed": 0,
+                    "total": total_chunks,
+                    "uploaded_bytes": 0,
+                    "total_bytes": len(content),
+                }
+            )
         try:
             for sequence, offset in enumerate(range(0, len(content), STYLE_UPLOAD_CHUNK_SIZE)):
                 chunk = content[offset:offset + STYLE_UPLOAD_CHUNK_SIZE]
@@ -250,12 +271,32 @@ class PicoCommandMixin:
                     timeout,
                     "data-{}".format(sequence),
                 )
+                if progress_callback is not None:
+                    progress_callback(
+                        {
+                            "stage": "sent",
+                            "completed": sequence + 1,
+                            "total": total_chunks,
+                            "uploaded_bytes": offset + len(chunk),
+                            "total_bytes": len(content),
+                        }
+                    )
             result = self._send_style_upload_action(
                 request_prefix + "-finish",
                 {"action": "finish", "upload_id": upload_id},
                 timeout,
                 "finish",
             )
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "stage": "finish",
+                        "completed": total_chunks,
+                        "total": total_chunks,
+                        "uploaded_bytes": len(content),
+                        "total_bytes": len(content),
+                    }
+                )
             return result.get("data") or {}
         except Exception:
             try:
