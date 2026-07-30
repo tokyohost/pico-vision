@@ -7,6 +7,7 @@ from .common import CommonBridgeMixin
 from .custom_data_api import CustomDataApiMixin
 from .device_api import DeviceApiMixin
 from .log_api import LogApiMixin
+from .market_api import MarketApiMixin
 from .network_api import NetworkApiMixin
 from .settings_api import SettingsApiMixin
 from .style_api import StyleApiMixin
@@ -23,12 +24,20 @@ class WebViewBridge(
     NetworkApiMixin,
     StyleApiMixin,
     CustomDataApiMixin,
+    MarketApiMixin,
     LogApiMixin,
     CommonBridgeMixin,
 ):
     """向 Vue 界面公开单一 action 调用入口，不创建 HTTP 服务。"""
 
-    __slots__ = ("_application", "_sdk_lock", "_sdk_state", "_update_states")
+    __slots__ = (
+        "_application",
+        "_sdk_lock",
+        "_sdk_state",
+        "_update_states",
+        "_market_lock",
+        "_market_state",
+    )
 
     def __init__(self, application):
         """保存托盘应用引用，供桥接动作复用现有业务能力。"""
@@ -53,6 +62,15 @@ class WebViewBridge(
                 "logs": [],
             }
             for category in ("firmware", "sdk", "application")
+        }
+        self._market_lock = threading.Lock()
+        self._market_state = {
+            "busy": False,
+            "status": "idle",
+            "progress": 0,
+            "message": "",
+            "logs": [],
+            "result": None,
         }
 
     def invoke(self, action, payload=None):
@@ -94,6 +112,8 @@ class WebViewBridge(
             "data.detail": self._custom_data_detail,
             "data.syncStyle": self._custom_data_sync_style,
             "data.delete": self._custom_data_delete,
+            "market.install": self._market_install,
+            "market.installStatus": self._market_install_status,
             "log.read": self._read_log,
             "log.clear": self._clear_log,
             "log.export": self._export_log,

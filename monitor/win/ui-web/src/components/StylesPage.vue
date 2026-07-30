@@ -199,19 +199,16 @@ onMounted(loadRemoteStyles)
 </script>
 
 <template>
-  <div class="page-title card-header">
-    <div><h2>屏幕样式</h2><p>选择样式后保存，或上传设备自定义样式。</p></div>
-    <div>
-      <el-button
-        tag="a"
-        :href="customStyleTutorialUrl"
-        target="_blank"
-        rel="noopener noreferrer"
-        title="在浏览器中打开自定义屏幕教程"
-      >自定义屏幕教程</el-button>
-      <el-button :loading="remoteStyles.loading" @click="loadRemoteStyles">刷新设备</el-button>
-      <el-button type="primary" @click="uploadStyle">上传样式</el-button>
-    </div>
+  <div class="style-toolbar">
+    <el-button
+      tag="a"
+      :href="customStyleTutorialUrl"
+      target="_blank"
+      rel="noopener noreferrer"
+      title="在浏览器中打开自定义屏幕教程"
+    >自定义屏幕教程</el-button>
+    <el-button :loading="remoteStyles.loading" @click="loadRemoteStyles">刷新设备</el-button>
+    <el-button type="primary" @click="uploadStyle">上传样式</el-button>
   </div>
   <div class="style-grid">
     <article

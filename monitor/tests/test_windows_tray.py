@@ -392,6 +392,51 @@ class WindowsTraySettingsTest(unittest.TestCase):
         self.assertEqual("正在写入固件", result["logs"])
         self.assertFalse(result["busy"])
 
+    def test_market_download_rejects_address_from_another_origin(self):
+        """确认市场安装接口拒绝与当前 iframe 市场不同源的下载地址。"""
+        bridge = WebViewBridge(mock.Mock())
+
+        with mock.patch.object(
+            WebViewBridge,
+            "_market_origin",
+            return_value=("https", "market.example.com", 443),
+        ):
+            with self.assertRaisesRegex(ValueError, "不同源"):
+                bridge._validate_market_download_url(
+                    "https://attacker.example.com/plugin.zip"
+                )
+
+    def test_market_install_task_imports_valid_zip_and_reports_success(self):
+        """确认市场任务完成 ZIP 下载校验后覆盖导入并公开成功进度。"""
+        bridge = WebViewBridge(mock.Mock())
+
+        def write_package(_download_url, target_path):
+            """写入最小有效 ZIP，模拟市场下载结果。"""
+            import zipfile
+
+            with zipfile.ZipFile(target_path, "w") as archive:
+                archive.writestr("plugin.json", "{}")
+
+        with mock.patch.object(
+            WebViewBridge,
+            "_download_market_package",
+            side_effect=write_package,
+        ), mock.patch.object(
+            WebViewBridge,
+            "_import_custom_data_source",
+            return_value={"name": "demo", "chineseName": "演示插件"},
+        ) as import_source:
+            bridge._run_market_install(
+                "https://market.example.com/plugin.zip", "演示插件"
+            )
+
+        status = bridge._market_install_status({})
+        self.assertEqual("success", status["status"])
+        self.assertEqual(100, status["progress"])
+        self.assertIn("安装完成", status["logs"])
+        import_source.assert_called_once()
+        self.assertTrue(import_source.call_args.args[1]["overwrite"])
+
     @mock.patch("win.ui_web.inspect_sdk_image")
     def test_sdk_release_update_refreshes_usb_connection_after_download(
         self, inspect_image
