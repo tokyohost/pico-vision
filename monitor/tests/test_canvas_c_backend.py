@@ -51,7 +51,7 @@ class CanvasCBackendTest(unittest.TestCase):
         """单次文字应使用固件字体编号并在绘制后恢复样式默认字体。"""
         previous_font = self.canvas._font
         native_module = mock.Mock()
-        native_module.api_version.return_value = 8
+        native_module.api_version.return_value = canvasC.NATIVE_CANVAS_API_VERSION
         with mock.patch.object(canvasC, "_native_canvas", native_module):
             self.canvas.text(
                 3,
@@ -82,7 +82,7 @@ class CanvasCBackendTest(unittest.TestCase):
         """指定固件字体的宽度计算应调用同一字体编号并恢复样式字体。"""
         previous_font = self.canvas._font
         native_module = mock.Mock()
-        native_module.api_version.return_value = 8
+        native_module.api_version.return_value = canvasC.NATIVE_CANVAS_API_VERSION
         native_module.text_width.return_value = 48
         with mock.patch.object(canvasC, "_native_canvas", native_module):
             width = self.canvas.text_width(
