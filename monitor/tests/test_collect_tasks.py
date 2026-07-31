@@ -25,7 +25,19 @@ from collectTask.tasks.disk_common import (
 )
 from collectTask.tasks.cpu_memory import CpuMemoryTask
 from collectTask.tasks.gpu import GpuTask
+from collectTask.tasks.linux.system_strategy import LinuxCollectionStrategy
+from collectTask.tasks.nas_cpu_percent import ProcStatCpuPercentSampler
 from collectTask.tasks.power import PowerTask
+from collectTask.tasks.qnap.system_strategy import QnapCollectionStrategy, is_qnap_system
+from collectTask.tasks.synology.cpu_percent import CpuPercentSampler as SynologyCpuPercentSampler
+from collectTask.tasks.synology.system_strategy import SynologyCollectionStrategy
+from collectTask.tasks.system_strategy import (
+    SystemCollectionStrategy,
+    SystemCollectionStrategyRegistry,
+    resolve_system_collection_strategy,
+)
+from collectTask.tasks.truenas.system_strategy import TrueNasCollectionStrategy, is_truenas_system
+from collectTask.tasks.win.system_strategy import WindowsCollectionStrategy
 
 
 class BoundedElasticThreadPoolTest(unittest.TestCase):
@@ -178,6 +190,116 @@ class CollectionCoordinatorTest(unittest.TestCase):
         self.assertNotIn("cpu", fragment)
         self.assertEqual(fragment["memory"]["percent"], 25.5)
         cpu_percent.assert_not_called()
+
+    def test_system_collection_registry_selects_matching_strategy(self):
+        """确认注册表按优先级选择群晖、Windows或通用 Linux 策略。"""
+        with mock.patch(
+            "collectTask.tasks.synology.system_strategy.is_synology_system",
+            side_effect=lambda system_name: system_name == "Linux",
+        ):
+            self.assertIsInstance(resolve_system_collection_strategy("Linux"), SynologyCollectionStrategy)
+        with mock.patch(
+            "collectTask.tasks.synology.system_strategy.is_synology_system",
+            return_value=False,
+        ):
+            self.assertIsInstance(resolve_system_collection_strategy("Linux"), LinuxCollectionStrategy)
+            self.assertIsInstance(resolve_system_collection_strategy("Windows"), WindowsCollectionStrategy)
+
+    def test_system_collection_registry_accepts_extension_strategy(self):
+        """确认新增系统只需注册策略，无需修改 CPU 采集任务。"""
+        class CustomCollectionStrategy(SystemCollectionStrategy):
+            """提供测试用的自定义系统采集策略。"""
+
+            priority = 500
+
+            def supports(self, system_name):
+                """判断测试策略是否支持自定义系统。"""
+                return system_name == "CustomOS"
+
+            def create_cpu_percent_sampler(self, logger):
+                """返回测试用 CPU 采样器。"""
+                return mock.Mock()
+
+        registry = SystemCollectionStrategyRegistry((CustomCollectionStrategy(),))
+
+        self.assertIsInstance(registry.resolve("CustomOS"), CustomCollectionStrategy)
+
+    def test_system_collection_registry_selects_qnap_strategy(self):
+        """确认威联通标志存在时优先选择 QNAP 专用策略。"""
+        with mock.patch(
+            "collectTask.tasks.synology.system_strategy.is_synology_system",
+            return_value=False,
+        ), mock.patch(
+            "collectTask.tasks.qnap.system_strategy.is_qnap_system",
+            return_value=True,
+        ):
+            strategy = resolve_system_collection_strategy("Linux")
+
+        self.assertIsInstance(strategy, QnapCollectionStrategy)
+
+    def test_system_collection_registry_selects_truenas_core_strategy(self):
+        """确认 FreeBSD 内核的 TrueNAS CORE 能选择专用策略。"""
+        with mock.patch(
+            "collectTask.tasks.truenas.system_strategy.is_truenas_system",
+            return_value=True,
+        ):
+            strategy = resolve_system_collection_strategy("FreeBSD")
+
+        self.assertIsInstance(strategy, TrueNasCollectionStrategy)
+
+    def test_qnap_identity_requires_linux_and_marker_file(self):
+        """确认 QNAP 识别同时校验 Linux 平台和威联通标志文件。"""
+        with mock.patch("collectTask.tasks.qnap.system_strategy.os.path.isfile", return_value=True):
+            self.assertTrue(is_qnap_system("Linux", ("/qnap-marker",)))
+            self.assertFalse(is_qnap_system("Windows", ("/qnap-marker",)))
+
+    def test_truenas_identity_supports_scale_and_core_markers(self):
+        """确认 TrueNAS 识别同时支持 Linux SCALE 与 FreeBSD CORE。"""
+        with mock.patch("collectTask.tasks.truenas.system_strategy.os.path.isfile", return_value=True):
+            self.assertTrue(is_truenas_system("Linux", ("/truenas-marker",), ()))
+            self.assertTrue(is_truenas_system("FreeBSD", ("/truenas-marker",), ()))
+            self.assertFalse(is_truenas_system("Windows", ("/truenas-marker",), ()))
+
+    def test_qnap_and_truenas_scale_use_proc_cpu_sampler(self):
+        """确认 QNAP 与 TrueNAS SCALE 使用适合 NAS 的 proc CPU 采样器。"""
+        logger = mock.Mock()
+        self.assertIsInstance(
+            QnapCollectionStrategy().create_cpu_percent_sampler(logger),
+            ProcStatCpuPercentSampler,
+        )
+        with mock.patch("collectTask.tasks.truenas.system_strategy.platform.system", return_value="Linux"):
+            sampler = TrueNasCollectionStrategy().create_cpu_percent_sampler(logger)
+        self.assertIsInstance(sampler, ProcStatCpuPercentSampler)
+
+    def test_synology_cpu_sampler_calculates_proc_stat_delta(self):
+        """确认群晖采样器根据 /proc/stat 两次快照计算 CPU 占用率。"""
+        sampler = SynologyCpuPercentSampler(mock.Mock())
+        with mock.patch.object(
+            sampler,
+            "_read_cpu_times",
+            side_effect=((1000, 600), (1100, 630)),
+        ), mock.patch("collectTask.tasks.nas_cpu_percent.time.sleep"):
+            percent = sampler.sample(0.5)
+
+        self.assertEqual(percent, 70.0)
+
+    def test_synology_handler_prefers_sysfs_metrics(self):
+        """确认群晖处理器优先采用 DSM 可用的 sysfs 频率和温度。"""
+        collector = types.SimpleNamespace(
+            _cpu_frequency_ghz=mock.Mock(return_value=1.0),
+            _cpu_temperature=mock.Mock(return_value=40.0),
+        )
+        handler = SynologyCollectionStrategy()
+        with mock.patch.object(
+            handler,
+            "_read_numeric_files",
+            side_effect=([2000000.0, 2200000.0], [45000.0], [47000.0]),
+        ):
+            self.assertEqual(handler.cpu_frequency_ghz(collector), 2.1)
+            self.assertEqual(handler.cpu_temperature(collector), 47.0)
+
+        collector._cpu_frequency_ghz.assert_not_called()
+        collector._cpu_temperature.assert_not_called()
 
     def test_sensor_host_available_skips_gpu_and_power_fallback(self):
         """确认 SensorHost 有效时 GPU 和功耗降级任务不发布覆盖字段。"""

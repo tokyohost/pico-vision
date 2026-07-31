@@ -1,8 +1,6 @@
 """CPU 和内存采集任务。"""
 
-import importlib
 import logging
-import platform
 import time
 
 import psutil
@@ -10,17 +8,11 @@ import psutil
 from history import update_per_second
 
 from ..system_tasks import CollectionTask
+from .system_strategy import resolve_system_collection_strategy
 
 
 CPU_SAMPLE_WINDOW_SECONDS = 0.5
 LOGGER = logging.getLogger("pico-monitor.collector")
-
-
-def _cpu_sampler_class():
-    """根据当前平台返回 CPU 占用率采样实现类。"""
-    module_name = ".win.cpu_percent" if platform.system() == "Windows" else ".linux.cpu_percent"
-    module = importlib.import_module(module_name, package=__package__)
-    return module.CpuPercentSampler
 
 
 class CpuMemoryTask(CollectionTask):
@@ -35,6 +27,7 @@ class CpuMemoryTask(CollectionTask):
         """初始化 CPU 采集任务，并延迟创建当前平台采样器。"""
         super().__init__(collector)
         self._cpu_sampler = None
+        self._system_strategy = None
 
     def collect(self):
         """通过短阻塞窗口采样 CPU，并返回 CPU 和内存两个顶层指标。"""
@@ -55,7 +48,7 @@ class CpuMemoryTask(CollectionTask):
             )
             fragment["cpu"] = {
                 "percent": cpu,
-                "frequency_ghz": self.collector._cpu_frequency_ghz(),
+                "frequency_ghz": self._cpu_frequency_ghz(),
                 "temperature_c": self._cpu_temperature(),
                 "history": list(self.collector.histories["cpu"]),
             }
@@ -89,10 +82,20 @@ class CpuMemoryTask(CollectionTask):
             cpu = getattr(self.collector, "_sensor_host_cpu_fragment", {}) or {}
             if cpu.get("temperature_c") is not None:
                 return cpu.get("temperature_c")
-        return self.collector._cpu_temperature()
+        return self._get_system_strategy().cpu_temperature(self.collector)
 
     def _cpu_percent(self):
         """通过当前平台采样器读取每核心平均 CPU 占用率。"""
         if self._cpu_sampler is None:
-            self._cpu_sampler = _cpu_sampler_class()(LOGGER)
+            self._cpu_sampler = self._get_system_strategy().create_cpu_percent_sampler(LOGGER)
         return self._cpu_sampler.sample(CPU_SAMPLE_WINDOW_SECONDS)
+
+    def _cpu_frequency_ghz(self):
+        """通过当前系统采集策略读取 CPU 实时频率。"""
+        return self._get_system_strategy().cpu_frequency_ghz(self.collector)
+
+    def _get_system_strategy(self):
+        """延迟解析并缓存当前系统对应的采集策略。"""
+        if self._system_strategy is None:
+            self._system_strategy = resolve_system_collection_strategy()
+        return self._system_strategy

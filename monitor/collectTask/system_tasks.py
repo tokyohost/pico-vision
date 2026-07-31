@@ -18,7 +18,7 @@ class CollectionTask:
     zh_name = "未命名采集任务"
     default_interval = 1.0
     order = 100
-    supported_platforms = ("Linux", "Windows")
+    supported_platforms = ("Linux", "Windows", "FreeBSD")
 
     def __init__(self, collector):
         """保存系统采集器，并初始化调度状态。"""
