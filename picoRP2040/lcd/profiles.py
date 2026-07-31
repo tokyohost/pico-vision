@@ -125,7 +125,7 @@ def create_eight_pin_board_profiles():
     )
     # ESP32-S3 的旧版 MicroPython 会给 SPI(2) 自动分配 GPIO13 作为 MISO，
     # 因此显式将未接屏幕的 MISO 放到 GPIO15，避免与 GPIO13 背光 PWM 冲突。
-    # 杜邦线连接在 40 MHz 下容易产生信号完整性问题，默认降到稳定的 10 MHz。
+    # 当前屏幕档案统一使用四十兆赫 SPI，以保持两类开发板的刷新性能一致。
     esp32_s3_profile = LcdPinProfile(
         2,
         12,

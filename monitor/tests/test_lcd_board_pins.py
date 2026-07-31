@@ -95,7 +95,7 @@ class LcdBoardPinsTest(unittest.TestCase):
                 device = self.create_lcd_device(device_type, "ESP32-S3")
                 profile = device.pin_profile
                 self.assertEqual(2, profile.spi_id)
-                self.assertEqual(10_000_000, profile.baudrate)
+                self.assertEqual(40_000_000, profile.baudrate)
                 self.assertEqual(15, profile.miso)
                 self.assertEqual(15, device.spi.parameters["miso"].identifier)
                 self.assertEqual((12, 11, 10, 9, 14, 13), (
