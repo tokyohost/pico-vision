@@ -1418,6 +1418,7 @@ class WindowsTraySettingsTest(unittest.TestCase):
         """确认更新地址留空时使用正式构建内置的默认地址。"""
         application = WindowsTrayApplication.__new__(WindowsTrayApplication)
         application.settings = dict(DEFAULT_SETTINGS, update_url="")
+        application._set_tk_window_icon = mock.Mock()
         updater = mock.Mock()
         updater.default_update_url.return_value = "https://updates.example/default"
 

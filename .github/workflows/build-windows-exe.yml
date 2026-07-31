@@ -54,7 +54,14 @@ jobs:
           node-version: "22"
 
       - name: 安装运行及打包依赖
-        run: python -m pip install -r requirements.txt -r requirements-build.txt
+        shell: pwsh
+        run: |
+          if ("${{ matrix.architecture }}" -eq "x86") {
+            # 新版 cryptography 已停止发布 Windows x86 wheel，固定到仍提供 x86 wheel 的版本。
+            python -m pip install "cryptography==46.0.7"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          python -m pip install -r requirements.txt -r requirements-build.txt
 
       - name: 构建 Vue 桌面界面
         shell: pwsh
