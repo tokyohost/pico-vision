@@ -1,5 +1,7 @@
 """Web 界面的设备管理和 ESP32-S3 SDK 刷写接口。"""
 
+import base64
+import json
 import logging
 import os
 import queue
@@ -8,10 +10,14 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 
 from serial.tools import list_ports
+from build_info import MONITOR_VERSION
 from sdk_flash import (
     inspect_sdk_image,
     is_espressif_usb_port,
@@ -53,6 +59,134 @@ class DeviceApiMixin:
         """返回当前工作进程维护的设备连接快照。"""
         del payload
         return self._application._get_device_connection()
+
+    def _registration_api_base(self):
+        """从市场页面地址推导若依设备注册API基础地址。"""
+        configured_url = str(
+            self._application.settings.get("market_url") or ""
+        ).strip()
+        parsed = urllib.parse.urlsplit(configured_url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise RuntimeError("请先在设置中配置有效的插件市场/服务端地址")
+        path = parsed.path.rstrip("/")
+        if path.endswith("/market"):
+            path = path[:-len("/market")]
+        if not path:
+            # 开发版由 Vite 的 /dev-api 代理，正式发布版由 Web 服务器的
+            # /prod-api 反向代理到 Java 服务。
+            path = (
+                "/dev-api"
+                if MONITOR_VERSION == "development"
+                else "/prod-api"
+            )
+        return "{}://{}{}".format(parsed.scheme, parsed.netloc, path)
+
+    @staticmethod
+    def _read_registration_response(response):
+        """解析若依接口响应并将业务失败转换为清晰异常。"""
+        try:
+            result = json.loads(response.read().decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise RuntimeError("注册服务返回了无效响应") from error
+        if int(result.get("code", 500)) != 200:
+            raise RuntimeError(result.get("msg") or "注册服务请求失败")
+        return result
+
+    def _request_registration_api(self, path, method="GET", body=None):
+        """以JSON方式访问同源设备注册API。"""
+        request_body = None
+        request_url = self._registration_api_base() + path
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "OmniWatch-Monitor",
+        }
+        if body is not None:
+            request_body = json.dumps(
+                body, ensure_ascii=False
+            ).encode("utf-8")
+            headers["Content-Type"] = "application/json; charset=utf-8"
+        request_log = (
+            "[设备注册] 请求方法={}，请求地址={}，请求体={}".format(
+                method,
+                request_url,
+                json.dumps(body, ensure_ascii=False)
+                if body is not None
+                else "{}",
+            )
+        )
+        LOGGER.info(request_log)
+        self._application._append_application_log(request_log)
+        request = urllib.request.Request(
+            request_url,
+            data=request_body,
+            headers=headers,
+            method=method,
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return self._read_registration_response(response)
+        except urllib.error.HTTPError as error:
+            try:
+                return self._read_registration_response(error)
+            except RuntimeError:
+                raise
+        except urllib.error.URLError as error:
+            raise RuntimeError("无法连接设备注册服务：{}".format(error.reason)) from error
+
+    def _device_registration_status(self, payload):
+        """远程查询当前或指定设备UUID的注册状态。"""
+        connection = self._application._get_device_connection()
+        uuid = str(payload.get("uuid") or connection.get("device_id") or "").strip()
+        if not uuid:
+            return {"registered": False, "uuid": ""}
+        query = urllib.parse.urlencode({"uuid": uuid})
+        result = self._request_registration_api(
+            "/device/registration/status?" + query
+        )
+        return {
+            "registered": bool(result.get("registered")),
+            "uuid": uuid,
+        }
+
+    def _register_device(self, payload):
+        """解析用户粘贴的Base64注册码并上送当前设备信息。"""
+        connection = self._application._get_device_connection()
+        if not connection.get("connected"):
+            raise RuntimeError("设备未连接，无法立即注册")
+        uuid = str(connection.get("device_id") or "").strip()
+        if not uuid:
+            raise RuntimeError("当前固件未提供设备UUID，无法注册")
+        encoded_code = str(payload.get("registrationCode") or "").strip()
+        if not encoded_code:
+            raise ValueError("请粘贴Base64注册码")
+        try:
+            padding = "=" * (-len(encoded_code) % 4)
+            registration = json.loads(
+                base64.b64decode(encoded_code + padding, validate=True)
+                .decode("utf-8")
+            )
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError("注册码不是有效的Base64 JSON") from error
+        if not isinstance(registration, dict):
+            raise ValueError("注册码JSON结构无效")
+        if str(registration.get("uuid") or "").strip() != uuid:
+            raise ValueError("注册码绑定的UUID与当前设备不一致")
+        result = self._request_registration_api(
+            "/device/registration",
+            method="POST",
+            body={
+                "uuid": uuid,
+                "activationCode": registration.get("activationCode"),
+                "remark": registration.get("remark"),
+                "firmwareVersion": connection.get("firmware_version"),
+                "sdkVersion": connection.get("sdk_version"),
+            },
+        )
+        return {
+            "registered": True,
+            "uuid": uuid,
+            "device": result.get("data") or {},
+        }
 
     def _probe_device(self, payload):
         """请求常驻工作进程立即探测，并返回持续保持的连接快照。"""

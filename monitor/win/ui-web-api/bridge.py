@@ -84,6 +84,8 @@ class WebViewBridge(
             "update.install": self._install_update,
             "update.status": self._update_status,
             "device.status": self._device_status,
+            "device.registration.status": self._device_registration_status,
+            "device.registration.register": self._register_device,
             "device.probe": self._probe_device,
             "device.screenshot": self._take_screenshot,
             "device.reboot": self._reboot_device,

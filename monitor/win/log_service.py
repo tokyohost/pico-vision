@@ -14,6 +14,22 @@ from .constants import APPLICATION_NAME, LOG_EXPORT_SIZE
 class LogServiceMixin:
     """为托盘应用提供独立的业务能力。"""
 
+    def _append_application_log(self, message, level="INFO"):
+        """将托盘主进程业务日志追加到设备实时日志文件。"""
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        line = "{} [{}] {}\n".format(
+            datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3],
+            str(level or "INFO").upper(),
+            str(message or ""),
+        ).encode("utf-8")
+        with self.log_file_lock:
+            self.log_path.touch(exist_ok=True)
+            with self.log_path.open("r+b") as log_file:
+                log_file.seek(0, os.SEEK_END)
+                log_file.write(line)
+                log_file.flush()
+                self._truncate_log_file(log_file)
+
     @staticmethod
     def _remove_incomplete_utf8_prefix(content):
         """移除日志片段开头不完整的 UTF-8 字符，避免中文内容乱码。"""

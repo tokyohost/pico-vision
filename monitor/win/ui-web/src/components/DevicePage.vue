@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '../bridge'
 
@@ -30,7 +30,74 @@ const firmware = reactive({
 const sdkLogView = ref(null)
 const deviceLogView = ref(null)
 const deviceLogs = ref('')
+const registration = reactive({ registered: false, checking: false, uuid: '' })
 let refreshTimer = null
+
+/**
+ * 将当前设备UUID复制到系统剪贴板。
+ */
+async function copyDeviceUuid() {
+  const uuid = currentDevice.value.device_id
+  if (!uuid) {
+    ElMessage.warning('当前设备没有可复制的UUID')
+    return
+  }
+  await navigator.clipboard.writeText(uuid)
+  ElMessage.success('设备UUID已复制')
+}
+
+/**
+ * 调用远程接口检查当前设备注册状态。
+ */
+async function checkRegistrationStatus(uuid = currentDevice.value.device_id) {
+  if (!uuid || registration.checking) return
+  registration.checking = true
+  try {
+    const result = await invoke('device.registration.status', { uuid })
+    if (result.uuid === uuid) {
+      registration.uuid = uuid
+      registration.registered = Boolean(result.registered)
+    }
+  } catch (error) {
+    registration.uuid = uuid
+    registration.registered = false
+    console.warn('检查设备注册状态失败', error)
+  } finally {
+    registration.checking = false
+  }
+}
+
+/**
+ * 粘贴Base64注册码并立即注册当前设备。
+ */
+async function registerDeviceNow() {
+  if (!currentDevice.value.device_id) {
+    ElMessage.warning('当前设备未提供UUID')
+    return
+  }
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '请粘贴注册码',
+      '立即注册设备',
+      {
+        confirmButtonText: '立即注册',
+        cancelButtonText: '取消',
+        inputType: 'textarea',
+        inputValidator: (text) => Boolean(String(text || '').trim()) || '注册码不能为空',
+      },
+    )
+    const result = await invoke('device.registration.register', {
+      registrationCode: String(value || '').trim(),
+    })
+    registration.uuid = result.uuid
+    registration.registered = Boolean(result.registered)
+    ElMessage.success('设备注册成功')
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(error?.message || String(error))
+    }
+  }
+}
 
 const currentDevice = computed(() => ({
   ...probe.detail,
@@ -234,8 +301,18 @@ async function rebootDevice() {
 
 onMounted(async () => {
   await Promise.all([refreshRuntimeState(true), loadSdkPorts()])
+  await checkRegistrationStatus()
   refreshTimer = window.setInterval(refreshRuntimeState, 800)
 })
+
+watch(
+  () => currentDevice.value.device_id,
+  (uuid, previousUuid) => {
+    if (uuid && uuid !== previousUuid && uuid !== registration.uuid) {
+      checkRegistrationStatus(uuid)
+    }
+  },
+)
 
 onBeforeUnmount(() => {
   if (refreshTimer !== null) window.clearInterval(refreshTimer)
@@ -273,7 +350,24 @@ onBeforeUnmount(() => {
   <el-card shadow="never" class="section-gap">
     <template #header><span>设备详情</span></template>
     <el-descriptions :column="2" border>
-      <el-descriptions-item label="设备 UUID"><span class="hash-value">{{ currentDevice.device_id || '--' }}</span></el-descriptions-item>
+      <el-descriptions-item label="设备 UUID">
+        <div class="uuid-actions">
+          <span class="hash-value">{{ currentDevice.device_id || '--' }}</span>
+          <el-tag
+            v-if="registration.registered && registration.uuid === currentDevice.device_id"
+            type="success"
+            size="small"
+          >已注册</el-tag>
+          <el-button link type="primary" :disabled="!currentDevice.device_id" @click="copyDeviceUuid">复制</el-button>
+          <el-button
+            v-if="!registration.registered || registration.uuid !== currentDevice.device_id"
+            link
+            type="primary"
+            :disabled="!currentDevice.connected || !currentDevice.device_id"
+            @click="registerDeviceNow"
+          >立即注册</el-button>
+        </div>
+      </el-descriptions-item>
       <el-descriptions-item label="开发板">{{ currentDevice.board_model || '--' }}</el-descriptions-item>
       <el-descriptions-item label="连接方式">{{ currentDevice.transport || '--' }}</el-descriptions-item>
       <el-descriptions-item label="LCD">{{ currentDevice.lcd_device_type || '--' }}</el-descriptions-item>
@@ -341,7 +435,7 @@ onBeforeUnmount(() => {
     <div class="card-header">
       <div>
         <strong>固件更新</strong>
-        <p class="sdk-status">选择本地 ZIP 固件包，直接更新当前连接设备。</p>
+        <p class="sdk-status">选择 ZIP 固件包更新设备固件。</p>
       </div>
       <el-tag v-if="firmware.busy" type="warning">正在更新</el-tag>
       <el-tag v-else-if="firmware.status === 'success'" type="success">更新完成</el-tag>
