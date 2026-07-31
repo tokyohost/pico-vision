@@ -4,6 +4,7 @@
 import sys
 import types
 import unittest
+from contextlib import ExitStack
 from unittest import mock
 from pathlib import Path
 
@@ -88,6 +89,18 @@ class FakeConsoleOutput:
 class UsbCapabilityStrategyTest(unittest.TestCase):
     """确认 BOARD_MODEL 对应的 USB 能力选择和统一传输行为。"""
 
+    @staticmethod
+    def _patch_select_poll():
+        """为不提供 poll 接口的 Windows 测试环境安装最小轮询替身。"""
+        stack = ExitStack()
+        stack.enter_context(
+            mock.patch.object(usb_transport.select, "poll", FakePoll, create=True)
+        )
+        stack.enter_context(
+            mock.patch.object(usb_transport.select, "POLLIN", 1, create=True)
+        )
+        return stack
+
     def test_board_models_select_expected_usb_capabilities(self):
         """RP2040 与 ESP32-S3 应选择不同 USB 能力策略。"""
         self.assertEqual(
@@ -107,10 +120,7 @@ class UsbCapabilityStrategyTest(unittest.TestCase):
         """ESP32 内置控制台应支持首字节连接、读取和写入。"""
         console_input = FakeConsoleInput()
         console_output = FakeConsoleOutput()
-        with mock.patch.object(usb_transport.select, "poll", FakePoll), mock.patch(
-            "net.usb_cdc.select.poll",
-            FakePoll,
-        ):
+        with self._patch_select_poll():
             stream = usb_transport.create_usb_stream(
                 "ESP32-S3",
                 wait_for_open=False,
@@ -141,10 +151,7 @@ class UsbCapabilityStrategyTest(unittest.TestCase):
 
         console_input = FakeBatchConsoleInput()
         console_output = FakeConsoleOutput()
-        with mock.patch.object(usb_transport.select, "poll", FakePoll), mock.patch(
-            "net.usb_cdc.select.poll",
-            FakePoll,
-        ):
+        with self._patch_select_poll():
             stream = usb_transport.create_usb_stream(
                 "ESP32-S3",
                 wait_for_open=False,
@@ -173,7 +180,7 @@ class UsbCapabilityStrategyTest(unittest.TestCase):
         """标准固件缺少批量接口时应保持严格非阻塞的单字节回退。"""
         console_input = FakeConsoleInput()
         console_input.feed(b"ABC")
-        with mock.patch.object(usb_transport.select, "poll", FakePoll):
+        with self._patch_select_poll():
             stream = usb_transport.create_usb_stream(
                 "ESP32-S3",
                 wait_for_open=False,
@@ -189,7 +196,7 @@ class UsbCapabilityStrategyTest(unittest.TestCase):
     def test_esp32_console_releases_inactive_session(self):
         """ESP32 USB 会话长期无数据时应释放给其他传输策略。"""
         console_input = FakeConsoleInput()
-        with mock.patch.object(usb_transport.select, "poll", FakePoll), mock.patch.object(
+        with self._patch_select_poll(), mock.patch.object(
             usb_transport,
             "_ticks_ms",
             return_value=100,
