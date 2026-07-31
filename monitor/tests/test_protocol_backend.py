@@ -93,7 +93,9 @@ class ProtocolBackendTest(unittest.TestCase):
         """设备握手中的 SDK 版本应保留定制标签并移除每天变化的构建日期。"""
         uname = SimpleNamespace(version="v1.0.61-fnProcotolV1 on 2026-07-15")
 
-        with mock.patch.object(protocol.os, "uname", return_value=uname):
+        # Windows 的 os 模块不提供 uname，create=True 可在各平台统一模拟
+        # MicroPython 的运行时版本信息，避免测试在进入被测逻辑前失败。
+        with mock.patch.object(protocol.os, "uname", return_value=uname, create=True):
             self.assertEqual(
                 "v1.0.61-fnProcotolV1",
                 protocol.runtime_sdk_version(),
