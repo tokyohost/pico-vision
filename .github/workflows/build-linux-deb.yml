@@ -33,6 +33,15 @@ jobs:
       - name: 检出项目代码
         uses: actions/checkout@v6
 
+      - name: 构建 Web 界面
+        run: |
+          npm ci --prefix win/ui-web
+          npm run build --prefix win/ui-web
+          test -f win/ui-web/dist/index.html || {
+            echo "未生成 Web 界面构建产物：win/ui-web/dist/index.html" >&2
+            exit 1
+          }
+
       - name: 安装 Debian 打包工具
         run: |
           sudo apt-get update
@@ -81,6 +90,15 @@ jobs:
     steps:
       - name: 检出项目代码
         uses: actions/checkout@v6
+
+      - name: 构建 Web 界面
+        run: |
+          npm ci --prefix win/ui-web
+          npm run build --prefix win/ui-web
+          test -f win/ui-web/dist/index.html || {
+            echo "未生成 Web 界面构建产物：win/ui-web/dist/index.html" >&2
+            exit 1
+          }
 
       - name: 生成通用安装压缩包
         run: |
