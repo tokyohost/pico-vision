@@ -34,7 +34,8 @@ class MpremoteStreamCopier:
 
     def _remote_path(self, local_path: Path) -> str:
         """根据本地相对路径生成 mpremote 使用的设备端路径。"""
-        relative_path = local_path.relative_to(self.source)
+        # Windows Runner 可能将同一临时目录分别表示为长路径和八点三短路径。
+        relative_path = local_path.resolve(strict=False).relative_to(self.source)
         remote_path = self.remote_root.joinpath(*relative_path.parts)
         return f":{remote_path.as_posix()}"
 
