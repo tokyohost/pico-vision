@@ -1,8 +1,17 @@
 """验证独立快照发送脚本的发送周期。"""
 
 from types import SimpleNamespace
+import sys
 import unittest
+from pathlib import Path
 from unittest import mock
+
+
+# 流水线按单个测试文件执行发现时只会加入 monitor 目录，因此需要显式加入
+# 项目根目录，确保能够稳定导入独立发送脚本。
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import send_frame
 
