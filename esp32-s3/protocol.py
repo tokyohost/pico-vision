@@ -296,7 +296,7 @@ class JsonProtocol:
         return bool(self._poller.poll(0))
 
     def _parse_lines(self):
-        """依次解析已完整接收的命令行，并保留最后一个 JSON。"""
+        """依次解析完整协议行，并合并同一次轮询收到的全部 JSON 快照。"""
         latest = None
         while True:
             newline = self._buffer.find(b"\n")
@@ -346,16 +346,32 @@ class JsonProtocol:
             if message_type == "PING":
                 self._write_pong()
             elif message_type == "JSONZ":
-                latest = self._handle_jsonz_frame(
+                snapshot = self._handle_jsonz_frame(
                     payload=payload,
                     line=line,
                     frame_read_calls=frame_read_calls,
                     receive_elapsed_ms=receive_elapsed_ms,
                     parse_elapsed_ms=parse_elapsed_ms,
                 )
+                if snapshot is not None:
+                    latest = self._merge_parsed_snapshots(latest, snapshot)
             else:
                 self._write_frame("ERR", b"UNKNOWN_TYPE")
         return latest
+
+    @classmethod
+    def _merge_parsed_snapshots(cls, previous, incoming):
+        """递归合并同批 JSON 快照，确保较早分片不会被后续分片覆盖丢失。"""
+        if not isinstance(previous, dict) or not isinstance(incoming, dict):
+            return incoming
+        merged = dict(previous)
+        for key, value in incoming.items():
+            old_value = merged.get(key)
+            if isinstance(old_value, dict) and isinstance(value, dict):
+                merged[key] = cls._merge_parsed_snapshots(old_value, value)
+            else:
+                merged[key] = value
+        return merged
 
     def _handle_jsonz_frame(
             self,

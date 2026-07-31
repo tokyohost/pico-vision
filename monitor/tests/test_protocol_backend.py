@@ -195,6 +195,41 @@ class ProtocolBackendTest(unittest.TestCase):
             protocol.MAX_JSON_SIZE,
         )
 
+    def test_parse_lines_merges_all_json_fragments_in_same_poll(self):
+        """确认同一次轮询内的多个 JSON 分片都会进入最终快照。"""
+        instance = protocol.JsonProtocol.__new__(protocol.JsonProtocol)
+        instance._buffer = bytearray(b"PV1:first\nPV1:second\n")
+        instance._last_byte_ms = 1
+        instance._frame_started_ms = 1
+        instance._frame_read_calls = 2
+        instance._last_message_ms = None
+        instance._write_frame = mock.Mock()
+        instance._parse_frame = mock.Mock(
+            side_effect=(("JSONZ", b"first"), ("JSONZ", b"second"))
+        )
+        instance._handle_jsonz_frame = mock.Mock(
+            side_effect=(
+                {"cpu": {"percent": 35, "history": [20, 35]}},
+                {"cpu": {"temperature_c": 60}, "display": {"style": "game"}},
+            )
+        )
+        instance._ticks_ms = mock.Mock(return_value=2)
+
+        snapshot = instance._parse_lines()
+
+        self.assertEqual(
+            {
+                "cpu": {
+                    "percent": 35,
+                    "history": [20, 35],
+                    "temperature_c": 60,
+                },
+                "display": {"style": "game"},
+            },
+            snapshot,
+        )
+        self.assertEqual(2, instance._handle_jsonz_frame.call_count)
+
     def test_write_raw_retries_partial_usb_writes(self):
         """确认较长 PONG 帧在 USB 部分写入时仍能完整发送。"""
         stream = PartialWriteStream(64)
