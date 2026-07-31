@@ -37,6 +37,10 @@ def _array_bytes(source, name):
     return bytes(int(value, 16) for value in re.findall(r"0x([0-9A-F]{2})", match.group(1)))
 
 
+@unittest.skipUnless(
+    FONT_SOURCE.is_file(),
+    "当前检出内容不包含 MicroPython 内置字体生成资源",
+)
 class BuiltinFontAssetsTest(unittest.TestCase):
     """验证字符索引、字形尺寸、字体差异和半角留白。"""
 

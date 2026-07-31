@@ -83,7 +83,16 @@ jobs:
           [IO.File]::WriteAllText((Join-Path $PWD "build_info.py"), $content, [Text.UTF8Encoding]::new($false))
 
       - name: 执行单元测试
-        run: python -m unittest discover -s tests -v
+        shell: pwsh
+        run: |
+          # 各固件目录包含同名 main、config 等模块，必须隔离 Python 模块表。
+          Get-ChildItem -LiteralPath "tests" -Filter "test_*.py" |
+            Sort-Object Name |
+            ForEach-Object {
+              Write-Host "执行测试文件：$($_.Name)"
+              python -m unittest discover -s tests -p $_.Name -v
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
 
       - name: 构建并验证安装包
         shell: pwsh
