@@ -117,6 +117,11 @@ class WindowsTrayApplication(
         self.screenshot_directory = data_directory / "screenshot"
         self.log_path = data_directory / "pico-monitor.log"
         self._configure_error_logging()
+        try:
+            self._migrate_legacy_autostart()
+        except (OSError, RuntimeError):
+            # 迁移失败时保留旧注册表项，方便用户查看日志后重新切换自启动配置。
+            LOGGER.exception("迁移旧版开机自动启动配置失败")
         self.settings_store = TraySettingsStore(data_directory / "settings.json")
         settings_existed = self.settings_store.path.exists()
         self.settings = self.settings_store.load()
