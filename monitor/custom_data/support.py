@@ -605,6 +605,9 @@ def _load_definition(plugin_path, environment_root):
         values = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError, UnicodeError) as error:
         raise CustomDataError("plugin.json 读取失败：{}".format(error)) from error
+    resource_type = values.get("type", "plugin")
+    if resource_type != "plugin":
+        raise CustomDataError("自定义数据目录仅支持 type 为 plugin 的插件")
     protocol = values.get("protocol", 1)
     if protocol not in SUPPORTED_PLUGIN_PROTOCOL_VERSIONS:
         raise CustomDataError("plugin.json protocol 版本不受支持")

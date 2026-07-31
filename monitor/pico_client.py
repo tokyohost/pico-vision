@@ -53,6 +53,7 @@ JSON_ACK_TIMEOUT = 8.0
 JSON_PROGRESS_GRACE_SECONDS = 2.0
 SERIAL_SLOW_SEND_WARNING_MS = 200.0
 SERIAL_WRITE_CHUNK_SIZE = 511
+USB_ENDPOINT_SAFE_WRITE_SIZE = 63
 ESP32_S3_SERIAL_WRITE_CHUNK_SIZE = 511
 ESP32_S3_SERIAL_WRITE_CHUNK_PAUSE_SECONDS = 0.002
 LOGGER = logging.getLogger("pico-monitor.serial")
@@ -127,6 +128,47 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
             )
         return SERIAL_WRITE_CHUNK_SIZE, 0.0
 
+    @staticmethod
+    def _is_probable_repl_port(port):
+        """判断串口描述是否指向 ESP32-S3 的 REPL 控制台接口。"""
+        interface = str(getattr(port, "interface", "") or "").lower()
+        description = str(getattr(port, "description", "") or "").lower()
+        hwid = str(getattr(port, "hwid", "") or "").lower()
+        location = str(getattr(port, "location", "") or "").lower()
+        if "fn vision data" in interface or "mi_02" in hwid:
+            return False
+        return "repl" in interface or "repl" in description or "mi_00" in hwid or location.endswith(".0")
+
+    @staticmethod
+    def _serial_port_priority(port):
+        """返回串口探测顺序，优先选择专用数据 CDC 并最后探测 REPL。"""
+        interface = str(getattr(port, "interface", "") or "").lower()
+        hwid = str(getattr(port, "hwid", "") or "").lower()
+        is_data_port = "fn vision data" in interface or "mi_02" in hwid
+        if is_data_port:
+            category = 0
+        elif PicoJsonClient._is_probable_repl_port(port):
+            category = 2
+        else:
+            category = 1
+        return (
+            category,
+            str(getattr(port, "location", "") or ""),
+            str(getattr(port, "device", "") or ""),
+        )
+
+    @staticmethod
+    def _is_espressif_composite(ports):
+        """判断端口集合是否包含同一 ESP32-S3 的数据接口与 REPL 接口。"""
+        espressif_ports = [
+            port for port in ports
+            if getattr(port, "vid", None) == 0x303A
+        ]
+        return (
+            any(PicoJsonClient._is_probable_repl_port(port) for port in espressif_ports)
+            and any(not PicoJsonClient._is_probable_repl_port(port) for port in espressif_ports)
+        )
+
     def connect(self):
         """优先连接指定 WebSocket，否则枚举串口并通过协议握手识别设备。"""
         if self.websocket_url:
@@ -135,13 +177,9 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         if self.configured_port:
             candidates = [self.configured_port]
         else:
-            # 复合 USB 设备中自定义数据 CDC 的接口序号高于内置
-            # REPL CDC；优先探测高序号接口，仍以 PONG 作为最终判据。
+            # 复合 USB 设备优先探测专用数据 CDC，避免先打开 REPL 控制台。
             ports = list(list_ports.comports())
-            ports.sort(
-                key=lambda item: (item.location or "", item.device),
-                reverse=True,
-            )
+            ports.sort(key=self._serial_port_priority)
             candidates = [item.device for item in ports]
         if not self.configured_port and len(candidates) > 1:
             self._connect_parallel(candidates)
@@ -363,13 +401,16 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
             wire_ping = PING_COMMAND
             written = 0
             while written < len(wire_ping):
-                count = device.write(wire_ping[written:])
-                if not count:
-                    raise serial.SerialTimeoutException(
-                        f"握手包仅发送 {written}/{len(wire_ping)} 字节"
-                    )
-                written += count
-            device.flush()
+                chunk_end = min(written + USB_ENDPOINT_SAFE_WRITE_SIZE, len(wire_ping))
+                while written < chunk_end:
+                    count = device.write(wire_ping[written:chunk_end])
+                    if not count:
+                        raise serial.SerialTimeoutException(
+                            f"握手包仅发送 {written}/{len(wire_ping)} 字节"
+                        )
+                    written += count
+                # 每个短包立即提交，确保恰好 64 字节的握手帧不会滞留在端点。
+                device.flush()
             LOGGER.debug(
                 "[Monitor -> Pico][%s][握手 %d/3][实际发送 %d/%d 字节]",
                 device.port,

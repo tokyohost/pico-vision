@@ -133,7 +133,15 @@ class MarketApiMixin:
                 raise ValueError("市场返回了空插件包")
             LOGGER.info("市场插件包下载完成：地址=%s，字节=%s", final_url, downloaded)
 
-    def _run_market_install(self, download_url, plugin_name):
+    def _require_connected_device(self):
+        """确认当前存在可接收屏幕样式的已连接设备。"""
+        getter = getattr(self._application, "_get_device_connection", None)
+        connection = getter() if callable(getter) else {}
+        if not connection or not connection.get("connected"):
+            raise RuntimeError("请先连接设备，连接成功后即可安装 Style 界面样式")
+        return connection
+
+    def _run_market_install(self, download_url, plugin_name, plugin_type):
         """在后台完成插件包下载、校验和覆盖导入。"""
         descriptor, temporary_name = tempfile.mkstemp(
             prefix="omniwatch-market-", suffix=".zip"
@@ -148,10 +156,24 @@ class MarketApiMixin:
             self._set_market_state("running", 70, "下载完成，正在校验 ZIP 插件包")
             if not zipfile.is_zipfile(package_path):
                 raise ValueError("下载内容不是有效的 ZIP 插件包")
-            self._set_market_state("running", 82, "校验通过，正在安装插件")
-            result = self._import_custom_data_source(
-                str(package_path), {"overwrite": True}
-            )
+            self._set_market_state("running", 82, "校验通过，正在安装市场资源")
+            if plugin_type == "style":
+                self._require_connected_device()
+                existing_names = {
+                    str(item.get("name") or "")
+                    for item in self._application.settings.get("styles", ())
+                    if isinstance(item, dict) and item.get("type") == "custom"
+                }
+                result = self._upload_style_source(
+                    str(package_path),
+                    {"overwrite": True, "existingNames": list(existing_names)},
+                )
+                result["name"] = result.get("filename", plugin_name)
+                result["chineseName"] = plugin_name
+            else:
+                result = self._import_custom_data_source(
+                    str(package_path), {"overwrite": True}
+                )
             self._set_market_state(
                 "success",
                 100,
@@ -173,6 +195,11 @@ class MarketApiMixin:
             payload.get("downloadUrl")
         )
         plugin_name = str(payload.get("pluginName") or "未命名插件").strip()[:120]
+        plugin_type = str(payload.get("pluginType") or "plugin").strip()
+        if plugin_type not in ("plugin", "style"):
+            raise ValueError("市场资源类型必须是 plugin 或 style")
+        if plugin_type == "style":
+            self._require_connected_device()
         with self._market_lock:
             if self._market_state["busy"]:
                 raise RuntimeError("已有插件正在下载安装，请稍候")
@@ -188,7 +215,7 @@ class MarketApiMixin:
             )
         threading.Thread(
             target=self._run_market_install,
-            args=(download_url, plugin_name),
+            args=(download_url, plugin_name, plugin_type),
             name="Web 插件市场安装",
             daemon=True,
         ).start()

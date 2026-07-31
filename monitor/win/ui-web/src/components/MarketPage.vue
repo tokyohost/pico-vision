@@ -85,14 +85,17 @@ function injectMonitorHook() {
  */
 async function installMarketPlugin(payload) {
   const pluginName = String(payload?.pluginName || '未命名插件')
+  const pluginType = payload?.pluginType === 'style' ? 'style' : 'plugin'
+  const isStyle = pluginType === 'style'
   await runWithGlobalLoading({
     title: `正在安装“${pluginName}”`,
     message: 'Monitor 已获取下载地址，正在创建安装任务',
     progress: 2,
-    successMessage: '插件下载安装完成',
+    successMessage: isStyle ? 'Style 界面样式安装完成' : '插件下载安装完成',
   }, async ({ progress, log }) => {
     await invoke('market.install', {
       pluginName,
+      pluginType,
       downloadUrl: String(payload?.downloadUrl || ''),
     })
     let renderedLogCount = 0
@@ -109,7 +112,11 @@ async function installMarketPlugin(payload) {
       await delay(250)
     }
   })
-  ElMessage.success(`插件“${pluginName}”已安装，可在插件管理中启用`)
+  ElMessage.success(
+    isStyle
+      ? `Style“${pluginName}”已安装，可在屏幕样式中查看`
+      : `插件“${pluginName}”已安装，可在插件管理中启用`
+  )
   await loadInstalledPlugins()
   injectMonitorHook()
 }

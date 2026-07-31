@@ -89,7 +89,7 @@ function openStyleDetail(item) {
 }
 
 /**
- * 尝试加载自定义数据插件随绑定样式提供的可选预览图和 HTML 详情。
+ * 加载数据插件绑定资源与纯样式包持久化的预览图和 HTML 详情。
  */
 async function loadCustomStyleAssets() {
   try {
@@ -208,7 +208,9 @@ onMounted(loadRemoteStyles)
       title="在浏览器中打开自定义屏幕教程"
     >自定义屏幕教程</el-button>
     <el-button :loading="remoteStyles.loading" @click="loadRemoteStyles">刷新设备</el-button>
-    <el-button type="primary" @click="uploadStyle">上传样式</el-button>
+    <el-button type="primary" title="支持单个 py 文件或包含 plugin.json 的 zip 样式包" @click="uploadStyle">
+      上传 PY / ZIP 样式
+    </el-button>
   </div>
   <div class="style-grid">
     <article

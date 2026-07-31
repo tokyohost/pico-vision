@@ -713,7 +713,8 @@ class PicoClientTest(unittest.TestCase):
         ])
 
         self.assertTrue(PicoJsonClient()._handshake(device))
-        self.assertEqual(device.write_calls, 1)
+        # 一条逻辑 PING 会拆成 63 字节与 1 字节两次物理写入。
+        self.assertEqual(device.write_calls, 2)
         self.assertEqual(device.written, PING_COMMAND)
 
     @mock.patch("pico_client.time.sleep")
@@ -730,7 +731,8 @@ class PicoClientTest(unittest.TestCase):
             mock.call(3.0),
             mock.call(3.0),
         ])
-        self.assertEqual(device.write_calls, 3)
+        # 三条逻辑 PING 各自拆成两次 USB 端点安全写入。
+        self.assertEqual(device.write_calls, 6)
 
     def test_parse_pico_hardware_and_firmware_information(self):
         """确认 Monitor 能从新版握手读取板型、屏幕方案和固件版本。"""
