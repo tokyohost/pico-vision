@@ -68,3 +68,22 @@ definition["color_callback"] = history_color
 definition["color_cache_step"] = 1
 canvas.draw_line_chart(definition, history_values)
 ```
+
+通用抗锯齿渐变圆环通过 `Canvas.draw_ring(option)` 调用。配置结构参考 ECharts，
+`radius` 使用 `(内半径, 外半径)`，角度以屏幕右侧为 `0°`、顺时针增加，`-90°`
+表示从顶部开始。API 9 固件会在 C 层完成逐像素 `sqrtf/atan2f`、边缘覆盖率、
+RGB565 三色渐变和圆角端帽计算；旧固件返回 `False`，调用方可以选择兼容画法。
+
+```python
+drawn = canvas.draw_ring({
+    "center": (93, 116),
+    "radius": (66, 76),
+    "value": 45,
+    "min": 0,
+    "max": 100,
+    "startAngle": -90,
+    "backgroundColor": 0x2104,
+    "palette": (0x07E0, 0x05FC, 0x001F),
+    "roundCap": True,
+})
+```

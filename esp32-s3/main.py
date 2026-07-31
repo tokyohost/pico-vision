@@ -33,6 +33,7 @@ from config import (
     MONITOR_TIMEOUT_INTERVALS,
     RENDER_MAX_REGIONS,
     RENDER_TIME_BUDGET_US,
+    STYLE_FRAME_WARNING_MS,
 )
 from protocol import JsonProtocol
 from fatal_policy import CANVAS_CAPACITY_ERROR, should_restart_after_fatal
@@ -239,6 +240,25 @@ class Application:
         if flush:
             while self._renderer.is_rendering():
                 self._update_renderer_with_fallback(boot_snapshot)
+
+    def show_application_error(self, error):
+        """切换到错误页面，并把未处理异常的类型和信息直接显示到 LCD。"""
+        error_type = type(error).__name__
+        error_message = str(error) or "未知错误"
+        self._renderer.abort_render(release_snapshot=True)
+        self._renderer.set_style("boot")
+        self._boot_logs = [
+            "APPLICATION ERROR",
+            "TYPE:{}".format(error_type),
+            "MESSAGE:",
+            error_message,
+        ]
+        self._show_boot(
+            100,
+            None,
+            "ERROR - CHECK LOG",
+            flush=True,
+        )
 
     def _boot_wifi_status(self):
         """返回系统启动页固定展示的 Wi-Fi 状态。"""
@@ -501,6 +521,19 @@ class Application:
 
     def _write_render_profile_if_needed(self, render_completed):
         """在开发模式帧完成后发送一次渲染性能事件。"""
+        if render_completed:
+            canvas_us, lcd_us, region_count = self._renderer.last_profile()
+            if canvas_us > STYLE_FRAME_WARNING_MS * 1000:
+                self._protocol.write(
+                    (
+                        "WARNING:STYLE_FRAME_SLOW:STYLE={}:ELAPSED={}MS:"
+                        "THRESHOLD={}MS\n"
+                    ).format(
+                        self._renderer.style_name(),
+                        (canvas_us + 999) // 1000,
+                        STYLE_FRAME_WARNING_MS,
+                    ).encode("utf-8")
+                )
         # system_boot 等待页使用尚未打开的应用 CDC；此时若发送帧完成
         # ACK，CDC 写缓冲会持续返回零并阻塞主循环。仅在 Monitor 已
         # 恢复连接后发送渲染性能信息，等待动画本身仍可正常推进。
@@ -870,6 +903,7 @@ class Application:
 def main():
     """创建可竞争的 USB/Wi-Fi 传输通道，再启动硬件应用。"""
     protocol = None
+    application = None
     try:
         from upgrade_manager import UpgradeManager
         from command.sdk_bootloader import SdkBootloaderController
@@ -909,6 +943,17 @@ def main():
             sys.print_exception(error)
         except AttributeError:
             pass
+        if application is not None:
+            try:
+                application.show_application_error(error)
+            except Exception as display_error:
+                display_message = "ERROR:LCD_ERROR_PAGE_FAILED:{}:{}\n".format(
+                    type(display_error).__name__, display_error
+                )
+                if protocol is not None:
+                    protocol.write(display_message.encode("utf-8"))
+                else:
+                    print(display_message)
         if should_restart_after_fatal(error):
             # 内存耗尽或脏矩形容量配置错误均无法由当前渲染循环自行恢复。
             # 先给独立 CDC 留出发送 FATAL 的时间，再硬复位重建堆。

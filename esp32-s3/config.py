@@ -38,6 +38,8 @@ LCD_DIRTY_TILE_HEIGHT = 8
 RENDER_FRAME_POLICY = "latest"
 # 未收到新 JSON 时仍使用缓存快照主动刷新的最大间隔，保证至少一帧每秒。
 RENDER_INTERVAL_MS = 1000
+# 单帧样式计算超过该阈值时输出 WARNING 性能日志。
+STYLE_FRAME_WARNING_MS = 200
 # 本地时间显示的固定刷新周期，独立于监控数据采集周期。
 CLOCK_REFRESH_INTERVAL_MS = 1000
 # 主动垃圾回收的最小间隔，避免每帧回收造成周期性停顿。

@@ -273,6 +273,11 @@ class Canvas:
                 error += delta_x
                 y0 += step_y
 
+    def draw_ring(self, option):
+        """声明类 ECharts 圆环接口；Python 后端返回未加速并由调用方决定降级。"""
+        del option
+        return False
+
     def draw_commands(self, commands):
         """依次执行通用批量绘图命令，并为 Python 后端保持相同接口。"""
         for operation, x, y, value_a, value_b, color in commands:

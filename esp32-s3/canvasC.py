@@ -8,14 +8,15 @@ except ImportError:
     _native_canvas = None
 
 
-NATIVE_CANVAS_API_VERSION = 8
-COMPATIBLE_NATIVE_CANVAS_API_VERSIONS = (7, NATIVE_CANVAS_API_VERSION)
+NATIVE_CANVAS_API_VERSION = 9
+COMPATIBLE_NATIVE_CANVAS_API_VERSIONS = (7, 8, NATIVE_CANVAS_API_VERSION)
 NATIVE_CANVAS_METHODS = (
     "clear", "pixel", "fill_rect", "line", "fill_polygon", "draw_columns",
     "draw_rect", "draw_grid", "draw_polyline", "draw_line_chart",
     "draw_text", "draw_commands",
 )
 BUILTIN_FONT_METHODS = ("text_width", "font_glyph")
+GRADIENT_RING_METHODS = ("draw_gradient_ring",)
 
 _FONT_KINDS = {
     "native": 0,
@@ -52,6 +53,22 @@ def builtin_fonts_supported():
             and all(
                 callable(getattr(_native_canvas, method_name, None))
                 for method_name in BUILTIN_FONT_METHODS
+            )
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def gradient_ring_supported():
+    """检查当前 Canvas C 后端是否提供通用抗锯齿渐变圆环算法。"""
+    if not native_canvas_supported():
+        return False
+    try:
+        return (
+            _native_canvas.api_version() >= NATIVE_CANVAS_API_VERSION
+            and all(
+                callable(getattr(_native_canvas, method_name, None))
+                for method_name in GRADIENT_RING_METHODS
             )
         )
     except (AttributeError, TypeError, ValueError):
@@ -96,6 +113,32 @@ class CanvasC(PythonCanvas):
             self.buffer, self.width, self.height,
             self.origin_x, self.origin_y, x0, y0, x1, y1, color,
         )
+
+    def draw_ring(self, option):
+        """按照类 ECharts 配置调用 C 层绘制抗锯齿渐变圆环。"""
+        if not gradient_ring_supported():
+            return False
+        center = option.get("center") or (0, 0)
+        radius = option.get("radius") or (0, 0)
+        palette = option.get("palette") or (0xFFFF, 0xFFFF, 0xFFFF)
+        minimum = float(option.get("min", 0))
+        maximum = float(option.get("max", 100))
+        span = maximum - minimum
+        percent = 0 if span <= 0 else (
+            (float(option.get("value", minimum)) - minimum) * 100 / span
+        )
+        _native_canvas.draw_gradient_ring(
+            self.buffer, self.width, self.height,
+            self.origin_x, self.origin_y,
+            int(center[0]), int(center[1]),
+            int(radius[0]), int(radius[1]),
+            percent,
+            float(option.get("startAngle", -90)),
+            int(option.get("backgroundColor", 0)),
+            int(palette[0]), int(palette[1]), int(palette[2]),
+            bool(option.get("roundCap", True)),
+        )
+        return True
 
     def text(self, x, y, value, color, scale=1, font_name=None):
         """通过默认或指定字体绘制文字，并优先使用兼容的 C 后端。"""
