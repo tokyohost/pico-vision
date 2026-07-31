@@ -333,8 +333,8 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual(ESP32_S3_SERIAL_WRITE_CHUNK_PAUSE_SECONDS, pause_seconds)
         with mock.patch("pico_client.time.sleep") as sleep:
             client._write_packet(b"x" * 600, "ESP32-S3 测试")
-        self.assertEqual(3, client.serial.write_calls)
-        self.assertEqual(2, sleep.call_count)
+        self.assertEqual(2, client.serial.write_calls)
+        self.assertEqual(1, sleep.call_count)
 
     def test_esp32_s3_websocket_keeps_default_write_profile(self):
         """确认 ESP32-S3 通过 WebSocket 连接时不启用 USB 控制台节流。"""
@@ -713,7 +713,7 @@ class PicoClientTest(unittest.TestCase):
         ])
 
         self.assertTrue(PicoJsonClient()._handshake(device))
-        self.assertEqual(device.write_calls, 2)
+        self.assertEqual(device.write_calls, 1)
         self.assertEqual(device.written, PING_COMMAND)
 
     @mock.patch("pico_client.time.sleep")
@@ -727,13 +727,10 @@ class PicoClientTest(unittest.TestCase):
         self.assertFalse(PicoJsonClient(probe_interval=3.0)._handshake(device))
 
         self.assertEqual(sleep.call_args_list, [
-            mock.call(0.002),
             mock.call(3.0),
-            mock.call(0.002),
             mock.call(3.0),
-            mock.call(0.002),
         ])
-        self.assertEqual(device.write_calls, 6)
+        self.assertEqual(device.write_calls, 3)
 
     def test_parse_pico_hardware_and_firmware_information(self):
         """确认 Monitor 能从新版握手读取板型、屏幕方案和固件版本。"""
@@ -874,14 +871,18 @@ class PicoClientTest(unittest.TestCase):
         arguments = create_argument_parser().parse_args(["--dev"])
         self.assertTrue(arguments.dev)
 
+    @mock.patch("pico_monitor.signal.signal")
+    @mock.patch("pico_monitor.is_windows_administrator", return_value=True)
     @mock.patch("pico_monitor.MonitorService")
     @mock.patch("pico_monitor.configure_logging")
     @mock.patch("pico_monitor.validate_arguments")
     @mock.patch("pico_monitor.parse_monitor_arguments")
     def test_development_mode_forces_debug_logging(
-        self, parse_arguments, validate, configure, service_class
+        self, parse_arguments, validate, configure, service_class,
+        administrator_check, signal_handler
     ):
         """确认开发模式启动时会输出 DEBUG 及以上级别日志。"""
+        del administrator_check, signal_handler
         arguments = SimpleNamespace(
             dev=True,
             log_level="WARNING",
@@ -889,6 +890,7 @@ class PicoClientTest(unittest.TestCase):
             pico_info=False,
             upgrade_pico=False,
             update=False,
+            http_enabled=False,
         )
         parse_arguments.return_value = arguments
         service = service_class.return_value
@@ -1228,6 +1230,7 @@ class PicoClientTest(unittest.TestCase):
         service._run_development_loop = mock.Mock(return_value=0)
         service._collection_thread = mock.Mock()
         service._collection_thread.is_alive.return_value = True
+        service.runtime_reconnect_requested = threading.Event()
 
         result = service.run()
 
@@ -1398,10 +1401,11 @@ class PicoClientTest(unittest.TestCase):
         service = MonitorService.__new__(MonitorService)
         service.stopping = mock.Mock()
         service.stopping.is_set.return_value = False
-        service.stopping.wait.return_value = False
+        service._wait_for_runtime_interrupt = mock.Mock(return_value=False)
         service._probe_and_reconnect_saved_websocket = mock.Mock(return_value=False)
         service._rediscover_websocket_device = mock.Mock(return_value=True)
         service._complete_websocket_recovery = mock.Mock(return_value=True)
+        service.runtime_reconnect_requested = threading.Event()
         monotonic.side_effect = (0.0, 0.0, 0.0, 5.0, 5.0, 10.0)
         websocket_url = "ws://192.168.0.10:8765/pv1"
 
@@ -1409,7 +1413,7 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertEqual(
             [mock.call(5.0), mock.call(5.0)],
-            service.stopping.wait.call_args_list,
+            service._wait_for_runtime_interrupt.call_args_list,
         )
         self.assertEqual(2, service._probe_and_reconnect_saved_websocket.call_count)
         service._rediscover_websocket_device.assert_called_once_with(fast=True)
@@ -1507,6 +1511,8 @@ class PicoClientTest(unittest.TestCase):
         service.custom_style_deletes.empty.return_value = True
         service.reboot_requested = mock.Mock()
         service.reboot_requested.is_set.return_value = False
+        service.websocket_client_operations = mock.Mock()
+        service.websocket_client_operations.empty.return_value = True
         service._collection_thread = mock.Mock()
         service._collection_thread.is_alive.return_value = True
         service._latest_collected_snapshot = {"version": 1}
