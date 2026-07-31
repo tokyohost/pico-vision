@@ -84,24 +84,47 @@ jobs:
 
       - name: 生成通用安装压缩包
         run: |
-          version="${GITHUB_REF_NAME:-manual}"
-          version="${version#v}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="development"
+          fi
           package_name="OmniWatch-${version}-linux"
           printf '%s\n' '"""保存构建时写入的 Monitor 版本及 GitHub 仓库信息。"""' "MONITOR_VERSION = \"${version}\"" 'GITHUB_REPOSITORY = "tokyohost/omniwatch-doc"' > build_info.py
           mkdir -p "release-assets/${package_name}/packaging" "release-assets/${package_name}/debian"
-          cp pico_monitor.py pico_client.py pico_upgrade.py monitor_update.py build_info.py system_monitor.py qbittorrent_monitor.py history.py requirements.txt install-linux.sh "release-assets/${package_name}/"
-          cp -r collectTask "release-assets/${package_name}/collectTask"
+          cp ./*.py requirements.txt install-linux.sh README.md NAS_INSTALL.md "release-assets/${package_name}/"
+          cp -r collectTask custom_data monitor_core net bin "release-assets/${package_name}/"
           cp packaging/pico-monitor-generic packaging/pico-monitor-generic.service "release-assets/${package_name}/packaging/"
           cp debian/pico-monitor.conf "release-assets/${package_name}/debian/"
+          mkdir -p "release-assets/${package_name}/win/ui-web"
+          cp -r win/ui-web/dist "release-assets/${package_name}/win/ui-web/"
           chmod 0755 "release-assets/${package_name}/install-linux.sh" "release-assets/${package_name}/packaging/pico-monitor-generic"
           tar -C release-assets -czf "release-assets/${package_name}.tar.gz" "${package_name}"
           rm -rf "release-assets/${package_name}"
+
+      - name: 生成 NAS 安装发布包
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="development"
+          fi
+          for target in synology qnap truenas; do
+            python3 tools/package_nas_release.py \
+              --source . \
+              --output-directory release-assets \
+              --target "${target}" \
+              --version "${version}"
+          done
+          (cd release-assets && sha256sum ./OmniWatch-*-noarch-v*.tar.gz > OmniWatch-SHA256SUMS-nas.txt)
 
       - name: 上传通用 Linux 安装包
         uses: actions/upload-artifact@v7
         with:
           name: linux-generic
-          path: monitor/release-assets/*.tar.gz
+          path: |
+            monitor/release-assets/*.tar.gz
+            monitor/release-assets/OmniWatch-SHA256SUMS-nas.txt
           if-no-files-found: error
 
   release:
@@ -147,6 +170,9 @@ jobs:
           else
             echo "未生成可选的通用 Linux tar.gz，跳过上传。"
           fi
+          if [[ -f release-assets/OmniWatch-SHA256SUMS-nas.txt ]]; then
+            gh release upload "${GITHUB_REF_NAME}" release-assets/OmniWatch-SHA256SUMS-nas.txt --clobber
+          fi
 
       - name: 同步 Linux 制品到文档仓库
         env:
@@ -172,4 +198,7 @@ jobs:
           gh release upload "${GITHUB_REF_NAME}" release-assets/*.deb release-assets/OmniWatch-SHA256SUMS-linux-deb.txt --clobber
           if compgen -G "release-assets/*.tar.gz" >/dev/null; then
             gh release upload "${GITHUB_REF_NAME}" release-assets/*.tar.gz --clobber
+          fi
+          if [[ -f release-assets/OmniWatch-SHA256SUMS-nas.txt ]]; then
+            gh release upload "${GITHUB_REF_NAME}" release-assets/OmniWatch-SHA256SUMS-nas.txt --clobber
           fi

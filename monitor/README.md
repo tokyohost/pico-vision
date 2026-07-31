@@ -141,6 +141,9 @@ UTF-8 HTML 简介；声明 `"bind_preview": true` 与 `"preview": "preview.png"`
 
 ## 构建 Linux DEB
 
+群晖、QNAP 与 TrueNAS 的发布包选择、支持版本和安装限制见
+[`NAS_INSTALL.md`](NAS_INSTALL.md)。
+
 Linux 发布明确构建以下四种架构：
 
 - `amd64`：主流 Intel/AMD 64 位电脑，优先支持 Debian、Ubuntu。
@@ -287,6 +290,10 @@ python pico_monitor.py `
 - `OmniWatch_<版本>_armhf.deb`：ARM 32 位硬浮点设备
 - `OmniWatch_<版本>_i386.deb`：Intel/AMD 32 位电脑
 - `OmniWatch-<版本>-linux.tar.gz`：Fedora、RHEL、openSUSE、Arch 等 systemd 发行版通用安装包
+- `OmniWatch-synology-noarch-v<版本>.tar.gz`：群晖 DSM 7.2+ 安装包
+- `OmniWatch-qnap-noarch-v<版本>.tar.gz`：QTS 5.1+ 与 QuTS hero h5.1+ 安装包
+- `OmniWatch-truenas-noarch-v<版本>.tar.gz`：TrueNAS SCALE 24.10+ 安装包
+- `OmniWatch-SHA256SUMS-nas.txt`：NAS 发布包 SHA-256 摘要
 - `OmniWatch-pico-upgrade-v<版本>-<开发板型号>-<屏幕方案>.zip` 与 `.sha256`：定向 Pico 串口升级包及下载摘要
 - `OmniWatch-pico-upgrade-v<版本>.zip` 与 `.sha256`：默认硬件组合的兼容升级包
 

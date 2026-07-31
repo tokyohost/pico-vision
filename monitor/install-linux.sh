@@ -12,7 +12,7 @@
 # This software is provided "as is", without warranty of any kind.
 #
 
-# 为主流 systemd Linux 发行版安装 Pico Monitor 通用版本。
+# 为主流 systemd Linux、群晖、QNAP 和 TrueNAS SCALE 安装 Pico Monitor。
 set -eu
 
 INSTALL_ROOT="/opt/pico-monitor"
@@ -51,11 +51,6 @@ install_application() {
     install -m 0644 "$script_directory/pico_monitor.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/build_info.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/constants.py" "$INSTALL_ROOT/"
-    install -m 0644 "$script_directory/custom_data.py" "$INSTALL_ROOT/"
-    install -m 0644 "$script_directory/custom_data_manager.py" "$INSTALL_ROOT/"
-    install -m 0644 "$script_directory/custom_data_runtime.py" "$INSTALL_ROOT/"
-    install -m 0644 "$script_directory/custom_data_support.py" "$INSTALL_ROOT/"
-    install -m 0644 "$script_directory/custom_data_runner.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/json_ack_timing_cache.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/usbCdcFramework.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/pico_client.py" "$INSTALL_ROOT/"
@@ -75,12 +70,22 @@ install_application() {
     install -m 0644 "$script_directory"/monitor_core/*.py "$INSTALL_ROOT/monitor_core/"
     install -d -m 0755 "$INSTALL_ROOT/monitor_core/collectors"
     install -m 0644 "$script_directory"/monitor_core/collectors/*.py "$INSTALL_ROOT/monitor_core/collectors/"
+    install -d -m 0755 "$INSTALL_ROOT/custom_data"
+    install -m 0644 "$script_directory"/custom_data/*.py "$INSTALL_ROOT/custom_data/"
+    install -d -m 0755 "$INSTALL_ROOT/net"
+    install -m 0644 "$script_directory"/net/*.py "$INSTALL_ROOT/net/"
     install -d -m 0755 "$INSTALL_ROOT/collectTask"
     install -m 0644 "$script_directory"/collectTask/*.py "$INSTALL_ROOT/collectTask/"
     install -d -m 0755 "$INSTALL_ROOT/collectTask/tasks"
     install -m 0644 "$script_directory"/collectTask/tasks/*.py "$INSTALL_ROOT/collectTask/tasks/"
     install -d -m 0755 "$INSTALL_ROOT/collectTask/tasks/linux"
     install -m 0644 "$script_directory"/collectTask/tasks/linux/*.py "$INSTALL_ROOT/collectTask/tasks/linux/"
+    install -d -m 0755 "$INSTALL_ROOT/collectTask/tasks/synology"
+    install -m 0644 "$script_directory"/collectTask/tasks/synology/*.py "$INSTALL_ROOT/collectTask/tasks/synology/"
+    install -d -m 0755 "$INSTALL_ROOT/collectTask/tasks/qnap"
+    install -m 0644 "$script_directory"/collectTask/tasks/qnap/*.py "$INSTALL_ROOT/collectTask/tasks/qnap/"
+    install -d -m 0755 "$INSTALL_ROOT/collectTask/tasks/truenas"
+    install -m 0644 "$script_directory"/collectTask/tasks/truenas/*.py "$INSTALL_ROOT/collectTask/tasks/truenas/"
     install -d -m 0755 "$INSTALL_ROOT/collectTask/tasks/win"
     install -m 0644 "$script_directory"/collectTask/tasks/win/*.py "$INSTALL_ROOT/collectTask/tasks/win/"
     install -m 0644 "$script_directory/requirements.txt" "$INSTALL_ROOT/"
@@ -97,6 +102,11 @@ install_service() {
         install -m 0644 "$script_directory/debian/pico-monitor.conf" "$CONFIG_PATH"
     fi
     install -m 0644 "$script_directory/packaging/pico-monitor-generic.service" "$SERVICE_PATH"
+    if ! command -v systemctl >/dev/null 2>&1; then
+        echo "当前 NAS 没有 systemd，程序文件已安装，但不会自动注册开机服务。" >&2
+        echo "请参阅 NAS_INSTALL.md 配置厂商支持的启动方式。" >&2
+        return
+    fi
     systemctl daemon-reload
     systemctl enable --now pico-monitor.service
 }
@@ -105,4 +115,9 @@ require_root
 install_system_dependencies
 install_application
 install_service
-echo "Pico Monitor 安装完成，可运行：systemctl status pico-monitor"
+echo "Pico Monitor 安装完成。"
+if command -v systemctl >/dev/null 2>&1; then
+    echo "服务状态：systemctl status pico-monitor"
+else
+    echo "手动启动：pico-monitor --config /etc/pico-monitor.conf"
+fi
