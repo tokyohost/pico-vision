@@ -126,6 +126,15 @@ class HorizontalDisk4xStyle:
         ])
 
     @classmethod
+    def _disk_history_maximum(cls, disk):
+        """返回单块磁盘读取与写入历史记录共同的实时最大值。"""
+        return max([1] + [
+            cls._number(value)
+            for key in ("read_history", "write_history")
+            for value in (disk.get(key) or ())
+        ])
+
+    @classmethod
     def _usage_color(cls, percent):
         """按照 Element UI 状态色返回资源占用率对应颜色。"""
         value = max(0, min(100, cls._number(percent)))
@@ -589,10 +598,12 @@ class HorizontalDisk4xStyle:
             self._history(
                 canvas, x + 42, y + 27, 59, 8,
                 disk.get("read_history", ()), RED if all_red else GREEN, filled=True,
+                maximum=self._disk_history_maximum(disk),
             )
             self._history(
                 canvas, x + 42, y + 38, 59, 7,
                 disk.get("write_history", ()), RED if all_red else YELLOW, filled=True,
+                maximum=self._disk_history_maximum(disk),
             )
 
     def _draw_network_details(self, canvas, snapshot):

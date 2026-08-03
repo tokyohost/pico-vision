@@ -227,6 +227,11 @@ class SimpleStyle(HorizontalDiskStyle):
         for index, disk in enumerate(disks):
             if selected_row is not None and index != selected_row:
                 continue
+            disk_maximum = max([1] + [
+                self._number(value)
+                for key in ("read_history", "write_history")
+                for value in (disk.get(key) or ())
+            ])
             x, y = 106, 48 + index * 55
             card_height = 55 if index == 2 else 52
             percent = int(self._number(disk.get("percent")))
@@ -260,8 +265,14 @@ class SimpleStyle(HorizontalDiskStyle):
             )
             canvas.text(x + 75, y + 22, "R " + self._format_rate(disk.get("read_bps"), "MB"), BLUE, 1)
             canvas.text(x + 75, y + 34, "W " + self._format_rate(disk.get("write_bps"), "MB"), GREEN, 1)
-            self._gradient_history(canvas, x + 159, y + 20, 47, 12, disk.get("read_history", ()), BLUE)
-            self._gradient_history(canvas, x + 159, y + 35, 47, 12, disk.get("write_history", ()), GREEN)
+            self._gradient_history(
+                canvas, x + 159, y + 20, 47, 12,
+                disk.get("read_history", ()), BLUE, maximum=disk_maximum,
+            )
+            self._gradient_history(
+                canvas, x + 159, y + 35, 47, 12,
+                disk.get("write_history", ()), GREEN, maximum=disk_maximum,
+            )
 
     def _draw_footer_simple(self, canvas, snapshot):
         """绘制当前时间和系统运行时长。"""
