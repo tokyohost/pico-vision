@@ -115,25 +115,25 @@ class DiskStyle:
         current_network = current.get("network") or {}
         previous_unit = (previous.get("display") or {}).get("network_unit")
         current_unit = (current.get("display") or {}).get("network_unit")
+        network_history_changed = (
+            previous_network.get("upload_history") != current_network.get("upload_history")
+            or previous_network.get("download_history") != current_network.get("download_history")
+        )
         if (
             previous_network.get("upload_bps"),
-            previous_network.get("upload_history"),
             previous_unit,
         ) != (
             current_network.get("upload_bps"),
-            current_network.get("upload_history"),
             current_unit,
-        ):
+        ) or network_history_changed:
             selected.append(region_map["network_up"])
         if (
             previous_network.get("download_bps"),
-            previous_network.get("download_history"),
             previous_unit,
         ) != (
             current_network.get("download_bps"),
-            current_network.get("download_history"),
             current_unit,
-        ):
+        ) or network_history_changed:
             selected.append(region_map["network_down"])
         if (
             previous.get("timestamp"),
@@ -230,7 +230,7 @@ class DiskStyle:
                          int((width - 2) * value / 100), height - 2, color)
         self._draw_frame(canvas, x, y, width, height, color)
 
-    def _draw_history(self, canvas, x, y, width, height, values, color):
+    def _draw_history(self, canvas, x, y, width, height, values, color, maximum=None):
         """绘制带点阵网格的历史折线。"""
         draw_grid = getattr(canvas, "draw_grid", None)
         if callable(draw_grid):
@@ -249,7 +249,7 @@ class DiskStyle:
             # 零值历史仍保留底部基线，保持与优化前折线图的显示效果一致。
             canvas.fill_rect(x, y + height - 1, width, 1, color)
             return
-        maximum = max(1, maximum_value)
+        maximum = max(1, self._number(maximum)) if maximum is not None else max(1, maximum_value)
         for index, value in enumerate(normalized_values):
             point_x = x + int(index * (width - 1) / (count - 1))
             ratio = max(0, min(1, value / maximum))
@@ -285,6 +285,13 @@ class DiskStyle:
     def _draw_network_line(self, canvas, snapshot, upload):
         """绘制上传或下载速率及其历史折线。"""
         network = snapshot.get("network", {})
+        maximum = max(
+            [1] + [
+                self._number(value)
+                for key in ("upload_history", "download_history")
+                for value in (network.get(key) or ())
+            ]
+        )
         if upload:
             y, title, color = 176, "UP", BLUE
             history_key = "upload_history"
@@ -294,7 +301,10 @@ class DiskStyle:
         canvas.text(8, y, title, color, 1)
         text_key = "upload_rate" if upload else "download_rate"
         canvas.text(58, y, self._prepared_text[text_key], WHITE, 1)
-        self._draw_history(canvas, 8, y + 12, 224, 27, network.get(history_key, ()), color)
+        self._draw_history(
+            canvas, 8, y + 12, 224, 27,
+            network.get(history_key, ()), color, maximum,
+        )
 
     def _draw_footer(self, canvas, snapshot):
         """绘制时钟、运行时长、延迟和联网状态。"""

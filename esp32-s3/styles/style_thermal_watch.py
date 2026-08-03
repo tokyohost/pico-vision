@@ -253,6 +253,11 @@ class ThermalWatchStyle:
     def _draw_network(cls, canvas, snapshot):
         """在原 SSD 与 NET 整行空间绘制完整网络状态和双向实心趋势。"""
         network = snapshot.get("network") or {}
+        maximum = max([1] + [
+            cls._number(value)
+            for key in ("upload_history", "download_history")
+            for value in (network.get(key) or ())
+        ])
         unit = snapshot.get("display", {}).get("network_unit", "MB")
         cls._frame(canvas, 2, 184, 316, 31, BLUE)
         canvas.line(100, 185, 100, 213, THERMAL_BORDER)
@@ -265,10 +270,10 @@ class ThermalWatchStyle:
         canvas.text(8, 201, cls._fit_text(canvas, network.get("ip") or "0.0.0.0", 86), WHITE if network.get("online") else GRAY, 1)
         canvas.text(106, 189, "UP", BLUE, 1)
         canvas.text(128, 189, cls._format_rate(network.get("upload_bps"), unit), WHITE, 1)
-        cls._history(canvas, 106, 201, 96, 8, network.get("upload_history"), BLUE, 0)
+        cls._history(canvas, 106, 201, 96, 8, network.get("upload_history"), BLUE, maximum)
         canvas.text(214, 189, "DN", GREEN, 1)
         canvas.text(236, 189, cls._format_rate(network.get("download_bps"), unit), WHITE, 1)
-        cls._history(canvas, 214, 201, 98, 8, network.get("download_history"), GREEN, 0)
+        cls._history(canvas, 214, 201, 98, 8, network.get("download_history"), GREEN, maximum)
 
     @classmethod
     def _draw_footer(cls, canvas, snapshot):

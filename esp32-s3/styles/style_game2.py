@@ -200,7 +200,7 @@ class Game2Style:
     @staticmethod
     def _history(
         canvas, x, y, width, height, values, color,
-        percentage=False, color_by_value=False, filled=True,
+        percentage=False, color_by_value=False, filled=True, maximum=0,
     ):
         """提交历史图定义，由 Canvas 统一完成抽样、填充和分段配色。"""
         regions = (
@@ -210,7 +210,7 @@ class Game2Style:
         )
         canvas.draw_line_chart({
             "x": x, "y": y, "width": width, "height": height,
-            "maximum": 100 if percentage else 0,
+            "maximum": 100 if percentage else maximum,
             "color": color, "filled": filled, "regions": regions,
             "grid_step_x": 12, "grid_step_y": 7,
             "grid_color": GRAY,
@@ -401,6 +401,13 @@ class Game2Style:
     def _draw_network(cls, canvas, snapshot):
         """绘制网络上下行速率、延迟和下载趋势。"""
         network = snapshot.get("network") or {}
+        maximum = max(
+            [1] + [
+                cls._number(value)
+                for key in ("upload_history", "download_history")
+                for value in (network.get(key) or ())
+            ]
+        )
         unit = snapshot.get("display", {}).get("network_unit", "MB")
         cls._frame(canvas, 160, 149, 158, 59, BLUE)
         canvas.text(166, 156, "NET", BLUE, 1)
@@ -411,8 +418,8 @@ class Game2Style:
         canvas.text(190, 169, cls._format_rate(network.get("upload_bps"), unit), BLUE, 1)
         canvas.text(166, 183, "DN", WHITE, 1)
         canvas.text(190, 183, cls._format_rate(network.get("download_bps"), unit), GREEN, 1)
-        cls._history(canvas, 245, 169, 67, 12, network.get("upload_history"), BLUE)
-        cls._history(canvas, 245, 190, 67, 13, network.get("download_history"), GREEN)
+        cls._history(canvas, 245, 169, 67, 12, network.get("upload_history"), BLUE, maximum=maximum)
+        cls._history(canvas, 245, 190, 67, 13, network.get("download_history"), GREEN, maximum=maximum)
 
     @classmethod
     def _draw_footer(cls, canvas, snapshot):

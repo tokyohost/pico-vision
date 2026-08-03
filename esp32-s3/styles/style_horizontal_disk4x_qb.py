@@ -97,9 +97,11 @@ class HorizontalDisk4xQbStyle:
             current_network.get("upload_bps"), current_unit,
         ):
             selected.append(region_map["network_values"])
-        if previous_network.get("upload_history") != current_network.get(
-            "upload_history"
-        ):
+        network_history_changed = (
+            previous_network.get("upload_history") != current_network.get("upload_history")
+            or previous_network.get("download_history") != current_network.get("download_history")
+        )
+        if network_history_changed:
             selected.append(region_map["network_upload_history"])
         if (
             previous_network.get("download_bps"), previous_unit,
@@ -107,9 +109,7 @@ class HorizontalDisk4xQbStyle:
             current_network.get("download_bps"), current_unit,
         ):
             selected.append(region_map["network_download_value"])
-        if previous_network.get("download_history") != current_network.get(
-            "download_history"
-        ):
+        if network_history_changed:
             selected.append(region_map["network_download_history"])
         if previous.get("qbittorrent") != current.get("qbittorrent"):
             selected.append(region_map["network_details"])
@@ -152,6 +152,15 @@ class HorizontalDisk4xQbStyle:
             return float(value)
         except (TypeError, ValueError):
             return float(default)
+
+    @classmethod
+    def _network_history_maximum(cls, network):
+        """返回上传与下载历史记录共同的实时最大值。"""
+        return max([1] + [
+            cls._number(value)
+            for key in ("upload_history", "download_history")
+            for value in (network.get(key) or ())
+        ])
 
     @classmethod
     def _usage_color(cls, percent):
@@ -383,7 +392,7 @@ class HorizontalDisk4xQbStyle:
 
     def _history(
         self, canvas, x, y, width, height, values, color,
-        percentage=False, filled=False, color_by_value=False,
+        percentage=False, filled=False, color_by_value=False, maximum=0,
     ):
         """提交图表定义和原始数据，由当前 Canvas 策略完成全部计算。"""
         regions = (
@@ -393,7 +402,7 @@ class HorizontalDisk4xQbStyle:
         )
         canvas.draw_line_chart({
             "x": x, "y": y, "width": width, "height": height,
-            "maximum": 100 if percentage else 0,
+            "maximum": 100 if percentage else maximum,
             "color": color, "filled": filled, "regions": regions,
             "grid_step_x": 12, "grid_step_y": 7,
             "grid_color": GRAY,
@@ -521,6 +530,7 @@ class HorizontalDisk4xQbStyle:
         self._history(
             canvas, 8, 152, 88, 19,
             network.get("upload_history", ()), BLUE, filled=True,
+            maximum=self._network_history_maximum(network),
         )
         canvas.text(8, 174, "↓DN", WHITE, 1)
         canvas.text(
@@ -530,6 +540,7 @@ class HorizontalDisk4xQbStyle:
         self._history(
             canvas, 8, 183, 88, 22,
             network.get("download_history", ()), GREEN, filled=True,
+            maximum=self._network_history_maximum(network),
         )
 
     def _draw_storage_summary(self, canvas, snapshot):
@@ -662,6 +673,7 @@ class HorizontalDisk4xQbStyle:
         self._history(
             canvas, 174, 179, 33, 9,
             qbittorrent.get("upload_history", ()), BLUE, filled=True,
+            maximum=self._network_history_maximum(qbittorrent),
         )
 
         canvas.text(110, 193, "DN", GREEN, 1)
@@ -673,6 +685,7 @@ class HorizontalDisk4xQbStyle:
         self._history(
             canvas, 174, 192, 33, 9,
             qbittorrent.get("download_history", ()), GREEN, filled=True,
+            maximum=self._network_history_maximum(qbittorrent),
         )
 
         canvas.text(
@@ -802,6 +815,7 @@ class HorizontalDisk4xQbStyle:
             self._history(
                 canvas, 8, 152, 88, 19,
                 network.get("upload_history", ()), BLUE, filled=True,
+                maximum=self._network_history_maximum(network),
             )
         elif key == "network_download_value":
             canvas.text(
@@ -812,6 +826,7 @@ class HorizontalDisk4xQbStyle:
             self._history(
                 canvas, 8, 183, 88, 22,
                 network.get("download_history", ()), GREEN, filled=True,
+                maximum=self._network_history_maximum(network),
             )
 
     def _draw_storage_dirty(self, canvas, key, snapshot):

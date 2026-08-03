@@ -91,11 +91,18 @@ class SimpleStyle(HorizontalDiskStyle):
         blue = ((background & 0x1F) * inverse + (foreground & 0x1F) * ratio) // 255
         return (red << 11) | (green << 5) | blue
 
-    def _gradient_history(self, canvas, x, y, width, height, values, color, percentage=False):
+    def _gradient_history(
+        self, canvas, x, y, width, height, values, color,
+        percentage=False, maximum=None,
+    ):
         """使用三层精确轮廓绘制由折线向底部变暗的实心渐变面积图。"""
         if not values or len(values) < 2:
             return
-        maximum = 100 if percentage else max(1, max(self._number(value) for value in values))
+        maximum = (
+            100 if percentage else
+            max(1, self._number(maximum)) if maximum is not None else
+            max(1, max(self._number(value) for value in values))
+        )
         # 颜色只在每张图开始时计算一次，避免逐像素混色拖慢渲染。
         gradient_colors = (
             self._blend_color(BLACK, color, 195),
@@ -193,6 +200,11 @@ class SimpleStyle(HorizontalDiskStyle):
     def _draw_network_simple(self, canvas, snapshot):
         """绘制上传、下载速率及各自的渐变历史面积图。"""
         network = snapshot.get("network", {})
+        maximum = max([1] + [
+            self._number(value)
+            for key in ("upload_history", "download_history")
+            for value in (network.get(key) or ())
+        ])
         unit = snapshot.get("display", {}).get("network_unit", "MB")
         self._frame(canvas, 2, 147, 100, 66, BLUE)
         canvas.text(7, 152, "NET", BLUE, 1)
@@ -205,9 +217,9 @@ class SimpleStyle(HorizontalDiskStyle):
             ping_text, self._ping_color(ping), 1,
         )
         canvas.text(7, 164, "UP " + self._format_rate(network.get("upload_bps"), unit), BLUE, 1)
-        self._gradient_history(canvas, 7, 174, 89, 13, network.get("upload_history", ()), BLUE)
+        self._gradient_history(canvas, 7, 174, 89, 13, network.get("upload_history", ()), BLUE, maximum=maximum)
         canvas.text(7, 188, "DN " + self._format_rate(network.get("download_bps"), unit), GREEN, 1)
-        self._gradient_history(canvas, 7, 198, 89, 11, network.get("download_history", ()), GREEN)
+        self._gradient_history(canvas, 7, 198, 89, 11, network.get("download_history", ()), GREEN, maximum=maximum)
 
     def _draw_disk_cards(self, canvas, snapshot, selected_row=None):
         """按健康优先顺序纵向绘制最多三块物理磁盘。"""

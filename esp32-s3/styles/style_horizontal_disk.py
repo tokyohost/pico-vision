@@ -111,6 +111,15 @@ class HorizontalDiskStyle:
             return float(default)
 
     @classmethod
+    def _network_history_maximum(cls, network):
+        """返回上传与下载历史记录共同的实时最大值。"""
+        return max([1] + [
+            cls._number(value)
+            for key in ("upload_history", "download_history")
+            for value in (network.get(key) or ())
+        ])
+
+    @classmethod
     def _usage_color(cls, percent):
         """按照 Element UI 状态色返回资源占用率对应颜色。"""
         value = max(0, min(100, cls._number(percent)))
@@ -339,7 +348,7 @@ class HorizontalDiskStyle:
 
     def _history(
         self, canvas, x, y, width, height, values, color,
-        percentage=False, filled=False, color_by_value=False,
+        percentage=False, filled=False, color_by_value=False, maximum=0,
     ):
         """提交图表定义和原始数据，由当前 Canvas 策略完成全部计算。"""
         regions = (
@@ -349,7 +358,7 @@ class HorizontalDiskStyle:
         )
         canvas.draw_line_chart({
             "x": x, "y": y, "width": width, "height": height,
-            "maximum": 100 if percentage else 0,
+            "maximum": 100 if percentage else maximum,
             "color": color, "filled": filled, "regions": regions,
             "grid_step_x": 12, "grid_step_y": 7,
             "grid_color": GRAY,
@@ -449,6 +458,7 @@ class HorizontalDiskStyle:
         self._history(
             canvas, 8, 152, 88, 19,
             network.get("upload_history", ()), BLUE, filled=True,
+            maximum=self._network_history_maximum(network),
         )
         canvas.text(8, 174, "↓D", WHITE, 1)
         canvas.text(
@@ -458,6 +468,7 @@ class HorizontalDiskStyle:
         self._history(
             canvas, 8, 183, 88, 22,
             network.get("download_history", ()), GREEN, filled=True,
+            maximum=self._network_history_maximum(network),
         )
 
     def _draw_storage_summary(self, canvas, snapshot):
