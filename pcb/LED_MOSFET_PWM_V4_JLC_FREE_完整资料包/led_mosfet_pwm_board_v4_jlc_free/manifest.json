@@ -1,0 +1,39 @@
+{
+  "name": "LED_MOSFET_PWM_V4_JLC_FREE",
+  "board_mm": [
+    20.0,
+    14.0
+  ],
+  "layers": 2,
+  "thickness_mm": 1.6,
+  "free_prototype_profile": {
+    "qty": 5,
+    "material": "FR-4",
+    "mask": "green",
+    "silkscreen": "white",
+    "surface_finish": "HASL according to coupon",
+    "panelization": false
+  },
+  "gerber_files": [
+    "LED_MOSFET_PWM_V4_JLC_FREE-F_Cu.gtl",
+    "LED_MOSFET_PWM_V4_JLC_FREE-B_Cu.gbl",
+    "LED_MOSFET_PWM_V4_JLC_FREE-F_Mask.gts",
+    "LED_MOSFET_PWM_V4_JLC_FREE-B_Mask.gbs",
+    "LED_MOSFET_PWM_V4_JLC_FREE-F_Paste.gtp",
+    "LED_MOSFET_PWM_V4_JLC_FREE-F_Silkscreen.gto",
+    "LED_MOSFET_PWM_V4_JLC_FREE-B_Silkscreen.gbo",
+    "LED_MOSFET_PWM_V4_JLC_FREE-Edge_Cuts.gko",
+    "LED_MOSFET_PWM_V4_JLC_FREE-PTH.drl"
+  ],
+  "jlc_order_number_marker": {
+    "layer": "B.SilkS",
+    "text": "JLCJLCJLCJLC",
+    "height_mm": 1.0,
+    "stroke_mm": 0.15
+  },
+  "checks": {
+    "min_copper_clearance_mm": 0.5,
+    "min_copper_edge_mm": 1.6
+  },
+  "bottom_copper": "PTH annular rings only"
+}
