@@ -23,6 +23,20 @@ class WindowsPackagingTest(unittest.TestCase):
         self.assertIn("HKCU, WebView2ClientKey", script)
         self.assertIn("HKLM32, WebView2ClientKey", script)
 
+    def test_inno_setup_launches_monitor_with_installer_admin_token(self):
+        """确认安装完成页使用管理员令牌启动需要提升权限的 Monitor。"""
+        script = (MONITOR_ROOT / "pico_monitor_setup.iss").read_text(
+            encoding="utf-8"
+        )
+
+        monitor_run_entry = next(
+            line
+            for line in script.splitlines()
+            if line.startswith('Filename: "{app}\\pico-monitor.exe"')
+        )
+        self.assertIn("postinstall", monitor_run_entry)
+        self.assertIn("runascurrentuser", monitor_run_entry)
+
     def test_local_build_prepares_signed_bootstrapper(self):
         """确认本地构建会下载并校验 Microsoft 签名。"""
         build_script = (MONITOR_ROOT / "build-exe.bat").read_text(

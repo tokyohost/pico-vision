@@ -59,7 +59,7 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 
 [Run]
 Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "正在安装 Microsoft Edge WebView2 Runtime..."; Flags: waituntilterminated; Check: not IsWebView2RuntimeInstalled
-Filename: "{app}\pico-monitor.exe"; Description: "启动 OmniWatch Monitor"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\pico-monitor.exe"; Description: "启动 OmniWatch Monitor"; Flags: nowait postinstall skipifsilent runascurrentuser
 
 [Code]
 const
