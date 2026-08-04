@@ -210,15 +210,15 @@ function isActionRunning(panel, item) {
         <el-form-item label="正式版市场地址">
           <el-input
             v-model="settings.market_url"
-            placeholder="https://example.com/market"
+            placeholder="https://omni.mzlblog.com"
           />
         </el-form-item>
-        <el-alert
-          title="development 版本固定使用 http://localhost/market，正式版本使用此地址。"
-          type="info"
-          :closable="false"
-          show-icon
-        />
+<!--        <el-alert-->
+<!--          title="development 版本固定使用 http://localhost/market，正式版本使用此地址。"-->
+<!--          type="info"-->
+<!--          :closable="false"-->
+<!--          show-icon-->
+<!--        />-->
       </el-form>
     </el-card>
 

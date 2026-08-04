@@ -206,13 +206,17 @@ class DiskMetricsMixin:
             history_key = str(disk.get("name") or "DISK")
             histories = self.disk_io_histories.setdefault(
                 history_key,
-                {
-                    "read": deque([0] * HISTORY_LENGTH, maxlen=HISTORY_LENGTH),
-                    "write": deque([0] * HISTORY_LENGTH, maxlen=HISTORY_LENGTH),
-                    "read_state": {},
-                    "write_state": {},
-                },
+                {},
             )
+            # SensorHost 与普通采集任务并发切换时，缓存可能只初始化了部分字段。
+            histories.setdefault(
+                "read", deque([0] * HISTORY_LENGTH, maxlen=HISTORY_LENGTH)
+            )
+            histories.setdefault(
+                "write", deque([0] * HISTORY_LENGTH, maxlen=HISTORY_LENGTH)
+            )
+            histories.setdefault("read_state", {})
+            histories.setdefault("write_state", {})
             update_per_second(histories["read"], read_bps, histories["read_state"], now)
             update_per_second(histories["write"], write_bps, histories["write_state"], now)
             disk["read_bps"] = read_bps
@@ -522,7 +526,9 @@ class DiskMetricsMixin:
             return dict(getattr(self, "disk_temperature_cache", {}) or {})
         script = (
             "$items=@(); Get-Partition | Where-Object DriveLetter | ForEach-Object {"
-            "$p=$_; $d=$p | Get-Disk; $physical=Get-PhysicalDisk | Where-Object DeviceId -eq ([string]$d.Number) | Select-Object -First 1;"
+            "$p=$_; $d=$p | Get-Disk; $diskText=([string]$d.FriendlyName + ' ' + [string]$d.Model);"
+            "$virtual=([string]$d.BusType -in @('Virtual','File Backed Virtual')) -or ($diskText -match '(?i)virtual|vmware|vbox|qemu|hyper-v');"
+            "$physical=$null; if(-not $virtual){$physical=Get-PhysicalDisk -ErrorAction SilentlyContinue | Where-Object DeviceId -eq ([string]$d.Number) | Select-Object -First 1};"
             "$temperature=$null; if($physical){try{$temperature=($physical | Get-StorageReliabilityCounter -ErrorAction Stop).Temperature}catch{}};"
             "$health=0; if($physical){$health=switch([string]$physical.HealthStatus){'Healthy'{1}'Warning'{3}'Unhealthy'{5}default{0}}};"
             "$items += [pscustomobject]@{Device=([string]$p.DriveLetter + ':');DiskName=('DISK' + [string]$d.Number + ' ' + [string]$d.FriendlyName);Temperature=$temperature;Health=$health}"

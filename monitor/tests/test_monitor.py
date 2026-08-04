@@ -1930,6 +1930,26 @@ class SystemCollectorTest(unittest.TestCase):
         self.assertEqual(second[0]["write_history"][-2:], [0, 3000])
         self.assertEqual(len(second[0]["read_history"]), 24)
 
+    @mock.patch("system_monitor.time.monotonic", return_value=10.0)
+    @mock.patch("system_monitor.psutil.disk_io_counters", return_value={})
+    @mock.patch.object(SystemInformationCollector, "_windows_device_number", return_value=0)
+    def test_disk_rates_complete_partial_sensor_host_history(
+        self, device_number, disk_io_counters, monotonic
+    ):
+        """确认 SensorHost 预建空缓存时仍能补齐磁盘读写历史字段。"""
+        del device_number, disk_io_counters, monotonic
+        collector = SystemInformationCollector.__new__(SystemInformationCollector)
+        collector.last_disk_io = None
+        collector.last_disk_io_time = None
+        collector.disk_io_histories = {"DISK0": {}}
+
+        disks = collector._disk_rates([{"name": "DISK0", "devices": ["C:"]}])
+
+        self.assertEqual(disks[0]["read_bps"], 0)
+        self.assertEqual(disks[0]["write_bps"], 0)
+        self.assertEqual(len(disks[0]["read_history"]), 24)
+        self.assertEqual(len(disks[0]["write_history"]), 24)
+
     @mock.patch.object(SystemInformationCollector, "_disk_temperatures", return_value={})
     @mock.patch.object(SystemInformationCollector, "_windows_device_number", side_effect=(0, 0))
     @mock.patch("system_monitor.platform.system", return_value="Windows")

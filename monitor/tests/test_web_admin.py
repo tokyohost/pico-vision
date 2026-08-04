@@ -12,6 +12,7 @@ from aiohttp import ClientSession, WSServerHandshakeError
 
 from monitor_core.arguments import create_argument_parser
 from web_admin import HttpAdminServer
+from win.settings import DEFAULT_MARKET_URL, TraySettingsStore
 
 
 class _RecordingBridge:
@@ -192,6 +193,23 @@ class HttpAdminConfigurationTest(unittest.TestCase):
         self.assertEqual("configured-auth", arguments.http_auth)
 
 
+class WindowsSettingsDefaultTest(unittest.TestCase):
+    """验证 Windows 控制中心新增配置的默认值。"""
+
+    def test_market_url_uses_official_service_by_default(self):
+        """确认首次启动或旧配置缺少字段时采用官方插件市场地址。"""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            settings_path = Path(temporary_directory) / "settings.json"
+            settings_path.write_text(
+                '{"market_url": "  "}',
+                encoding="utf-8",
+            )
+            settings = TraySettingsStore(settings_path).load()
+
+        self.assertEqual("https://omni.mzlblog.com", DEFAULT_MARKET_URL)
+        self.assertEqual(DEFAULT_MARKET_URL, settings["market_url"])
+
+
 class WindowsHttpAdminFailureTest(unittest.TestCase):
     """验证 Windows 端口绑定失败不会升级为应用未处理异常。"""
 
@@ -246,3 +264,42 @@ class WindowsHttpAdminFailureTest(unittest.TestCase):
             application.settings
         )
         application.icon.notify.assert_called_once()
+
+
+class WindowsWebViewWindowTest(unittest.TestCase):
+    """验证 Windows WebView 窗口的启动隐藏和恢复顺序。"""
+
+    def test_initialize_creates_hidden_non_minimized_window(self):
+        """确认控制中心直接以隐藏正常态启动，避免首次显示回调覆盖用户操作。"""
+        webview_module = import_module("win.ui-web-api.webview")
+        application = mock.Mock()
+        application.webview_bridge = mock.Mock()
+        application._resource_path.return_value = Path(__file__)
+        window = mock.Mock()
+        window.events.closing = mock.MagicMock()
+        fake_webview = mock.Mock()
+        fake_webview.create_window.return_value = window
+
+        with mock.patch.dict("sys.modules", {"webview": fake_webview}):
+            result = webview_module.WebUiMixin._initialize_webview(application)
+
+        self.assertIs(window, result)
+        create_arguments = fake_webview.create_window.call_args.kwargs
+        self.assertTrue(create_arguments["hidden"])
+        self.assertFalse(create_arguments["minimized"])
+        window.hide.assert_not_called()
+
+    def test_show_restores_before_showing_and_navigating(self):
+        """确认托盘点击先恢复窗口再激活显示，随后导航到目标页面。"""
+        webview_module = import_module("win.ui-web-api.webview")
+        application = mock.Mock()
+        window = application.webview_window
+        calls = []
+        window.restore.side_effect = lambda: calls.append("restore")
+        window.show.side_effect = lambda: calls.append("show")
+        window.evaluate_js.side_effect = lambda script: calls.append("navigate")
+
+        webview_module.WebUiMixin._show_web_page(application, "device")
+
+        self.assertEqual(["restore", "show", "navigate"], calls)
+        self.assertIn('"device"', window.evaluate_js.call_args.args[0])

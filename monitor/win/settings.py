@@ -38,6 +38,7 @@ DEFAULT_STYLE_CATALOG = [
 ]
 DEFAULT_COLLECTION_TASK_INTERVALS = system_task_defaults()
 COLLECTION_TASK_ZH_NAMES = system_task_zh_names()
+DEFAULT_MARKET_URL = "https://omni.mzlblog.com"
 DEFAULT_SETTINGS = {
     "port": "",
     "websocket_url": "",
@@ -70,7 +71,7 @@ DEFAULT_SETTINGS = {
     "qbittorrent_username": "",
     "qbittorrent_password": "",
     "qbittorrent_interval": 2.0,
-    "market_url": "",
+    "market_url": DEFAULT_MARKET_URL,
     "update_url": "",
     "http_enabled": False,
     "http_port": 9876,
@@ -220,7 +221,10 @@ class TraySettingsStore:
             settings.get("websocket_client_id") or DEFAULT_SETTINGS["websocket_client_id"]
         ).strip()[:96]
         settings["collection_task_logs"] = bool(settings.get("collection_task_logs", True))
-        settings["market_url"] = str(settings.get("market_url") or "").strip()
+        settings["market_url"] = (
+            str(settings.get("market_url") or "").strip()
+            or DEFAULT_MARKET_URL
+        )
         settings["http_enabled"] = bool(settings.get("http_enabled", False))
         try:
             settings["http_port"] = int(settings.get("http_port", 9876))

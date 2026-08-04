@@ -142,14 +142,9 @@ class WebUiMixin:
             min_size=(920, 640),
             background_color="#0b1020",
             confirm_close=False,
-            hidden=False,
-            minimized=True,
+            hidden=True,
+            minimized=False,
         )
-
-        def hide_after_initial_show():
-            """首次完成原生窗口显示后立即隐藏，确保 pywebview 正确置位 shown 事件。"""
-            window.events.shown -= hide_after_initial_show
-            window.hide()
 
         def hide_instead_of_closing():
             """把用户关闭操作转换为隐藏，保持托盘和主 GUI 循环运行。"""
@@ -158,7 +153,6 @@ class WebUiMixin:
             window.hide()
             return False
 
-        window.events.shown += hide_after_initial_show
         window.events.closing += hide_instead_of_closing
         self.webview_window = window
         self.settings_window = window
@@ -272,8 +266,10 @@ class WebUiMixin:
                 self.icon.notify("界面尚未就绪，请稍后重试", APPLICATION_NAME)
             return
         try:
-            window.show()
+            # 必须先退出最小化状态再显示，否则 WinForms 激活的仍是最小化窗口，
+            # 后续恢复只会留下任务栏图标而不会把窗口带到前台。
             window.restore()
+            window.show()
             window.evaluate_js(
                 "window.dispatchEvent(new CustomEvent('omniwatch:navigate',"
                 " {detail: %s}))" % json.dumps(page)
