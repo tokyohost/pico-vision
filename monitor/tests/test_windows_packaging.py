@@ -71,3 +71,16 @@ class WindowsPackagingTest(unittest.TestCase):
 
         self.assertIn("prepare-webview2-bootstrapper.ps1", workflow)
         self.assertIn("/DWebView2Bootstrapper=", workflow)
+
+    def test_mpremote_firmware_updater_is_bundled(self):
+        """确认发布版包含 mpremote 模块和流式复制脚本。"""
+        specification = (MONITOR_ROOT / "pico_monitor.spec").read_text(
+            encoding="utf-8"
+        )
+        requirements = (MONITOR_ROOT / "requirements.txt").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('collect_submodules("mpremote")', specification)
+        self.assertIn("mpremote_stream_copy.py", specification)
+        self.assertIn("mpremote>=", requirements)

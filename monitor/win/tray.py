@@ -13,12 +13,14 @@ import queue
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import winreg
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
+from pico_upgrade import PicoUpgradePackage
 from windows_update import WindowsReleaseUpdater
 
 from .constants import APPLICATION_NAME, MONITOR_DIRECTORY, WINDOWS_APP_USER_MODEL_ID
@@ -274,13 +276,20 @@ class WindowsTrayApplication(
             if not self._confirm_application_update(latest_version, release_notes):
                 icon.notify("已取消 OmniWatch 更新", APPLICATION_NAME)
                 return
-            pico_asset = updater.select_pico_asset(assets, latest_version)
+            connection = self._get_device_connection()
+            port = self._mpremote_repl_port(connection)
+            pico_asset = updater.select_pico_asset(
+                assets,
+                latest_version,
+                connection.get("board_model"),
+                connection.get("lcd_device_type"),
+            )
             monitor_asset = updater.select_monitor_asset(assets, latest_version)
             icon.notify("发现版本 {}，正在下载更新".format(latest_version), APPLICATION_NAME)
             pico_path = updater.download(pico_asset, ".zip")
             monitor_path = updater.download(monitor_asset, ".exe")
             self._stop_worker()
-            self._upgrade_pico_from_package(pico_path)
+            self._upgrade_pico_from_package(pico_path, port)
             updater.remove_file(pico_path)
             pico_path = None
             self._schedule_monitor_installer(monitor_path)
@@ -327,24 +336,68 @@ class WindowsTrayApplication(
         finally:
             root.destroy()
 
-    def _upgrade_pico_from_package(self, package_path):
-        """启动一次性隐藏进程，把已下载升级包发送给 Pico。"""
-        command = self._worker_command() + [
-            "--upgrade-pico",
-            "--upgrade-url", Path(package_path).resolve().as_uri(),
-        ]
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            creationflags=0x08000000,
-            timeout=300,
-        )
-        if result.returncode != 0:
-            message = (result.stdout or result.stderr or "OmniWatch 升级进程异常退出").strip()
-            raise RuntimeError(message[-500:])
+    def _upgrade_pico_from_package(self, package_path, port, progress_callback=None):
+        """校验并解压升级包，再通过 mpremote 流式复制到 USB 设备。"""
+        package = PicoUpgradePackage(package_path)
+        try:
+            with tempfile.TemporaryDirectory(prefix="omniwatch-firmware-") as directory:
+                source_directory = Path(directory)
+                for item in package.files:
+                    relative = PurePosixPath(str(item["path"]).replace("\\", "/"))
+                    if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+                        raise ValueError("升级包包含不安全路径：{}".format(item["path"]))
+                    target = source_directory.joinpath(*relative.parts)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(package.archive.read(item["path"]))
+
+                if getattr(sys, "frozen", False):
+                    command = [sys.executable, "--mpremote-stream-copy"]
+                else:
+                    command = [
+                        sys.executable,
+                        str(MONITOR_DIRECTORY.parent / "tools" / "mpremote_stream_copy.py"),
+                    ]
+                command.extend((str(port), "--source", str(source_directory)))
+                environment = os.environ.copy()
+                environment.update({
+                    "PYTHONIOENCODING": "utf-8",
+                    "PYTHONUTF8": "1",
+                    "PYTHONUNBUFFERED": "1",
+                })
+                process = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    creationflags=0x08000000,
+                    env=environment,
+                )
+                recent_output = []
+                try:
+                    for output_line in process.stdout:
+                        line = output_line.rstrip("\r\n")
+                        if not line:
+                            continue
+                        recent_output.append(line)
+                        del recent_output[:-30]
+                        percent_match = re.search(r"（([0-9]+(?:\.[0-9]+)?)%）", line)
+                        percent = float(percent_match.group(1)) if percent_match else None
+                        if progress_callback is not None:
+                            progress_callback(line, percent)
+                finally:
+                    if process.stdout is not None:
+                        process.stdout.close()
+                return_code = process.wait(timeout=10)
+                if return_code != 0:
+                    details = "\n".join(recent_output).strip()
+                    raise RuntimeError(
+                        details[-2000:] if details else
+                        "mpremote 固件更新进程异常退出：{}".format(return_code)
+                    )
+        finally:
+            package.close()
 
     @staticmethod
     def _schedule_monitor_installer(download_path):

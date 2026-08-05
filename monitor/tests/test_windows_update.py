@@ -51,6 +51,20 @@ class WindowsReleaseUpdaterTest(unittest.TestCase):
             updater.select_pico_asset(assets, "1.1.0")["name"],
         )
 
+    def test_selects_device_specific_pico_asset(self):
+        """确认联合更新不会把默认屏幕固件写入其他硬件组合。"""
+        name = "OmniWatch-pico-upgrade-v1.1.0-esp32-s3-st7789-2.4inch-10pin-a.zip"
+        updater = WindowsReleaseUpdater("owner/repository", "1.0.0")
+
+        selected = updater.select_pico_asset(
+            [{"name": name}],
+            "1.1.0",
+            "esp32-s3",
+            "st7789-2.4inch-10pin-a",
+        )
+
+        self.assertEqual(name, selected["name"])
+
     def test_missing_update_url_is_rejected(self):
         """确认没有默认仓库和自定义地址时给出配置错误。"""
         updater = WindowsReleaseUpdater("", "development")

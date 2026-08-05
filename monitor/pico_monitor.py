@@ -11,6 +11,7 @@ import ctypes
 import logging
 import signal
 import sys
+import runpy
 from pathlib import Path
 
 from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
@@ -106,6 +107,20 @@ def show_pico_information(port=None, websocket_url=None):
 def main():
     """校验参数并按当前平台启动后台工作进程或 Windows 托盘。"""
     _configure_standard_streams()
+    if len(sys.argv) > 1 and sys.argv[1] == "--mpremote-cli":
+        from mpremote import main as mpremote_main
+
+        sys.argv = [sys.argv[0], *sys.argv[2:]]
+        return mpremote_main.main()
+    if len(sys.argv) > 1 and sys.argv[1] == "--mpremote-stream-copy":
+        base_directory = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+        script_path = base_directory / "tools" / "mpremote_stream_copy.py"
+        sys.argv = [str(script_path), *sys.argv[2:]]
+        try:
+            runpy.run_path(str(script_path), run_name="__main__")
+        except SystemExit as error:
+            return int(error.code or 0)
+        return 0
     if len(sys.argv) > 1 and sys.argv[1] == "--sdk-flasher":
         from sdk_flash import run_sdk_flasher_cli
 

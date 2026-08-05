@@ -247,15 +247,23 @@ class DeviceApiMixin:
             raise ValueError("所选文件不是有效的固件升级包") from error
         return package_path
 
-    def _run_local_firmware_update(self, package_path):
+    def _run_local_firmware_update(self, package_path, port):
         """在后台安装用户选择的本地固件包并恢复常驻监控。"""
         try:
             self._set_update_state(
                 "firmware", "running", 20, "本地固件包校验完成，正在暂停监控", True
             )
             self._application._stop_worker()
-            self._set_update_state("firmware", "running", 55, "正在更新设备固件")
-            self._application._upgrade_pico_from_package(package_path)
+            self._set_update_state("firmware", "running", 50, "正在通过 mpremote 更新设备固件")
+
+            def report_progress(message, percent):
+                """把 mpremote 输出同步到本地固件更新日志。"""
+                progress = None if percent is None else 50 + int(percent * 0.45)
+                self._set_update_state("firmware", "running", progress, message)
+
+            self._application._upgrade_pico_from_package(
+                package_path, port, report_progress
+            )
             self._set_update_state(
                 "firmware", "success", 100, "本地设备固件更新完成，正在重新连接设备"
             )
@@ -289,6 +297,7 @@ class DeviceApiMixin:
         connection = self._application._get_device_connection()
         if not connection.get("connected"):
             raise RuntimeError("设备未连接，无法更新本地固件")
+        port = self._application._mpremote_repl_port(connection)
         path = self._select_file(FIRMWARE_PACKAGE_FILE_TYPES)
         if not path:
             return {"cancelled": True, "started": False}
@@ -301,7 +310,7 @@ class DeviceApiMixin:
             )
             threading.Thread(
                 target=self._run_local_firmware_update,
-                args=(package_path,),
+                args=(package_path, port),
                 name="Web 本地固件更新",
                 daemon=True,
             ).start()

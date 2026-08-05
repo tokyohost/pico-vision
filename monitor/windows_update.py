@@ -70,9 +70,19 @@ class WindowsReleaseUpdater:
         )
 
     @classmethod
-    def select_pico_asset(cls, assets, version):
-        """选择默认硬件组合兼容的 Pico 升级包。"""
-        return cls._required_asset(assets, "OmniWatch-pico-upgrade-v{}.zip".format(version))
+    def select_pico_asset(
+        cls, assets, version, board_model=None, lcd_device_type=None
+    ):
+        """按设备型号选择 Pico 升级包；未提供型号时保留默认组合兼容行为。"""
+        if bool(board_model) != bool(lcd_device_type):
+            raise RuntimeError("选择设备固件时必须同时提供开发板和 LCD 型号")
+        if board_model:
+            name = "OmniWatch-pico-upgrade-v{}-{}-{}.zip".format(
+                version, board_model, lcd_device_type
+            )
+        else:
+            name = "OmniWatch-pico-upgrade-v{}.zip".format(version)
+        return cls._required_asset(assets, name)
 
     def download(self, asset, suffix):
         """下载发布资源，并校验服务端提供的 SHA-256 摘要。"""

@@ -126,7 +126,7 @@ class UpdateApiMixin:
             }
         raise ValueError("不支持的更新检查类别：{}".format(category))
 
-    def _run_firmware_release_update(self, updater, asset, latest_version):
+    def _run_firmware_release_update(self, updater, asset, latest_version, port):
         """下载并安装设备固件发布包，结束后恢复常驻监控。"""
         package_path = None
         try:
@@ -136,8 +136,16 @@ class UpdateApiMixin:
             package_path = updater.download(asset, ".zip")
             self._set_update_state("firmware", "running", 45, "固件下载完成，正在暂停监控")
             self._application._stop_worker()
-            self._set_update_state("firmware", "running", 65, "正在安装设备固件")
-            self._application._upgrade_pico_from_package(package_path)
+            self._set_update_state("firmware", "running", 50, "正在通过 mpremote 更新设备固件")
+
+            def report_progress(message, percent):
+                """把 mpremote 的逐行输出和字节进度同步到 Web 更新页。"""
+                progress = None if percent is None else 50 + int(percent * 0.45)
+                self._set_update_state("firmware", "running", progress, message)
+
+            self._application._upgrade_pico_from_package(
+                package_path, port, report_progress
+            )
             self._set_update_state(
                 "firmware",
                 "success",
@@ -156,12 +164,22 @@ class UpdateApiMixin:
         finally:
             if package_path is not None:
                 updater.remove_file(package_path)
-            if not self._application.stopping.is_set() and (
-                self._application.worker_process is None
-                or self._application.worker_process.poll() is not None
-            ):
-                self._application._start_worker()
-            self._application.update_lock.release()
+            try:
+                if not self._application.stopping.is_set() and (
+                    self._application.worker_process is None
+                    or self._application.worker_process.poll() is not None
+                ):
+                    self._application._start_worker()
+            except Exception as error:
+                LOGGER.exception("在线固件更新后恢复后台监控失败：%s", error)
+                self._set_update_state(
+                    "firmware",
+                    "error",
+                    None,
+                    "固件更新结束，但恢复后台监控失败：{}".format(error),
+                )
+            finally:
+                self._application.update_lock.release()
 
     def _run_sdk_release_update(self, updater, asset, connection):
         """下载 SDK 发布镜像并通过受控 USB 模式立即刷写。"""
@@ -222,6 +240,7 @@ class UpdateApiMixin:
             raise RuntimeError("已有更新任务正在执行，请稍候")
         try:
             if category == "firmware":
+                port = self._application._mpremote_repl_port(connection)
                 current_version = str(connection.get("firmware_version") or "未知")
                 updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, current_version)
                 latest_version, assets = updater.latest_release(
@@ -238,7 +257,7 @@ class UpdateApiMixin:
                 if asset is None:
                     raise RuntimeError("当前发布中缺少适配设备固件：{}".format(asset_name))
                 target = self._run_firmware_release_update
-                arguments = (updater, asset, latest_version)
+                arguments = (updater, asset, latest_version, port)
             elif category == "sdk":
                 if not self._sdk_flash_allowed(connection):
                     raise RuntimeError("当前连接不支持 ESP32-S3 SDK 受控更新")

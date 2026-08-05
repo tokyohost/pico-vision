@@ -10,6 +10,8 @@ import sys
 import threading
 from pathlib import Path
 
+from serial.tools import list_ports
+
 from .constants import APPLICATION_NAME, MONITOR_DIRECTORY
 from .settings import apply_worker_arguments
 
@@ -96,6 +98,79 @@ class WorkerControllerMixin:
         if getattr(sys, "frozen", False):
             return [sys.executable, *arguments]
         return [sys.executable, str(MONITOR_DIRECTORY / "pico_monitor.py"), *arguments]
+
+    @staticmethod
+    def _is_probable_repl_port(port):
+        """根据复合 USB CDC 描述判断端口是否为 MicroPython REPL。"""
+        interface = str(getattr(port, "interface", "") or "").lower()
+        description = str(getattr(port, "description", "") or "").lower()
+        hwid = str(getattr(port, "hwid", "") or "").lower()
+        location = str(getattr(port, "location", "") or "").lower()
+        if "fn vision data" in interface or "mi_02" in hwid:
+            return False
+        return (
+            "repl" in interface
+            or "repl" in description
+            or "mi_00" in hwid
+            or location.endswith(".0")
+        )
+
+    @staticmethod
+    def _serial_port_physical_location(port):
+        """移除 Windows 复合 USB 接口编号，保留实际物理插口位置。"""
+        location = str(getattr(port, "location", "") or "").strip().lower()
+        return location.split(":", 1)[0] if location else ""
+
+    @classmethod
+    def _mpremote_repl_port(cls, connection, ports=None):
+        """从 Monitor 的 Data CDC 连接定位同一 USB 设备的 REPL CDC。"""
+        data_device = str((connection or {}).get("address") or "").strip()
+        if str((connection or {}).get("transport") or "") != "串口" or not data_device:
+            raise RuntimeError("mpremote 固件更新仅支持有效的 USB 串口连接")
+        available = list(list_ports.comports() if ports is None else ports)
+        source = next(
+            (
+                item for item in available
+                if str(getattr(item, "device", "") or "").upper() == data_device.upper()
+            ),
+            None,
+        )
+        if source is None:
+            raise RuntimeError("未找到 Monitor 当前使用的 USB Data 串口：{}".format(data_device))
+        if cls._is_probable_repl_port(source):
+            return str(source.device)
+
+        source_location = cls._serial_port_physical_location(source)
+        source_serial = str(getattr(source, "serial_number", "") or "")
+        repl_ports = [
+            item for item in available
+            if item is not source and cls._is_probable_repl_port(item)
+        ]
+        if source_location:
+            located = [
+                item for item in repl_ports
+                if cls._serial_port_physical_location(item) == source_location
+            ]
+            if len(located) == 1:
+                return str(located[0].device)
+            if len(located) > 1:
+                repl_ports = located
+        if source_serial:
+            serialized = [
+                item for item in repl_ports
+                if str(getattr(item, "serial_number", "") or "") == source_serial
+            ]
+            if len(serialized) == 1:
+                return str(serialized[0].device)
+            if len(serialized) > 1:
+                repl_ports = serialized
+        if len(repl_ports) == 1:
+            return str(repl_ports[0].device)
+        raise RuntimeError(
+            "无法唯一识别与 {} 同设备的 REPL 串口，请断开其他开发板后重试".format(
+                data_device
+            )
+        )
 
     def _device_probe_command(self, websocket_url=None):
         """构造单次设备探测命令，并可覆盖或清除已保存的 WebSocket 地址。"""
