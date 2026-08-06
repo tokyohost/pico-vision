@@ -11,9 +11,10 @@ import time
 from pathlib import Path, PurePosixPath
 
 
-DEFAULT_SOURCE = Path(r"E:\WorkSpace\fn-vision\pico-project\esp32-s3")
+DEFAULT_SOURCE = Path(r"N:\pythonProject\pico-vision\esp32-s3")
 REMOTE_MANIFEST_PREFIX = "MPREMOTE_FILE:"
 REMOTE_MANIFEST_BATCH_SIZE = 40
+MPREMOTE_COMMAND_TIMEOUT_SECONDS = 90
 
 
 class MpremoteStreamCopier:
@@ -24,7 +25,13 @@ class MpremoteStreamCopier:
         self.port = port
         self.source = source.resolve()
         self.remote_root = self._normalize_remote_root(remote_root)
-        self.mpremote_command = [sys.executable, "-m", "mpremote"]
+        # PyInstaller 单文件程序不是通用 Python 解释器，不能使用 ``-m``。
+        # Monitor 为打包版本提供一个只转发到 mpremote 的内部入口。
+        self.mpremote_command = (
+            [sys.executable, "--mpremote-cli"]
+            if getattr(sys, "frozen", False)
+            else [sys.executable, "-m", "mpremote"]
+        )
 
     @staticmethod
     def _normalize_remote_root(remote_root: str) -> PurePosixPath:
@@ -54,10 +61,18 @@ class MpremoteStreamCopier:
         command = [*self.mpremote_command, "connect", self.port, *arguments]
         print(f"  {description}", flush=True)
         try:
-            result = subprocess.run(command, check=False)
+            result = subprocess.run(
+                command,
+                check=False,
+                timeout=MPREMOTE_COMMAND_TIMEOUT_SECONDS,
+            )
         except KeyboardInterrupt:
             print("\n复制已由用户中止。", file=sys.stderr)
             raise
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError(
+                f"mpremote 执行超时（{MPREMOTE_COMMAND_TIMEOUT_SECONDS} 秒）：{description}"
+            ) from error
         if result.returncode != 0:
             raise RuntimeError(
                 f"mpremote 执行失败，退出码为 {result.returncode}：{description}"
@@ -78,10 +93,15 @@ class MpremoteStreamCopier:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                timeout=MPREMOTE_COMMAND_TIMEOUT_SECONDS,
             )
         except KeyboardInterrupt:
             print("\n复制已由用户中止。", file=sys.stderr)
             raise
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError(
+                f"mpremote 执行超时（{MPREMOTE_COMMAND_TIMEOUT_SECONDS} 秒）：{description}"
+            ) from error
         if result.returncode != 0:
             output = result.stdout.strip()
             details = f"\n{output}" if output else ""
@@ -180,6 +200,7 @@ class MpremoteStreamCopier:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            timeout=MPREMOTE_COMMAND_TIMEOUT_SECONDS,
         )
         if result.returncode != 0:
             raise RuntimeError(

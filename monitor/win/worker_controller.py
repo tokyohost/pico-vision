@@ -142,10 +142,31 @@ class WorkerControllerMixin:
 
         source_location = cls._serial_port_physical_location(source)
         source_serial = str(getattr(source, "serial_number", "") or "")
+        source_vid = getattr(source, "vid", None)
+        source_pid = getattr(source, "pid", None)
+        peer_ports = [item for item in available if item is not source]
         repl_ports = [
-            item for item in available
-            if item is not source and cls._is_probable_repl_port(item)
+            item for item in peer_ports if cls._is_probable_repl_port(item)
         ]
+
+        # Windows 有时只给 Data CDC 提供 location/interface，而同设备的
+        # REPL CDC 只剩通用“USB 串行设备”描述。此时稳定序列号加 VID/PID
+        # 比接口描述更可靠，也能区分同时插入的多块开发板。
+        if source_serial:
+            same_device = [
+                item for item in peer_ports
+                if str(getattr(item, "serial_number", "") or "") == source_serial
+                and getattr(item, "vid", None) == source_vid
+                and getattr(item, "pid", None) == source_pid
+            ]
+            if len(same_device) == 1:
+                return str(same_device[0].device)
+            classified = [
+                item for item in same_device if cls._is_probable_repl_port(item)
+            ]
+            if len(classified) == 1:
+                return str(classified[0].device)
+
         if source_location:
             located = [
                 item for item in repl_ports

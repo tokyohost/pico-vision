@@ -18,7 +18,9 @@ sys.modules.setdefault("win", WIN_PACKAGE)
 from win.worker_controller import WorkerControllerMixin
 
 
-def port(device, location, interface, serial_number="device-1"):
+def port(
+    device, location, interface, serial_number="device-1", vid=0x303A, pid=0x4002
+):
     """创建 pyserial ListPortInfo 所需字段的最小替身。"""
     return SimpleNamespace(
         device=device,
@@ -27,6 +29,8 @@ def port(device, location, interface, serial_number="device-1"):
         description=interface,
         hwid="",
         serial_number=serial_number,
+        vid=vid,
+        pid=pid,
     )
 
 
@@ -53,6 +57,20 @@ class WindowsMpremoteUpdateTest(unittest.TestCase):
             WorkerControllerMixin._mpremote_repl_port(
                 {"transport": "WebSocket", "address": "ws://device/pv1"}, []
             )
+
+    def test_selects_generic_windows_port_by_serial_and_vid_pid(self):
+        """REPL 缺少 location/interface 时仍应按设备序列号完成配对。"""
+        ports = [
+            port("COM10", "1-7:x.2", "", "7CE8B1B093C8CE3F"),
+            port("COM9", "", "", "7CE8B1B093C8CE3F"),
+            port("COM12", "1-8:x.2", "", "another-device"),
+        ]
+
+        selected = WorkerControllerMixin._mpremote_repl_port(
+            {"transport": "串口", "address": "COM10"}, ports
+        )
+
+        self.assertEqual("COM9", selected)
 
     def test_rejects_ambiguous_repl_ports(self):
         """缺少物理标识且存在多个 REPL 时不能猜测目标设备。"""
