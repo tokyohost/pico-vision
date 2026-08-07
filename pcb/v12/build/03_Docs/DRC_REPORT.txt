@@ -1,0 +1,6 @@
+Board: 20.00 x 30.00 mm
+Copper clearance target: 0.20 mm
+Copper-edge target: 0.25 mm
+Different-net clearance errors: 0
+Connectivity errors: 0
+NOTE: independent geometry/connectivity checker, not official KiCad DRC.

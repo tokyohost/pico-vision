@@ -1,0 +1,8 @@
+﻿Comment,Designator,Footprint,LCSC Part #,Manufacturer Part,Qty,Assembly,Notes
+"10P 1.0mm FPC Bottom Contact, edge-facing",J1,F-FPC1M10P-C310,C132509,F-FPC1M10P-C310,1,SMT,"0.3mm FPC, bottom contact; cable entry faces board edge; 0.45x2.30mm signal pads; enlarged 2.8x2.8mm anchor copper"
+AO3400A,Q1,SOT-23,C20917,AO3400A,1,SMT,Low-side LED- PWM MOSFET; FPC pin 1
+100R,R1,0603,C22775,0603WAF1000T5E,1,SMT,MOSFET gate series resistor
+10K,R2,0603,C25804,0603WAF1002T5E,1,SMT,"Gate pulldown, default off"
+25R,R3,0603,DNP,Generic 25 ohm 0603,1,Hand solder,Series resistor between FPC pin 2 and LEDA breakout; select 25 ohm
+2x5 2.54mm header,J2,PinHeader_2x05_P2.54mm,DNP,Generic,1,Hand solder,10-pin 1:1 breakout
+1x2 2.54mm header,J3,PinHeader_1x02_P2.54mm,DNP,Generic,1,Hand solder,PWM + GND input

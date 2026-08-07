@@ -1,0 +1,14 @@
+﻿Pin,J1 FPC,J2 Breakout,Function / Note
+1,LEDK,LEDK,Backlight cathode / LED-; also connected to Q1 drain
+2,LEDA via R3=25R,LEDA,Backlight anode; FPC pin 2 is connected to J2 pin 2 through R3=25 ohm
+3,GND,GND,Logic/power ground; adjacent to LED- on the original board
+4,SDO,SDO,LCD serial data output / NC if unused
+5,SDA,SDA,SPI MOSI
+6,CS,CS,Chip select
+7,DC,DC,Data/command
+8,SCL,SCL,SPI clock
+9,RESET,RST,LCD reset
+10,VDD,VDD,"LCD logic supply, nominal 3.3V"
+
+J3-1,PWM,,3.3V logic PWM input through R1=100R
+J3-2,GND,,PWM reference ground

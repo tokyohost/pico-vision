@@ -1,0 +1,59 @@
+{
+  "board_mm": [
+    20,
+    30
+  ],
+  "mounting_holes": {
+    "count": 4,
+    "diameter_mm": 2.2,
+    "centers_mm": [
+      [
+        2.5,
+        8.7
+      ],
+      [
+        17.5,
+        8.7
+      ],
+      [
+        2.5,
+        27.5
+      ],
+      [
+        17.5,
+        27.5
+      ]
+    ]
+  },
+  "gerber_y_axis_corrected": true,
+  "fpc_top_view_direction": "left_to_right_1_to_10",
+  "pin_mapping": {
+    "1": "LEDK/LED-",
+    "2": "LEDA through R3=25R",
+    "3": "GND"
+  },
+  "r3_series_resistor_ohm": 25,
+  "fpc_signal_pad_mm": [
+    0.45,
+    2.3
+  ],
+  "fpc_signal_pitch_mm": 1.0,
+  "fpc_signal_copper_gap_mm": 0.55,
+  "fpc_signal_paste_mm": [
+    0.42,
+    2.27
+  ],
+  "fpc_anchor_pad_mm": [
+    2.8,
+    2.8
+  ],
+  "fpc_anchor_paste_mm": [
+    2.2,
+    2.2
+  ],
+  "redistributed_layout": true,
+  "silkscreen_refs_outside_components": true,
+  "compact_q1_outline": true,
+  "drc_errors": [],
+  "connectivity_errors": []
+}
