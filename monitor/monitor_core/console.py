@@ -74,12 +74,20 @@ def _configure_standard_streams():
     stdout = _ensure_utf8_text_stream(getattr(sys, "stdout", None))
     stderr = _ensure_utf8_text_stream(getattr(sys, "stderr", None))
     if stdout is None:
-        stdout = _open_inherited_text_stream(1)
+        stdout = _open_inherited_text_stream(1) or open(
+            os.devnull,
+            "w",
+            encoding="utf-8",
+        )
         sys.stdout = stdout
     if stderr is None:
-        stderr = _open_inherited_text_stream(2)
+        stderr = _open_inherited_text_stream(2) or open(
+            os.devnull,
+            "w",
+            encoding="utf-8",
+        )
         sys.stderr = stderr
-    return stderr or stdout or open(os.devnull, "w", encoding="utf-8")
+    return stderr
 
 
 def _write_version_to_console(version_text):
@@ -148,4 +156,3 @@ def configure_logging(level_name="INFO"):
 def log_monitor_version():
     """在服务启动阶段记录当前 Monitor 构建版本。"""
     LOGGER.info("Pico Monitor 启动：版本=%s", MONITOR_VERSION)
-

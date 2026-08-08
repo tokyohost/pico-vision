@@ -19,6 +19,7 @@ import io
 import itertools
 import logging
 import os
+import sys
 import tempfile
 import threading
 import unittest
@@ -51,7 +52,11 @@ from pico_monitor import (
     validate_arguments,
 )
 from system_monitor import PowerMonitor, SystemInformationCollector
-from monitor_core.console import _stop_log_listener, configure_logging
+from monitor_core.console import (
+    _configure_standard_streams,
+    _stop_log_listener,
+    configure_logging,
+)
 from monitor_core.runtime_operations import RuntimeOperationsMixin
 from json_ack_timing_cache import ExpiringJsonAckTimingCache
 
@@ -919,6 +924,28 @@ class PicoClientTest(unittest.TestCase):
         self.assertIn("[DEBUG] 调试日志", content)
         self.assertIn("[INFO] 普通日志", content)
         self.assertIn("[WARNING] 告警日志", content)
+
+    def test_standard_streams_fall_back_to_utf8_devnull_without_console(self):
+        """确认无控制台及继承管道时仍为第三方命令提供 UTF-8 标准流。"""
+        with mock.patch.object(sys, "stdout", None), mock.patch.object(
+            sys, "stderr", None
+        ), mock.patch(
+            "monitor_core.console._open_inherited_text_stream",
+            return_value=None,
+        ):
+            stream = _configure_standard_streams()
+            stdout = sys.stdout
+            stderr = sys.stderr
+
+        try:
+            self.assertIsNotNone(stdout)
+            self.assertIsNotNone(stderr)
+            self.assertEqual("utf-8", stdout.encoding.lower())
+            self.assertEqual("utf-8", stderr.encoding.lower())
+            self.assertIs(stream, stderr)
+        finally:
+            stdout.close()
+            stderr.close()
 
     def test_version_argument_prints_build_version(self):
         """确认命令行版本参数输出统一构建版本并成功退出。"""
