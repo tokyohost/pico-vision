@@ -11,7 +11,7 @@ import time
 from pathlib import Path, PurePosixPath
 
 
-DEFAULT_SOURCE = Path(r"N:\pythonProject\pico-vision\esp32-s3")
+DEFAULT_SOURCE = Path(r"E:\WorkSpace\fn-vision\pico-project\esp32-s3")
 REMOTE_MANIFEST_PREFIX = "MPREMOTE_FILE:"
 REMOTE_MANIFEST_BATCH_SIZE = 40
 MPREMOTE_COMMAND_TIMEOUT_SECONDS = 90
@@ -271,10 +271,11 @@ class MpremoteStreamCopier:
             print("正在校验设备端文件内容……")
             remote_manifest = self._read_remote_manifest(files)
 
-        local_fingerprints = {
-            file: self._local_fingerprint(file)
-            for file in files
-        }
+        local_fingerprints = (
+            {file: (file.stat().st_size, None) for file in files}
+            if force
+            else {file: self._local_fingerprint(file) for file in files}
+        )
         total_bytes = sum(size for size, _ in local_fingerprints.values())
         processed_bytes = 0
         copied_bytes = 0
@@ -293,8 +294,12 @@ class MpremoteStreamCopier:
             local_fingerprint = (file_size, local_digest)
             if not force and remote_fingerprint == local_fingerprint:
                 skipped_files += 1
-                print("  跳过：设备端内容一致", flush=True)
+                print("  跳过：设备端大小和 SHA-256 一致", flush=True)
             else:
+                if remote_fingerprint is None:
+                    print("  上传原因：设备端文件不存在", flush=True)
+                elif not force:
+                    print("  上传原因：设备端大小或 SHA-256 不一致", flush=True)
                 self._run_mpremote(
                     ["fs", "cp", str(file), remote_path],
                     f"复制到 {remote_path[1:]}",
