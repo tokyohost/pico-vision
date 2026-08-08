@@ -512,14 +512,28 @@ class MonitorService(
     def _connect_websocket_candidates(self, candidates, source):
         """逐个执行 PV1 握手确认，并保留首个可用的 Wi-Fi 候选。"""
         for candidate in candidates:
+            LOGGER.info(
+                "[Wi-Fi发现][%s][PV1确认] 正在验证候选设备：%s",
+                source,
+                candidate.url,
+            )
             self.client.websocket_url = candidate.url
             try:
                 self.client.connect()
             except (OSError, RuntimeError, serial.SerialException) as error:
-                LOGGER.info("%s候选设备确认失败：地址=%s，原因=%s", source, candidate.url, error)
+                LOGGER.info(
+                    "[Wi-Fi发现][%s][PV1确认] 候选设备验证失败：地址=%s，原因=%s",
+                    source,
+                    candidate.url,
+                    error,
+                )
                 self.client.close()
                 continue
-            LOGGER.info("%s发现 Wi-Fi 设备成功：%s", source, candidate.url)
+            LOGGER.info(
+                "[Wi-Fi发现][%s][PV1确认] 设备发现并连接成功：%s",
+                source,
+                candidate.url,
+            )
             self.arguments.websocket_url = candidate.url
             return True
         return False
@@ -535,7 +549,7 @@ class MonitorService(
         if strategy == "announcement":
             LOGGER.info("开始监听 ESP32 UDP 组播/广播主动公告")
             candidates = self._create_announcement_listener(fast=fast).listen()
-            if self._connect_websocket_candidates(candidates, "主动公告"):
+            if self._connect_websocket_candidates(candidates, "UDP公告"):
                 return True
             LOGGER.info("公告窗口内未发现可连接设备，切换为网段扫描兜底")
         scanner = self._create_lan_scanner(fast=fast, low_impact=low_impact)

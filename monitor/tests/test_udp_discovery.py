@@ -44,6 +44,31 @@ class UdpAnnouncementListenerTest(unittest.TestCase):
             UdpAnnouncementListener._parse(b'{"magic":"UNKNOWN"}', "192.168.8.20")
         )
 
+    @mock.patch("net.udp_discovery.socket.socket")
+    def test_received_announcement_is_written_to_runtime_log(self, socket_factory):
+        """首次收到有效 UDP 公告时应记录来源、设备标识和候选地址。"""
+        connection = socket_factory.return_value
+        payload = json.dumps({
+            "magic": "FN_VISION_DISCOVERY",
+            "version": 1,
+            "websocket_port": 8765,
+            "websocket_path": "/pv1",
+            "device_id": "device-1",
+        }).encode("utf-8")
+        connection.recvfrom.side_effect = (
+            (payload, ("192.168.8.20", 49152)),
+            TimeoutError(),
+        )
+
+        with self.assertLogs("pico-monitor.discovery", level="INFO") as captured:
+            candidates = UdpAnnouncementListener(timeout=0.05).listen()
+
+        self.assertEqual(["ws://192.168.8.20:8765/pv1"], [item.url for item in candidates])
+        log_text = "\n".join(captured.output)
+        self.assertIn("[Wi-Fi发现][UDP公告]", log_text)
+        self.assertIn("来源=192.168.8.20:49152", log_text)
+        self.assertIn("设备UUID=device-1", log_text)
+
 
 class UdpDiscoveryAnnouncerTest(unittest.TestCase):
     """确认 ESP32 会同时发送组播与广播公告。"""

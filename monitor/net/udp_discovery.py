@@ -65,6 +65,22 @@ class UdpAnnouncementListener:
                     break
                 candidate = self._parse(payload, source[0])
                 if candidate is not None:
+                    if candidate.url not in results:
+                        LOGGER.info(
+                            "[Wi-Fi发现][UDP公告] 收到 ESP32 设备公告："
+                            "来源=%s:%s，设备UUID=%s，WebSocket候选=%s",
+                            source[0],
+                            source[1],
+                            candidate.device_id or "未知",
+                            candidate.url,
+                        )
+                    else:
+                        LOGGER.debug(
+                            "[Wi-Fi发现][UDP公告] 收到重复设备公告：来源=%s:%s，候选=%s",
+                            source[0],
+                            source[1],
+                            candidate.url,
+                        )
                     results[candidate.url] = candidate
         except OSError as error:
             LOGGER.warning("监听 ESP32 UDP 公告失败：%s", error)

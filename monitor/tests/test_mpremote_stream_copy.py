@@ -115,6 +115,11 @@ class MpremoteStreamCopyTest(unittest.TestCase):
             (tests_directory / "test_command.py").write_text(
                 "assert True", encoding="utf-8"
             )
+            fonts_directory = source / "fonts"
+            fonts_directory.mkdir()
+            (fonts_directory / "LICENSE.txt").write_text(
+                "字体授权说明", encoding="utf-8"
+            )
             copier = MODULE.MpremoteStreamCopier("COM_TEST", source)
             with mock.patch.object(copier, "_check_environment"), mock.patch.object(
                 copier,
@@ -133,6 +138,7 @@ class MpremoteStreamCopyTest(unittest.TestCase):
         self.assertEqual([":/main.py"], copied_targets)
         prepared = prepare_directories.call_args.args[0]
         self.assertFalse(any(path.name.lower() == "tests" for path in prepared))
+        self.assertFalse(any(path.name.lower() == "fonts" for path in prepared))
 
     def test_remote_manifest_requests_are_batched_and_valid_python(self):
         """远端校验代码应分批发送并保持有效 Python 语法。"""

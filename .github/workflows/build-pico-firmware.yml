@@ -22,8 +22,6 @@ jobs:
       fail-fast: false
       matrix:
         board_model:
-          - rp2040_usb
-          - rp2040_typec
           - esp32-s3
         lcd_device_type:
           - st7789-2inch-8pin-a
@@ -44,7 +42,7 @@ jobs:
           mkdir -p release-assets
           package_name="OmniWatch-pico-full-v${version}-${{ matrix.board_model }}-${{ matrix.lcd_device_type }}.zip"
           python tools/package_pico_firmware.py \
-            --source picoRP2040 \
+            --source esp32-s3 \
             --output "release-assets/${package_name}" \
             --version "${version}" \
             --board-model "${{ matrix.board_model }}" \
@@ -81,7 +79,7 @@ jobs:
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          source="release-assets/OmniWatch-pico-full-v${version}-rp2040_usb-st7789-2inch-8pin-a.zip"
+          source="release-assets/OmniWatch-pico-full-v${version}-esp32-s3-st7789-2.4inch-10pin-a.zip"
           target="release-assets/OmniWatch-pico-full-v${version}.zip"
           cp "${source}" "${target}"
           (cd release-assets && sha256sum "$(basename "${target}")" > "$(basename "${target}").sha256")

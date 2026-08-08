@@ -52,6 +52,10 @@ class MpremoteStreamCopier:
         normalized_parts = tuple(part.lower() for part in relative_parts)
         if "tests" in normalized_parts or "__pycache__" in normalized_parts:
             return False
+        # ESP32-S3 定制 SDK 已内置字体，fonts 目录仅保存上游授权说明，
+        # 不属于设备运行文件；与发布 ZIP 使用相同过滤规则保持清单一致。
+        if normalized_parts and normalized_parts[0] == "fonts":
+            return False
         if item.is_file() and item.suffix.lower() in {".md", ".pyc", ".pyo"}:
             return False
         return True
