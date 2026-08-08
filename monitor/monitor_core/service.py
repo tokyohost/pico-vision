@@ -107,6 +107,7 @@ class MonitorService(
         self.stopping = threading.Event()
         self.runtime_reconnect_requested = threading.Event()
         self.active_probe_requested = threading.Event()
+        self.resume_probe_requested = threading.Event()
         # 应用启动后执行且仅执行一次完整主动探测：USB 优先，失败后再检查
         # 已保存的 WebSocket 地址及局域网候选。成功连接后该事件由主循环清除。
         self.active_probe_requested.set()
@@ -512,6 +513,13 @@ class MonitorService(
         self.active_probe_requested.set()
         self.runtime_reconnect_requested.set()
 
+    def request_resume_probe(self):
+        """Discard a possibly stale transport and rescan after Windows resumes."""
+        LOGGER.info("Windows 已从休眠恢复，正在唤醒主循环重新扫描设备")
+        self.resume_probe_requested.set()
+        self.active_probe_requested.set()
+        self.runtime_reconnect_requested.set()
+
     def _connect_for_active_probe(self):
         """优先连接 USB，失败后扫描局域网，并保留成功建立的连接。"""
         original_url = self.client.websocket_url
@@ -653,10 +661,16 @@ class MonitorService(
         if not self.runtime_reconnect_requested.is_set():
             return
         active_probe_requested = getattr(self, "active_probe_requested", None)
+        resume_probe_requested = getattr(self, "resume_probe_requested", None)
+        force_probe = (
+            resume_probe_requested is not None
+            and resume_probe_requested.is_set()
+        )
         if (
             active_probe_requested is not None
             and active_probe_requested.is_set()
             and self.client.is_connected
+            and not force_probe
         ):
             # 主动探测请求可能恰好到达正在进行的握手阶段；若握手随后成功，
             # 直接采用该连接，不能再按普通配置热更新流程把它关闭。
@@ -664,6 +678,8 @@ class MonitorService(
             self.runtime_reconnect_requested.clear()
             LOGGER.info("主动探测期间握手已成功，保留当前连接")
             return
+        if resume_probe_requested is not None:
+            resume_probe_requested.clear()
         self.runtime_reconnect_requested.clear()
         self._stop_transmit_worker(wait=True)
         self.client.close()

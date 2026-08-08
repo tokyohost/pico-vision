@@ -28,6 +28,7 @@ from .autostart import AutostartMixin
 from .log_service import LogServiceMixin
 from .ui_web import WebUiMixin
 from .worker_controller import WorkerControllerMixin
+from .power_events import WindowsPowerNotifications
 from .ui import TkSupportMixin
 
 from .settings import (
@@ -464,6 +465,12 @@ class WindowsTrayApplication(
                 # 原生窗口尚未完成启动时 destroy 会抛错，托盘仍应正常退出。
                 LOGGER.exception("销毁 WebView 窗口失败")
 
+    def _handle_windows_resume(self):
+        """Ask the worker to discard stale transports and rediscover devices."""
+        LOGGER.info("检测到 Windows 从休眠恢复，通知 Monitor 重新扫描设备")
+        if not self._write_worker_command("RESUME_PROBE\n"):
+            LOGGER.warning("Windows 恢复后无法通知 Monitor worker 重新扫描设备")
+
     def _create_image(self):
         """从统一应用图标路径加载托盘菜单栏图标。"""
         from PIL import Image
@@ -607,12 +614,16 @@ class WindowsTrayApplication(
         import pystray
 
         original_thread_hook = self._install_thread_crash_handler()
+        power_notifications = WindowsPowerNotifications(
+            self._handle_windows_resume
+        )
         try:
             self._configure_windows_taskbar()
             if not self._acquire_single_instance():
                 return 0
             self._prepare_webview_runtime()
             self._start_worker()
+            power_notifications.start()
             self.icon = pystray.Icon("pico-monitor", self._create_image(), APPLICATION_NAME, self._build_menu())
             self._initialize_webview()
             self._apply_http_admin_settings()
@@ -629,6 +640,7 @@ class WindowsTrayApplication(
             return 1
         finally:
             self.stopping.set()
+            power_notifications.stop()
             self._stop_http_admin()
             if self.icon is not None:
                 try:

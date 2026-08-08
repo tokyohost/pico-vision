@@ -10,3 +10,4 @@ py -m esptool --chip esp32s3 --port COM14 --baud 460800 write_flash 0x0  "E:\Wor
 py -m esptool --chip esp32s3 --port COM21 --baud 460800 write_flash 0x0  "E:\WorkSpace\fn-vision\pico-project\esp32\tools\micropython-ESP32_GENERIC_S3-N8R8-v1.0.61-fnProcotolV1.bin"
 py -m esptool --chip esp32s3 --port COM29 --baud 460800 write_flash 0x0  "E:\WorkSpace\fn-vision\pico-project\esp32\tools\micropython-ESP32_GENERIC_S3-N8R8-v1.0.66-fnProcotolV1.bin"
 py -m esptool --chip esp32s3 --port COM29 --baud 460800 write_flash 0x0  "E:\WorkSpace\fn-vision\pico-project\esp32\tools\micropython-ESP32_GENERIC_S3-N8R8-v1.0.66-fnProcotolV1.bin"
+py -m esptool --chip esp32s3 --port COM17 --baud 460800 write_flash 0x0  "N:\pythonProject\pico-vision\esp32\tools\micropython-ESP32_GENERIC_S3-N16R8-v1.0.69-fnProcotolV1.bin"
