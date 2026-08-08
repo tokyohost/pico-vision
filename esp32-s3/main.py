@@ -908,7 +908,17 @@ def main():
         from upgrade_manager import UpgradeManager
         from command.sdk_bootloader import SdkBootloaderController
 
-        from config import WIFI_ENABLED, WEBSOCKET_PATH, WEBSOCKET_PORT
+        from config import (
+            BOARD_MODEL,
+            WIFI_DISCOVERY_ANNOUNCEMENT_ENABLED,
+            WIFI_DISCOVERY_INTERVAL_MS,
+            WIFI_DISCOVERY_MULTICAST_GROUP,
+            WIFI_DISCOVERY_PORT,
+            WIFI_ENABLED,
+            WEBSOCKET_PATH,
+            WEBSOCKET_PORT,
+        )
+        from device_identity import device_uuid
         from net import TransportManager
         from usb_transport import create_usb_stream
 
@@ -917,6 +927,12 @@ def main():
             wifi_enabled=WIFI_ENABLED,
             websocket_port=WEBSOCKET_PORT,
             websocket_path=WEBSOCKET_PATH,
+            discovery_enabled=WIFI_DISCOVERY_ANNOUNCEMENT_ENABLED,
+            discovery_port=WIFI_DISCOVERY_PORT,
+            discovery_group=WIFI_DISCOVERY_MULTICAST_GROUP,
+            discovery_interval_ms=WIFI_DISCOVERY_INTERVAL_MS,
+            device_id=device_uuid(),
+            board_model=BOARD_MODEL,
         )
         protocol = JsonProtocol(stream=transport)
         sdk_bootloader = SdkBootloaderController()

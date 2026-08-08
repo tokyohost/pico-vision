@@ -50,6 +50,10 @@ python pico_monitor.py
 --port /dev/ttyACM1         固定 Linux 数据 CDC；建议留空自动发现
 --websocket-url ws://192.168.1.20:8765/pv1
                             使用 Wi-Fi WebSocket；断线后按 reconnect-interval 自动重连
+--wifi-discovery-strategy announcement|scan
+                            默认监听 ESP32 UDP 公告并以网段扫描兜底；scan 直接扫描网段
+--wifi-announcement-port 37856
+                            ESP32 主动公告监听端口
 --ping-target 1.1.1.1       指定延迟探测目标，默认 www.baidu.com
 --serial-probe-interval 3   串口探测 PING 间隔，默认 3 秒
 --interval 1.0              指定采集发送间隔
@@ -86,9 +90,11 @@ qBittorrent 也可通过环境变量 `PICO_MONITOR_QBITTORRENT_ENABLED`、`PICO_
 
 WebSocket 地址也可通过 `PICO_MONITOR_WEBSOCKET_URL` 配置。首次配网时先使用 USB CDC 连接，通过 `PicoJsonClient.request_wifi_list()` 发送 `wifi.list` 搜索网络，再通过 `PicoJsonClient.set_wifi(ssid, password)` 发送 `wifi.set`。Windows Monitor 的 Wi-Fi 页面每次重新扫描附近全部网络，同时保留“已保存”网络供用户选中；点击“忘记网络”会通过 `PicoJsonClient.forget_wifi(ssid)` 发送 `wifi.forget` 并删除设备端凭据。命令使用结构化 `COMMAND` 帧返回扫描结果、连接或忘记成功详情及具体失败原因；配网成功后关闭 USB 数据串口，再以设备返回的 IP 启动 WebSocket 模式。
 
-Linux Monitor 在 USB 和 WebSocket 均未连接时默认立即执行一次同网段快速发现，之后每次扫描起点至少间隔 30 秒；任一传输连接成功后停止扫描。周期发现限制为 16 个并发连接和 `/24` 最大扫描范围，并严格按 TCP 端口开放、标准 WebSocket 升级、PV1 设备握手三阶段确认，关闭端口不会收到应用层探测数据。
+ESP32-S3 联网后默认每 2 秒向 `239.255.77.77:37856` 发送 UDP 组播公告，并同时发送局域网广播以兼容不转发组播的路由器。公告不包含 Wi-Fi 凭据；Monitor 使用数据报来源 IP 生成候选地址，并继续通过 PV1 握手确认设备身份。
 
-Windows 托盘的“设备管理 → 主动探测”会枚举所有启用网卡的 IPv4 局域网地址，以线程池探测 `8765` 端口并校验 `/pv1` 的标准 WebSocket 升级握手。候选服务还会经过 PV1 设备握手确认；确认成功后，连接地址保存到当前用户的 `settings.json`，以后启动时自动连接。连接成功、首次连接失败和已连接后断开都会产生托盘通知，相同失败状态不会重复通知。
+Linux Monitor 在 USB 和 WebSocket 均未连接时默认先监听 ESP32 主动公告，公告窗口内没有可连接设备时再执行同网段快速扫描兜底，之后每次发现起点至少间隔 30 秒；任一传输连接成功后停止发现。将配置文件中的 `network.discovery_strategy` 改为 `scan` 可跳过公告监听并直接使用原网段扫描。周期扫描限制为 16 个并发连接和 `/24` 最大扫描范围，并严格按 TCP 端口开放、标准 WebSocket 升级、PV1 设备握手三阶段确认。
+
+Windows 托盘的“设备管理 → 主动探测”默认先监听 ESP32 UDP 公告，超时后才枚举所有启用网卡的 IPv4 局域网地址并扫描；设置页面可切换为直接扫描本地网段。所有候选服务都会经过 PV1 设备握手确认；确认成功后，连接地址保存到当前用户的 `settings.json`，以后启动时优先直连。连接成功、首次连接失败和已连接后断开都会产生托盘通知，相同失败状态不会重复通知。
 
 ### Windows 受控 USB SDK 刷写
 

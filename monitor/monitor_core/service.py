@@ -16,7 +16,7 @@ import serial
 from collectTask import CollectionCoordinator, LockFreeSnapshotStore
 from custom_data import normalize_plugin_configs, normalize_plugin_enabled
 from pico_client import PicoJsonClient
-from net import LanWebSocketScanner
+from net import LanWebSocketScanner, UdpAnnouncementListener
 from qbittorrent_monitor import QbittorrentMonitor
 from system_monitor import SystemInformationCollector
 
@@ -56,6 +56,10 @@ class MonitorService(
             str(getattr(arguments, "websocket_client_name", "") or "").strip(),
             str(getattr(arguments, "websocket_client_id", "") or "").strip(),
             float(getattr(arguments, "serial_probe_interval", 0)),
+            str(getattr(arguments, "wifi_discovery_strategy", "announcement") or "announcement"),
+            int(getattr(arguments, "wifi_announcement_port", 37856)),
+            str(getattr(arguments, "wifi_announcement_group", "239.255.77.77")),
+            float(getattr(arguments, "wifi_announcement_timeout", 3.0)),
         )
 
     @staticmethod
@@ -156,6 +160,8 @@ class MonitorService(
             "lan_probe_port": int,
             "lan_probe_timeout": float,
             "lan_probe_max_workers": int,
+            "wifi_announcement_port": int,
+            "wifi_announcement_timeout": float,
             "qbittorrent_interval": float,
         }
         text_fields = (
@@ -165,6 +171,8 @@ class MonitorService(
             "websocket_client_id",
             "ping_target",
             "lan_probe_path",
+            "wifi_discovery_strategy",
+            "wifi_announcement_group",
             "qbittorrent_address",
             "qbittorrent_username",
             "qbittorrent_password",
@@ -181,6 +189,7 @@ class MonitorService(
             or updated.get("reconnect_interval", self.arguments.reconnect_interval) <= 0
             or updated.get("serial_probe_interval", self.arguments.serial_probe_interval) <= 0
             or updated.get("lan_probe_timeout", self.arguments.lan_probe_timeout) <= 0
+            or updated.get("wifi_announcement_timeout", self.arguments.wifi_announcement_timeout) <= 0
             or updated.get("qbittorrent_interval", self.arguments.qbittorrent_interval) <= 0
         ):
             raise ValueError("运行时配置中的时间间隔无效")
@@ -190,6 +199,16 @@ class MonitorService(
         )
         if not 1 <= lan_port <= 65535 or lan_workers <= 0:
             raise ValueError("局域网探测端口或并发数无效")
+        announcement_port = updated.get(
+            "wifi_announcement_port", self.arguments.wifi_announcement_port
+        )
+        discovery_strategy = updated.get(
+            "wifi_discovery_strategy", self.arguments.wifi_discovery_strategy
+        )
+        if not 1 <= announcement_port <= 65535:
+            raise ValueError("Wi-Fi 公告监听端口无效")
+        if discovery_strategy not in ("announcement", "scan"):
+            raise ValueError("Wi-Fi 发现策略无效")
         task_intervals = payload.get(
             "collection_task_intervals",
             self.arguments.collection_task_intervals,
@@ -477,28 +496,57 @@ class MonitorService(
             minimum_prefix_length=24,
         )
 
-    def _rediscover_websocket_device(self, fast=False, low_impact=False):
-        """扫描局域网候选地址，并通过 PV1 握手切换到可用 Wi-Fi 设备。"""
-        if self._force_usb_cdc_enabled():
-            return False
-        scanner = self._create_lan_scanner(fast=fast, low_impact=low_impact)
-        original_url = self.client.websocket_url
-        LOGGER.info("开始快速扫描局域网中的 Wi-Fi 设备")
-        try:
-            candidates = scanner.scan()
-        except (OSError, RuntimeError, ValueError) as error:
-            LOGGER.warning("重新扫描 Wi-Fi 设备失败：%s", error)
-            return False
+    def _create_announcement_listener(self, fast=False):
+        """创建 UDP 公告监听器；快速恢复时缩短等待窗口。"""
+        timeout = float(getattr(self.arguments, "wifi_announcement_timeout", 3.0))
+        if fast:
+            timeout = min(timeout, 1.0)
+        return UdpAnnouncementListener(
+            port=getattr(self.arguments, "wifi_announcement_port", 37856),
+            group=getattr(
+                self.arguments, "wifi_announcement_group", "239.255.77.77"
+            ),
+            timeout=timeout,
+        )
+
+    def _connect_websocket_candidates(self, candidates, source):
+        """逐个执行 PV1 握手确认，并保留首个可用的 Wi-Fi 候选。"""
         for candidate in candidates:
             self.client.websocket_url = candidate.url
             try:
                 self.client.connect()
             except (OSError, RuntimeError, serial.SerialException) as error:
-                LOGGER.info("Wi-Fi 候选设备确认失败：地址=%s，原因=%s", candidate.url, error)
+                LOGGER.info("%s候选设备确认失败：地址=%s，原因=%s", source, candidate.url, error)
                 self.client.close()
                 continue
-            LOGGER.info("重新扫描 Wi-Fi 设备成功：%s", candidate.url)
+            LOGGER.info("%s发现 Wi-Fi 设备成功：%s", source, candidate.url)
             self.arguments.websocket_url = candidate.url
+            return True
+        return False
+
+    def _rediscover_websocket_device(self, fast=False, low_impact=False):
+        """按配置监听公告或扫描网段，并通过 PV1 握手确认候选设备。"""
+        if self._force_usb_cdc_enabled():
+            return False
+        original_url = self.client.websocket_url
+        strategy = str(
+            getattr(self.arguments, "wifi_discovery_strategy", "scan") or "scan"
+        ).lower()
+        if strategy == "announcement":
+            LOGGER.info("开始监听 ESP32 UDP 组播/广播主动公告")
+            candidates = self._create_announcement_listener(fast=fast).listen()
+            if self._connect_websocket_candidates(candidates, "主动公告"):
+                return True
+            LOGGER.info("公告窗口内未发现可连接设备，切换为网段扫描兜底")
+        scanner = self._create_lan_scanner(fast=fast, low_impact=low_impact)
+        LOGGER.info("开始快速扫描局域网中的 Wi-Fi 设备")
+        try:
+            candidates = scanner.scan()
+        except (OSError, RuntimeError, ValueError) as error:
+            LOGGER.warning("重新扫描 Wi-Fi 设备失败：%s", error)
+            self.client.websocket_url = original_url
+            return False
+        if self._connect_websocket_candidates(candidates, "网段扫描"):
             return True
         self.client.websocket_url = original_url
         LOGGER.warning("重新扫描局域网未发现可连接的 Pico LCD")

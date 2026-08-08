@@ -32,6 +32,10 @@ def create_argument_parser(config=None):
     parser.set_defaults(force_usb_cdc=config_flag(config, "PICO_MONITOR_FORCE_USB_CDC", False))
     parser.add_argument("--websocket-client-name", default=config_value(config, "PICO_MONITOR_WEBSOCKET_CLIENT_NAME") or None, help="WebSocket 握手携带的本机设备名称")
     parser.add_argument("--websocket-client-id", default=config_value(config, "PICO_MONITOR_WEBSOCKET_CLIENT_ID") or None, help="WebSocket 客户端稳定标识；留空时根据设备名称和网卡标识生成")
+    parser.add_argument("--wifi-discovery-strategy", choices=("announcement", "scan"), default=config_value(config, "PICO_MONITOR_WIFI_DISCOVERY_STRATEGY", "announcement"), help="Wi-Fi 发现策略：announcement 优先监听 ESP32 UDP 组播/广播公告并以网段扫描兜底，scan 直接扫描网段")
+    parser.add_argument("--wifi-announcement-port", type=int, default=int(config_value(config, "PICO_MONITOR_WIFI_ANNOUNCEMENT_PORT", "37856")), help="ESP32 UDP 主动公告监听端口")
+    parser.add_argument("--wifi-announcement-group", default=config_value(config, "PICO_MONITOR_WIFI_ANNOUNCEMENT_GROUP", "239.255.77.77"), help="ESP32 UDP 主动公告组播地址")
+    parser.add_argument("--wifi-announcement-timeout", type=float, default=float(config_value(config, "PICO_MONITOR_WIFI_ANNOUNCEMENT_TIMEOUT", "3.0")), help="等待 ESP32 主动公告的最长秒数，超时后使用网段扫描兜底")
     parser.add_argument("--ping-target", default=config_value(config, "PICO_MONITOR_PING_TARGET", "www.baidu.com"), help="网络延迟检测目标")
     parser.add_argument("--interval", type=float, default=float(config_value(config, "PICO_MONITOR_INTERVAL", "0.5")), help="采集和发送间隔，单位为秒")
     adaptive_group = parser.add_mutually_exclusive_group()
@@ -108,6 +112,8 @@ def validate_arguments(arguments):
     if (arguments.interval < 0.3 or arguments.reconnect_interval <= 0
             or arguments.serial_probe_interval <= 0
             or arguments.lan_probe_timeout <= 0
+            or arguments.wifi_announcement_timeout <= 0
+            or not 1 <= arguments.wifi_announcement_port <= 65535
             or not 1 <= arguments.lan_probe_port <= 65535
             or arguments.lan_probe_max_workers <= 0
             or arguments.qbittorrent_interval <= 0

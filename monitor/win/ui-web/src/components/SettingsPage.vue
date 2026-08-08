@@ -174,6 +174,12 @@ function isActionRunning(panel, item) {
           <el-form-item label="JSON 发送间隔（秒）"><el-input-number v-model="settings.interval" :min="0.3" :step="0.1" /></el-form-item>
           <el-form-item label="重连间隔（秒）"><el-input-number v-model="settings.reconnect_interval" :min="0.1" :step="0.5" /></el-form-item>
           <el-form-item label="串口探测间隔（秒）"><el-input-number v-model="settings.serial_probe_interval" :min="0.1" :step="0.5" /></el-form-item>
+          <el-form-item label="Wi-Fi 设备发现">
+            <el-select v-model="settings.wifi_discovery_strategy">
+              <el-option value="announcement" label="ESP32 UDP 组播公告（推荐，扫描兜底）" />
+              <el-option value="scan" label="直接扫描本地网段" />
+            </el-select>
+          </el-form-item>
         </div>
         <el-switch v-model="settings.adaptive_transmit" active-text="自适应发送" />
         <el-switch v-model="settings.collection_task_logs" active-text="采集任务日志" class="switch-gap" />

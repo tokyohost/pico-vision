@@ -34,6 +34,7 @@ ESP32_ONLY_FILES = frozenset((
     "command/wifi_forget.py",
     "net/websocket.py",
     "net/wifi.py",
+    "net/discovery.py",
 ))
 DEVICE_EXCLUDED_PREFIXES = ("fonts/",)
 

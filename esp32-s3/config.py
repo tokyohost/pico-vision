@@ -109,6 +109,11 @@ WIFI_ENABLED = True
 # Wi-Fi WebSocket 服务参数；Monitor 默认连接 ws://设备IP:8765/pv1。
 WEBSOCKET_PORT = 8765
 WEBSOCKET_PATH = "/pv1"
+# ESP32 主动发现公告参数：同时发送 UDP 组播与受限广播。
+WIFI_DISCOVERY_ANNOUNCEMENT_ENABLED = True
+WIFI_DISCOVERY_PORT = 37856
+WIFI_DISCOVERY_MULTICAST_GROUP = "239.255.77.77"
+WIFI_DISCOVERY_INTERVAL_MS = 2000
 # 连续缺失多少个 Monitor 采集周期后返回系统启动等待页。
 MONITOR_TIMEOUT_INTERVALS = 10
 # 每接收多少份 Monitor 快照，使用主机时间重新校准一次本地推进基准。
@@ -141,6 +146,10 @@ def _load_runtime_configuration():
         return
     allowed = {
         "WIFI_ENABLED": bool,
+        "WIFI_DISCOVERY_ANNOUNCEMENT_ENABLED": bool,
+        "WIFI_DISCOVERY_PORT": int,
+        "WIFI_DISCOVERY_MULTICAST_GROUP": str,
+        "WIFI_DISCOVERY_INTERVAL_MS": int,
         "LCD_STYLE": str,
         "LCD_TRANSFER_BACKEND": str,
         "RENDER_FRAME_POLICY": str,

@@ -12,12 +12,19 @@ class TransportManager:
         wifi_enabled=True,
         websocket_port=8765,
         websocket_path="/pv1",
+        discovery_enabled=True,
+        discovery_port=37856,
+        discovery_group="239.255.77.77",
+        discovery_interval_ms=2000,
+        device_id="",
+        board_model="ESP32-S3",
     ):
         """根据开关创建 USB 和可选 Wi-Fi 候选传输策略。"""
         self.wifi_enabled = bool(wifi_enabled)
         self.wifi = None
         self._usb_transport = None
         self._wifi_transport = None
+        self._discovery_announcer = None
         self._strategies = []
         if usb_stream is not None:
             self._usb_transport = UsbCdcTransport(usb_stream)
@@ -25,6 +32,7 @@ class TransportManager:
         if self.wifi_enabled:
             from net.websocket import WebSocketTransport
             from net.wifi import WifiManager
+            from net.discovery import UdpDiscoveryAnnouncer
 
             self.wifi = WifiManager()
             self._wifi_transport = WebSocketTransport(
@@ -33,10 +41,24 @@ class TransportManager:
                 path=websocket_path,
             )
             self._strategies.append(self._wifi_transport)
+            if discovery_enabled:
+                self._discovery_announcer = UdpDiscoveryAnnouncer(
+                    self.wifi,
+                    websocket_port,
+                    websocket_path,
+                    device_id=device_id,
+                    board_model=board_model,
+                    discovery_port=discovery_port,
+                    multicast_group=discovery_group,
+                    interval_ms=discovery_interval_ms,
+                )
         self._active = None
 
     def _update_selection(self):
         """优先选择 USB；USB 断开后才推进并选择 WebSocket。"""
+        discovery_announcer = getattr(self, "_discovery_announcer", None)
+        if discovery_announcer is not None:
+            discovery_announcer.update()
         if self._usb_transport is not None:
             self._usb_transport.update()
             if self._usb_transport.is_connected():
@@ -136,4 +158,7 @@ class TransportManager:
         """关闭全部候选传输策略。"""
         for strategy in self._strategies:
             strategy.close()
+        discovery_announcer = getattr(self, "_discovery_announcer", None)
+        if discovery_announcer is not None:
+            discovery_announcer.close()
         self._active = None

@@ -1424,6 +1424,68 @@ class PicoClientTest(unittest.TestCase):
         )
         service.client.connect.assert_called_once_with()
 
+    @mock.patch("monitor_core.service.LanWebSocketScanner")
+    @mock.patch("monitor_core.service.UdpAnnouncementListener")
+    def test_default_announcement_strategy_connects_without_network_scan(
+        self, listener_class, scanner_class
+    ):
+        """主动公告候选通过 PV1 握手后不得继续扫描整个网段。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(
+            websocket_url="",
+            wifi_discovery_strategy="announcement",
+            wifi_announcement_port=37856,
+            wifi_announcement_group="239.255.77.77",
+            wifi_announcement_timeout=3.0,
+            force_usb_cdc=False,
+        )
+        service.client = mock.Mock()
+        service.client.websocket_url = None
+        listener_class.return_value.listen.return_value = [
+            SimpleNamespace(url="ws://192.168.0.224:8765/pv1")
+        ]
+
+        self.assertTrue(service._rediscover_websocket_device())
+
+        listener_class.assert_called_once_with(
+            port=37856,
+            group="239.255.77.77",
+            timeout=3.0,
+        )
+        scanner_class.assert_not_called()
+        self.assertEqual(
+            "ws://192.168.0.224:8765/pv1", service.arguments.websocket_url
+        )
+
+    @mock.patch("monitor_core.service.LanWebSocketScanner")
+    @mock.patch("monitor_core.service.UdpAnnouncementListener")
+    def test_announcement_timeout_falls_back_to_network_scan(
+        self, listener_class, scanner_class
+    ):
+        """公告窗口没有设备时应继续使用原有网段扫描策略兜底。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(
+            websocket_url="",
+            wifi_discovery_strategy="announcement",
+            wifi_announcement_port=37856,
+            wifi_announcement_group="239.255.77.77",
+            wifi_announcement_timeout=3.0,
+            lan_probe_port=8765,
+            lan_probe_path="/pv1",
+            lan_probe_timeout=0.3,
+            lan_probe_max_workers=32,
+            force_usb_cdc=False,
+        )
+        service.client = mock.Mock()
+        service.client.websocket_url = None
+        listener_class.return_value.listen.return_value = []
+        scanner_class.return_value.scan.return_value = []
+
+        self.assertFalse(service._rediscover_websocket_device())
+
+        listener_class.return_value.listen.assert_called_once_with()
+        scanner_class.return_value.scan.assert_called_once_with()
+
     @mock.patch("monitor_core.service.time.monotonic")
     def test_windows_websocket_recovery_uses_five_and_ten_second_cadence(self, monotonic):
         """确认 Windows 断线恢复每五秒探测原地址，并每十秒快速扫描网段。"""

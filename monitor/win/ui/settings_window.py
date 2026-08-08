@@ -153,6 +153,10 @@ class SettingsWindowMixin:
             "collection_task_logs": tk.BooleanVar(master=root, value=bool(self.settings.get("collection_task_logs", True))),
             "reconnect_interval": tk.StringVar(master=root, value=self.settings["reconnect_interval"]),
             "serial_probe_interval": tk.StringVar(master=root, value=self.settings["serial_probe_interval"]),
+            "wifi_discovery_strategy": tk.StringVar(
+                master=root,
+                value=self.settings.get("wifi_discovery_strategy", "announcement"),
+            ),
             "screen_rotation": tk.StringVar(master=root, value=str(self.settings["screen_rotation"])),
             "lcd_brightness": tk.IntVar(master=root, value=self.settings["lcd_brightness"]),
             "network_unit": tk.StringVar(master=root, value=self.settings["network_unit"]),
@@ -322,6 +326,17 @@ class SettingsWindowMixin:
         field(monitor, 4, "重连间隔（秒）", ttk.Entry(monitor, textvariable=variables["reconnect_interval"]))
         field(monitor, 5, "串口探测 PING 间隔（秒）", ttk.Entry(monitor, textvariable=variables["serial_probe_interval"]))
         field(monitor, 6, "WebSocket 客户端名称", ttk.Entry(monitor, textvariable=variables["websocket_client_name"]))
+        field(
+            monitor,
+            7,
+            "Wi-Fi 设备发现",
+            ttk.Combobox(
+                monitor,
+                textvariable=variables["wifi_discovery_strategy"],
+                values=("announcement", "scan"),
+                state="readonly",
+            ),
+        )
 
         collection_tasks = card("系统采集任务")
         collection_task_logs_control = ttk.Checkbutton(
@@ -442,6 +457,7 @@ class SettingsWindowMixin:
                     "adaptive_transmit": bool(variables["adaptive_transmit"].get()),
                     "reconnect_interval": float(variables["reconnect_interval"].get()),
                     "serial_probe_interval": float(variables["serial_probe_interval"].get()),
+                    "wifi_discovery_strategy": variables["wifi_discovery_strategy"].get(),
                     "collection_task_intervals": collection_task_intervals,
                     "collection_task_logs": bool(variables["collection_task_logs"].get()),
                     "screen_rotation": int(variables["screen_rotation"].get()),

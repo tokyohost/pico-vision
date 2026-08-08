@@ -93,6 +93,11 @@ class SettingsApiMixin:
         updated["lcd_brightness"] = int(updated["lcd_brightness"])
         updated["adaptive_transmit"] = bool(updated["adaptive_transmit"])
         updated["force_usb_cdc"] = bool(updated.get("force_usb_cdc", False))
+        updated["wifi_discovery_strategy"] = str(
+            updated.get("wifi_discovery_strategy") or "announcement"
+        ).strip().lower()
+        if updated["wifi_discovery_strategy"] not in ("announcement", "scan"):
+            raise ValueError("Wi-Fi 发现策略无效")
         updated["collection_task_logs"] = bool(updated["collection_task_logs"])
         updated["qbittorrent_enabled"] = bool(updated["qbittorrent_enabled"])
         updated["market_url"] = str(updated.get("market_url") or "").strip()

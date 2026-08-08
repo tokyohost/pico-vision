@@ -45,6 +45,10 @@ DEFAULT_SETTINGS = {
     "force_usb_cdc": False,
     "websocket_client_name": platform.node() or "Monitor",
     "websocket_client_id": "{}-{:012x}".format(platform.node() or "Monitor", uuid.getnode()),
+    "wifi_discovery_strategy": "announcement",
+    "wifi_announcement_port": 37856,
+    "wifi_announcement_group": "239.255.77.77",
+    "wifi_announcement_timeout": 3.0,
     "ping_target": "www.baidu.com",
     "interval": 0.5,
     "adaptive_transmit": True,
@@ -82,6 +86,10 @@ ARGUMENT_NAMES = {
     "--websocket-url": "websocket_url",
     "--websocket-client-name": "websocket_client_name",
     "--websocket-client-id": "websocket_client_id",
+    "--wifi-discovery-strategy": "wifi_discovery_strategy",
+    "--wifi-announcement-port": "wifi_announcement_port",
+    "--wifi-announcement-group": "wifi_announcement_group",
+    "--wifi-announcement-timeout": "wifi_announcement_timeout",
     "--ping-target": "ping_target",
     "--interval": "interval",
     "--reconnect-interval": "reconnect_interval",
@@ -214,6 +222,33 @@ class TraySettingsStore:
             settings["lcd_brightness"] = DEFAULT_SETTINGS["lcd_brightness"]
         settings["adaptive_transmit"] = bool(settings.get("adaptive_transmit", True))
         settings["force_usb_cdc"] = bool(settings.get("force_usb_cdc", False))
+        discovery_strategy = str(
+            settings.get("wifi_discovery_strategy") or "announcement"
+        ).strip().lower()
+        settings["wifi_discovery_strategy"] = (
+            discovery_strategy
+            if discovery_strategy in ("announcement", "scan")
+            else "announcement"
+        )
+        settings["wifi_announcement_group"] = str(
+            settings.get("wifi_announcement_group") or "239.255.77.77"
+        ).strip()
+        try:
+            settings["wifi_announcement_port"] = int(
+                settings.get("wifi_announcement_port", 37856)
+            )
+            if not 1 <= settings["wifi_announcement_port"] <= 65535:
+                raise ValueError
+        except (TypeError, ValueError):
+            settings["wifi_announcement_port"] = 37856
+        try:
+            settings["wifi_announcement_timeout"] = float(
+                settings.get("wifi_announcement_timeout", 3.0)
+            )
+            if settings["wifi_announcement_timeout"] <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            settings["wifi_announcement_timeout"] = 3.0
         settings["websocket_client_name"] = str(
             settings.get("websocket_client_name") or DEFAULT_SETTINGS["websocket_client_name"]
         ).strip()[:64]
@@ -317,6 +352,7 @@ def settings_from_arguments(arguments, base=None):
     converters = {
         "interval": float, "reconnect_interval": float, "serial_probe_interval": float,
         "lan_probe_port": int, "lan_probe_timeout": float, "lan_probe_max_workers": int,
+        "wifi_announcement_port": int, "wifi_announcement_timeout": float,
         "screen_rotation": int, "lcd_brightness": int, "idle_timeout": int,
         "qbittorrent_interval": float,
         "collection_task_intervals": lambda value: normalize_collection_task_intervals(json.loads(value)),
