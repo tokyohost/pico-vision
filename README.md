@@ -34,7 +34,7 @@
 - `fonts/`：SDK 内置文泉驿点阵正黑和 Fusion Pixel 双语字模的授权说明。
 
 Pico 握手会向 Monitor 返回当前开发板型号、屏幕色彩方案、运行固件版本和 `net` 状态；ESP32-S3 还会返回由 eFuse MAC 经 SHA-256 派生的稳定 `device_id`，设备管理页面以 UUID 形式展示且不暴露原始 MAC。USB 模式返回 `mode=usb`，Wi-Fi 模式还返回 SSID、IP、网关、RSSI、WebSocket 端口与路径。源码
-直接部署时版本为 `development`，发布升级包会自动写入对应的发布版本。
+直接部署时版本为 `development`，发布全量固件包会自动写入对应的发布版本。
 
 开发板型号和 Wi-Fi 开关由 `picoRP2040/config.py` 配置。例如 ESP32-S3 开启 Wi-Fi：
 
@@ -101,9 +101,11 @@ ESP32-S3 默认以 10 MHz 驱动屏幕，并将不接屏幕的 MISO 显式分配
 
 旧配置名 `st7789_2inch` 仍可使用，并会自动映射到 `st7789vw_2inch`。
 
-GitHub Actions 会按照全部开发板型号与规范 LCD 设备类型的笛卡尔积生成升级包，
-文件名格式为 `OmniWatch-pico-upgrade-v<版本>-<开发板型号>-<LCD设备类型>.zip`。无型号后缀的
-兼容包固定对应 `rp2040_usb` 与 `st7789-2inch-8pin-a`，其他硬件不可混用该兼容包。
+GitHub Actions 会按照全部开发板型号与规范 LCD 设备类型的笛卡尔积生成全量固件包，
+文件名格式为 `OmniWatch-pico-full-v<版本>-<开发板型号>-<LCD设备类型>.zip`。包内直接保存
+完整部署目录，不再包含 upgrade 清单。Windows Monitor 解压后通过 mpremote 比较设备端文件的
+大小和 SHA-256，只复制缺失或内容不一致的文件。无型号后缀的兼容包固定对应
+`rp2040_usb` 与 `st7789-2inch-8pin-a`，其他硬件不可混用该兼容包。
 
 ## 通信协议
 

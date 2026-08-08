@@ -54,7 +54,7 @@ class UpdateApiMixin:
             )
             board_model = str(connection.get("board_model") or "").strip()
             lcd_type = str(connection.get("lcd_device_type") or "").strip()
-            asset_name = "OmniWatch-pico-upgrade-v{}-{}-{}.zip".format(
+            asset_name = "OmniWatch-pico-full-v{}-{}-{}.zip".format(
                 latest_version, board_model, lcd_type,
             )
             asset = self._find_release_asset(assets, asset_name)
@@ -127,7 +127,7 @@ class UpdateApiMixin:
         raise ValueError("不支持的更新检查类别：{}".format(category))
 
     def _run_firmware_release_update(self, updater, asset, latest_version, port):
-        """下载并安装设备固件发布包，结束后恢复常驻监控。"""
+        """下载并增量安装设备全量固件包，结束后恢复常驻监控。"""
         package_path = None
         try:
             self._set_update_state(
@@ -143,7 +143,7 @@ class UpdateApiMixin:
                 progress = None if percent is None else 50 + int(percent * 0.45)
                 self._set_update_state("firmware", "running", progress, message)
 
-            self._application._upgrade_pico_from_package(
+            self._application._install_pico_firmware_archive(
                 package_path, port, report_progress
             )
             self._set_update_state(
@@ -250,7 +250,7 @@ class UpdateApiMixin:
                     raise RuntimeError("设备固件已是最新版本")
                 board_model = str(connection.get("board_model") or "").strip()
                 lcd_type = str(connection.get("lcd_device_type") or "").strip()
-                asset_name = "OmniWatch-pico-upgrade-v{}-{}-{}.zip".format(
+                asset_name = "OmniWatch-pico-full-v{}-{}-{}.zip".format(
                     latest_version, board_model, lcd_type,
                 )
                 asset = self._find_release_asset(assets, asset_name)

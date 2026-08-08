@@ -49,6 +49,7 @@ class MpremoteStreamCopyTest(unittest.TestCase):
                 "/same.py": copier._local_fingerprint(same_file),
                 "/changed.py": (3, hashlib.sha256(b"old").hexdigest()),
             }
+            output = io.StringIO()
             with mock.patch.object(copier, "_check_environment"), mock.patch.object(
                 copier,
                 "_prepare_remote_directories",
@@ -56,9 +57,7 @@ class MpremoteStreamCopyTest(unittest.TestCase):
                 copier,
                 "_read_remote_manifest",
                 return_value=remote_manifest,
-            ), mock.patch.object(copier, "_run_mpremote") as run_mpremote, contextlib.redirect_stdout(
-                io.StringIO()
-            ):
+            ), mock.patch.object(copier, "_run_mpremote") as run_mpremote, contextlib.redirect_stdout(output):
                 copier.copy()
 
         copy_calls = [
@@ -69,6 +68,8 @@ class MpremoteStreamCopyTest(unittest.TestCase):
         self.assertEqual(1, len(copy_calls))
         self.assertEqual(":/changed.py", copy_calls[0].args[0][-1])
         self.assertEqual(["reset"], run_mpremote.call_args_list[-1].args[0])
+        self.assertIn("跳过：设备端大小和 SHA-256 一致", output.getvalue())
+        self.assertIn("上传原因：设备端大小或 SHA-256 不一致", output.getvalue())
 
     def test_force_mode_uploads_every_file_without_remote_manifest(self):
         """强制模式应跳过远端校验并上传全部本地文件。"""
@@ -85,11 +86,15 @@ class MpremoteStreamCopyTest(unittest.TestCase):
                 "_read_remote_manifest",
             ) as read_manifest, mock.patch.object(
                 copier,
+                "_local_fingerprint",
+            ) as local_fingerprint, mock.patch.object(
+                copier,
                 "_run_mpremote",
             ) as run_mpremote, contextlib.redirect_stdout(io.StringIO()):
                 copier.copy(force=True, restart=False)
 
         read_manifest.assert_not_called()
+        local_fingerprint.assert_not_called()
         self.assertEqual(2, run_mpremote.call_count)
         self.assertTrue(all(
             call.args[0][:2] == ["fs", "cp"]

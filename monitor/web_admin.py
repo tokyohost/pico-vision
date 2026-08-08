@@ -13,6 +13,7 @@ from aiohttp import WSMsgType, web
 LOGGER = logging.getLogger("pico-monitor.http")
 DEFAULT_HTTP_PORT = 9876
 HTTP_UNSUPPORTED_ACTIONS = {
+    "device.firmware.select": "HTTP 页面不支持服务器本地固件选择",
     "device.firmware.updateLocal": "HTTP 页面不支持服务器本地固件选择",
     "device.sdk.select": "HTTP 页面不支持服务器本地镜像选择",
     "log.export": "HTTP 页面不支持原生文件保存对话框",

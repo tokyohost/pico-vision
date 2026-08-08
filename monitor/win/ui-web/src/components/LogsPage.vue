@@ -2,6 +2,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '../bridge'
+import CopyableLog from './CopyableLog.vue'
 
 const logs = ref('')
 const loading = ref(false)
@@ -23,7 +24,7 @@ async function loadLogs(silent = false) {
     logs.value = result.content || ''
     await nextTick()
     if (followLatest.value && logView.value) {
-      logView.value.scrollTop = logView.value.scrollHeight
+      logView.value.scrollToBottom()
     }
   } catch (error) {
     if (!silent) ElMessage.error(error?.message || String(error))
@@ -39,7 +40,7 @@ async function loadLogs(silent = false) {
 function updateFollowState() {
   const view = logView.value
   if (!view) return
-  followLatest.value = view.scrollHeight - view.scrollTop - view.clientHeight < 32
+  followLatest.value = view.isNearBottom()
 }
 
 /**
@@ -48,18 +49,6 @@ function updateFollowState() {
 function toggleAutoRefresh() {
   autoRefresh.value = !autoRefresh.value
   if (autoRefresh.value) loadLogs(true)
-}
-
-/**
- * 复制全部运行日志。
- */
-async function copyLogs() {
-  try {
-    await navigator.clipboard.writeText(logs.value)
-    ElMessage.success('日志已复制')
-  } catch (error) {
-    ElMessage.error(error?.message || '复制日志失败')
-  }
 }
 
 /**
@@ -109,9 +98,14 @@ onBeforeUnmount(() => {
     <el-tag :type="followLatest ? 'success' : 'warning'" effect="plain">
       {{ followLatest ? '跟随最新' : '已暂停滚动' }}
     </el-tag>
-    <el-button @click="copyLogs">复制全部</el-button>
     <el-button @click="exportLogs">导出日志</el-button>
     <el-button type="danger" plain @click="clearLogs">清空日志</el-button>
   </div>
-  <pre ref="logView" class="terminal log-view" @scroll="updateFollowState">{{ logs || '暂无日志' }}</pre>
+  <CopyableLog
+    ref="logView"
+    :content="logs"
+    pre-class="terminal log-view"
+    copy-success-text="运行日志已复制"
+    @scroll="updateFollowState"
+  />
 </template>

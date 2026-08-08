@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '../bridge'
+import CopyableLog from './CopyableLog.vue'
 
 const props = defineProps({
   device: { type: Object, required: true },
@@ -140,7 +141,7 @@ async function refreshUpdateStatus() {
     }
     await nextTick()
     for (const element of Object.values(logElements)) {
-      element.scrollTop = element.scrollHeight
+      element.scrollToBottom()
     }
   } catch {
     // 短暂的桥接失败不打断更新，下一轮轮询会继续同步。
@@ -252,11 +253,13 @@ onBeforeUnmount(() => {
           :status="checks[item.key].status === 'success' ? 'success' : checks[item.key].status === 'error' ? 'exception' : ''"
           :stroke-width="10"
         />
-        <pre
+        <CopyableLog
           v-if="checks[item.key].logs"
           :ref="(element) => setLogElement(item.key, element)"
-          class="update-live-log"
-        >{{ checks[item.key].logs }}</pre>
+          :content="checks[item.key].logs"
+          pre-class="update-live-log"
+          copy-success-text="更新日志已复制"
+        />
       </div>
     </el-card>
   </div>

@@ -8,6 +8,7 @@ function installHttpBridge() {
 
   const authStorageKey = 'omniwatch.http.auth'
   const unsupportedActions = new Map([
+    ['device.firmware.select', 'HTTP 页面不支持服务器本地固件选择'],
     ['device.firmware.updateLocal', 'HTTP 页面不支持服务器本地固件选择'],
     ['device.sdk.select', 'HTTP 页面不支持服务器本地镜像选择'],
     ['log.export', 'HTTP 页面不支持原生文件保存对话框'],

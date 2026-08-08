@@ -14,10 +14,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from zipfile import BadZipFile, ZipFile
 
 from serial.tools import list_ports
 from build_info import MONITOR_VERSION
+from pico_upgrade import PicoFirmwareArchive
 from sdk_flash import (
     inspect_sdk_image,
     is_espressif_usb_port,
@@ -231,38 +231,120 @@ class DeviceApiMixin:
 
     @staticmethod
     def _validate_firmware_package(path):
-        """校验本地固件升级包是可读取且非空的 ZIP 文件。"""
+        """校验本地固件全量包是安全、可读取且非空的 ZIP 文件。"""
+        if not str(path or "").strip():
+            raise ValueError("请先选择设备固件全量包")
         package_path = Path(path)
         if package_path.suffix.lower() != ".zip":
-            raise ValueError("请选择 ZIP 格式的设备固件升级包")
-        try:
-            with ZipFile(package_path, "r") as package:
-                files = [item for item in package.infolist() if not item.is_dir()]
-                if not files:
-                    raise ValueError("固件升级包为空")
-                damaged_file = package.testzip()
-                if damaged_file:
-                    raise ValueError("固件升级包文件损坏：{}".format(damaged_file))
-        except BadZipFile as error:
-            raise ValueError("所选文件不是有效的固件升级包") from error
+            raise ValueError("请选择 ZIP 格式的设备固件全量包")
+        package = PicoFirmwareArchive(package_path)
+        package.close()
         return package_path
 
-    def _run_local_firmware_update(self, package_path, port):
-        """在后台安装用户选择的本地固件包并恢复常驻监控。"""
+    def _select_firmware_package(self, payload):
+        """选择并校验待写入设备的本地全量固件包。"""
+        del payload
+        path = self._select_file(FIRMWARE_PACKAGE_FILE_TYPES)
+        if not path:
+            return {"cancelled": True}
+        package_path = self._validate_firmware_package(path)
+        package = PicoFirmwareArchive(package_path)
         try:
+            file_count = len(package.files)
+        finally:
+            package.close()
+        return {
+            "cancelled": False,
+            "package": {
+                "path": str(package_path),
+                "name": package_path.name,
+                "fileCount": file_count,
+            },
+        }
+
+    @staticmethod
+    def _serial_port_payload(port):
+        """将 pyserial 串口描述转换为前端可显示的稳定结构。"""
+        device = str(getattr(port, "device", "") or "").strip()
+        vid = getattr(port, "vid", None)
+        pid = getattr(port, "pid", None)
+        identity = (
+            "VID:{:04X} PID:{:04X}".format(vid, pid)
+            if vid is not None and pid is not None
+            else "VID/PID 未知"
+        )
+        return {
+            "device": device,
+            "label": "{} - {} ({})".format(
+                device,
+                str(getattr(port, "description", "") or "未知设备").strip(),
+                identity,
+            ),
+        }
+
+    def _firmware_ports(self, payload):
+        """返回固件更新可选择的串口及当前设备对应的推荐 REPL 串口。"""
+        del payload
+        available = tuple(list_ports.comports())
+        ports = [
+            self._serial_port_payload(port)
+            for port in available
+            if str(getattr(port, "device", "") or "").strip()
+        ]
+        recommended_port = ""
+        connection = self._application._get_device_connection()
+        if connection.get("connected"):
+            try:
+                recommended_port = self._application._mpremote_repl_port(
+                    connection, available
+                )
+            except RuntimeError:
+                recommended_port = ""
+        return {"ports": ports, "recommendedPort": recommended_port}
+
+    @staticmethod
+    def _validate_selected_firmware_port(selected_port):
+        """确认用户选择的固件更新串口仍然存在，并返回规范设备名。"""
+        requested = str(selected_port or "").strip()
+        if not requested:
+            raise ValueError("请选择固件更新目标串口")
+        available = {
+            str(getattr(port, "device", "") or "").strip().upper():
+            str(getattr(port, "device", "") or "").strip()
+            for port in list_ports.comports()
+            if str(getattr(port, "device", "") or "").strip()
+        }
+        port = available.get(requested.upper())
+        if not port:
+            raise RuntimeError("所选固件更新串口已断开：{}".format(requested))
+        return port
+
+    def _run_local_firmware_update(self, package_path, port, force):
+        """在后台按所选模式安装本地固件包并恢复常驻监控。"""
+        try:
+            mode = "全量覆盖" if force else "SHA-256 增量"
             self._set_update_state(
-                "firmware", "running", 20, "本地固件包校验完成，正在暂停监控", True
+                "firmware",
+                "running",
+                20,
+                "本地固件包校验完成，更新模式：{}，正在暂停监控".format(mode),
+                True,
             )
             self._application._stop_worker()
-            self._set_update_state("firmware", "running", 50, "正在通过 mpremote 更新设备固件")
+            self._set_update_state(
+                "firmware",
+                "running",
+                50,
+                "正在通过 mpremote {}设备固件".format(mode),
+            )
 
             def report_progress(message, percent):
                 """把 mpremote 输出同步到本地固件更新日志。"""
                 progress = None if percent is None else 50 + int(percent * 0.45)
                 self._set_update_state("firmware", "running", progress, message)
 
-            self._application._upgrade_pico_from_package(
-                package_path, port, report_progress
+            self._application._install_pico_firmware_archive(
+                package_path, port, report_progress, force=force
             )
             self._set_update_state(
                 "firmware", "success", 100, "本地设备固件更新完成，正在重新连接设备"
@@ -291,17 +373,11 @@ class DeviceApiMixin:
             finally:
                 self._application.update_lock.release()
 
-    def _select_and_update_firmware(self, payload):
-        """选择本地固件升级包并立即启动设备固件更新任务。"""
-        del payload
-        connection = self._application._get_device_connection()
-        if not connection.get("connected"):
-            raise RuntimeError("设备未连接，无法更新本地固件")
-        port = self._application._mpremote_repl_port(connection)
-        path = self._select_file(FIRMWARE_PACKAGE_FILE_TYPES)
-        if not path:
-            return {"cancelled": True, "started": False}
-        package_path = self._validate_firmware_package(path)
+    def _start_local_firmware_update(self, payload):
+        """使用用户选择的固件包、串口和更新模式启动后台任务。"""
+        package_path = self._validate_firmware_package(payload.get("packagePath"))
+        port = self._validate_selected_firmware_port(payload.get("port"))
+        force = bool(payload.get("force"))
         if not self._application.update_lock.acquire(blocking=False):
             raise RuntimeError("已有更新任务正在执行，请稍候")
         try:
@@ -310,7 +386,7 @@ class DeviceApiMixin:
             )
             threading.Thread(
                 target=self._run_local_firmware_update,
-                args=(package_path, port),
+                args=(package_path, port, force),
                 name="Web 本地固件更新",
                 daemon=True,
             ).start()
@@ -318,9 +394,10 @@ class DeviceApiMixin:
             self._application.update_lock.release()
             raise
         return {
-            "cancelled": False,
             "started": True,
             "packageName": package_path.name,
+            "port": port,
+            "force": force,
         }
 
     @staticmethod
@@ -402,21 +479,7 @@ class DeviceApiMixin:
             device = str(getattr(port, "device", "") or "").strip()
             if not device:
                 continue
-            vid = getattr(port, "vid", None)
-            pid = getattr(port, "pid", None)
-            identity = (
-                "VID:{:04X} PID:{:04X}".format(vid, pid)
-                if vid is not None and pid is not None
-                else "VID/PID 未知"
-            )
-            ports.append({
-                "device": device,
-                "label": "{} - {} ({})".format(
-                    device,
-                    str(getattr(port, "description", "") or "未知设备").strip(),
-                    identity,
-                ),
-            })
+            ports.append(self._serial_port_payload(port))
         return {"ports": ports}
 
     def _sdk_status(self, payload):

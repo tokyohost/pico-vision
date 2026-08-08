@@ -38,7 +38,7 @@ class WindowsReleaseUpdaterTest(unittest.TestCase):
         """确认按进程位数和版本选择两个更新资源。"""
         assets = [
             {"name": "OmniWatch-windows-x64-setup-v1.1.0.exe"},
-            {"name": "OmniWatch-pico-upgrade-v1.1.0.zip"},
+            {"name": "OmniWatch-pico-full-v1.1.0.zip"},
         ]
         updater = WindowsReleaseUpdater("owner/repository", "1.0.0")
         with mock.patch("windows_update.platform.architecture", return_value=("64bit", "WindowsPE")):
@@ -47,13 +47,13 @@ class WindowsReleaseUpdaterTest(unittest.TestCase):
                 updater.select_monitor_asset(assets, "1.1.0")["name"],
             )
         self.assertEqual(
-            "OmniWatch-pico-upgrade-v1.1.0.zip",
+            "OmniWatch-pico-full-v1.1.0.zip",
             updater.select_pico_asset(assets, "1.1.0")["name"],
         )
 
     def test_selects_device_specific_pico_asset(self):
         """确认联合更新不会把默认屏幕固件写入其他硬件组合。"""
-        name = "OmniWatch-pico-upgrade-v1.1.0-esp32-s3-st7789-2.4inch-10pin-a.zip"
+        name = "OmniWatch-pico-full-v1.1.0-esp32-s3-st7789-2.4inch-10pin-a.zip"
         updater = WindowsReleaseUpdater("owner/repository", "1.0.0")
 
         selected = updater.select_pico_asset(

@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '../bridge'
+import CopyableLog from './CopyableLog.vue'
 
 const props = defineProps({
   device: { type: Object, required: true },
@@ -26,6 +27,10 @@ const firmware = reactive({
   status: 'idle',
   message: '',
   progress: 0,
+  package: null,
+  ports: [],
+  selectedPort: '',
+  force: false,
 })
 const sdkLogView = ref(null)
 const deviceLogView = ref(null)
@@ -162,7 +167,7 @@ function saveConnectionPolicy() {
 async function refreshRuntimeState(showError = false) {
   try {
     const shouldFollowDeviceLog = !deviceLogView.value
-      || deviceLogView.value.scrollHeight - deviceLogView.value.scrollTop - deviceLogView.value.clientHeight < 32
+      || deviceLogView.value.isNearBottom()
     const [deviceResult, sdkResult, updateResult, logResult] = await Promise.all([
       invoke('device.status'),
       invoke('device.sdk.status'),
@@ -176,10 +181,10 @@ async function refreshRuntimeState(showError = false) {
     deviceLogs.value = logResult?.content || ''
     await nextTick()
     if (sdkLogView.value && sdk.busy) {
-      sdkLogView.value.scrollTop = sdkLogView.value.scrollHeight
+      sdkLogView.value.scrollToBottom()
     }
     if (deviceLogView.value && shouldFollowDeviceLog) {
-      deviceLogView.value.scrollTop = deviceLogView.value.scrollHeight
+      deviceLogView.value.scrollToBottom()
     }
   } catch (error) {
     if (showError) ElMessage.error(error?.message || String(error))
@@ -187,18 +192,65 @@ async function refreshRuntimeState(showError = false) {
 }
 
 /**
- * 选择本地固件升级包并直接启动设备更新。
+ * 选择并校验本地固件全量包。
+ */
+async function selectFirmwarePackage() {
+  try {
+    const result = await invoke('device.firmware.select')
+    if (!result.cancelled) {
+      firmware.package = result.package
+      ElMessage.success('固件 ZIP 包校验通过')
+    }
+  } catch (error) {
+    ElMessage.error(error?.message || String(error))
+  }
+}
+
+/**
+ * 刷新固件更新可选择的串口，并优先选择当前设备对应的 REPL 串口。
+ */
+async function loadFirmwarePorts() {
+  try {
+    const result = await invoke('device.firmware.ports')
+    firmware.ports = result.ports || []
+    if (!firmware.ports.some((item) => item.device === firmware.selectedPort)) {
+      firmware.selectedPort = result.recommendedPort || firmware.ports[0]?.device || ''
+    }
+  } catch (error) {
+    ElMessage.error(error?.message || String(error))
+  }
+}
+
+/**
+ * 使用所选串口和更新模式启动 mpremote 固件复制任务。
  */
 async function updateLocalFirmware() {
+  if (!firmware.package) {
+    ElMessage.warning('请先选择固件 ZIP 包')
+    return
+  }
+  if (!firmware.selectedPort) {
+    ElMessage.warning('请选择固件更新目标串口')
+    return
+  }
+  const mode = firmware.force ? '全量更新：跳过 Hash 校验并覆盖全部文件' : '增量更新：仅复制 Hash 不一致的文件'
   try {
     await ElMessageBox.confirm(
-      '请选择与当前开发板及屏幕型号匹配的 ZIP 固件包。更新期间请勿断电、拔线或退出 OmniWatch。',
+      `固件包：${firmware.package.name}\n`
+      + `文件数量：${firmware.package.fileCount}\n`
+      + `目标串口：${firmware.selectedPort}\n`
+      + `更新模式：${mode}\n\n`
+      + '更新期间请勿断电、拔线或退出 OmniWatch。',
       '确认本地固件更新',
-      { type: 'warning', confirmButtonText: '选择固件并更新' },
+      { type: 'warning', confirmButtonText: '开始更新', distinguishCancelAndClose: true },
     )
-    const result = await invoke('device.firmware.updateLocal')
-    if (!result.cancelled) {
-      ElMessage.success(`已开始更新固件：${result.packageName}`)
+    const result = await invoke('device.firmware.updateLocal', {
+      packagePath: firmware.package.path,
+      port: firmware.selectedPort,
+      force: firmware.force,
+    })
+    if (result.started) {
+      ElMessage.success(`已开始${firmware.force ? '全量' : '增量'}更新：${result.packageName}`)
       await refreshRuntimeState()
     }
   } catch (error) {
@@ -300,7 +352,7 @@ async function rebootDevice() {
 }
 
 onMounted(async () => {
-  await Promise.all([refreshRuntimeState(true), loadSdkPorts()])
+  await Promise.all([refreshRuntimeState(true), loadSdkPorts(), loadFirmwarePorts()])
   await checkRegistrationStatus()
   refreshTimer = window.setInterval(refreshRuntimeState, 800)
 })
@@ -430,27 +482,68 @@ onBeforeUnmount(() => {
       <el-descriptions-item label="SHA-256"><span class="hash-value">{{ sdk.image.sha256 }}</span></el-descriptions-item>
     </el-descriptions>
     <p v-if="sdk.message" class="sdk-status">{{ sdk.message }}</p>
-    <pre v-if="sdk.logs" ref="sdkLogView" class="terminal sdk-log-view">{{ sdk.logs }}</pre>
+    <CopyableLog
+      v-if="sdk.logs"
+      ref="sdkLogView"
+      :content="sdk.logs"
+      pre-class="terminal sdk-log-view"
+      copy-success-text="SDK 日志已复制"
+    />
     <el-divider />
     <div class="card-header">
       <div>
         <strong>固件更新</strong>
-        <p class="sdk-status">选择 ZIP 固件包更新设备固件。</p>
+        <p class="sdk-status">选择目标串口和 ZIP 全量固件包，默认仅复制 Hash 不一致的文件。</p>
       </div>
       <el-tag v-if="firmware.busy" type="warning">正在更新</el-tag>
       <el-tag v-else-if="firmware.status === 'success'" type="success">更新完成</el-tag>
       <el-tag v-else-if="firmware.status === 'error'" type="danger">更新失败</el-tag>
     </div>
-    <div class="sdk-toolbar section-gap">
+    <div class="firmware-update-toolbar section-gap">
+      <el-button :disabled="firmware.busy" @click="selectFirmwarePackage">
+        选择固件 ZIP
+      </el-button>
+      <el-select
+        v-model="firmware.selectedPort"
+        :disabled="firmware.busy"
+        placeholder="固件更新目标串口"
+        class="sdk-port-select"
+        @visible-change="(visible) => visible && loadFirmwarePorts()"
+      >
+        <el-option
+          v-for="port in firmware.ports"
+          :key="port.device"
+          :label="port.label"
+          :value="port.device"
+        />
+      </el-select>
+      <el-checkbox v-model="firmware.force" :disabled="firmware.busy" class="firmware-force-checkbox">
+        全量更新
+      </el-checkbox>
       <el-button
         type="primary"
         :loading="firmware.busy"
-        :disabled="sdk.busy || firmware.busy || !currentDevice.connected"
+        :disabled="sdk.busy || firmware.busy || !firmware.package || !firmware.selectedPort"
         @click="updateLocalFirmware"
       >
-        选择本地固件并更新
+        开始固件更新
       </el-button>
     </div>
+    <div v-if="firmware.package" class="firmware-package-summary">
+      <span>已选择：{{ firmware.package.name }}</span>
+      <span>{{ firmware.package.fileCount }} 个文件</span>
+      <el-tag :type="firmware.force ? 'danger' : 'success'" size="small">
+        {{ firmware.force ? '全量覆盖' : 'Hash 增量' }}
+      </el-tag>
+    </div>
+    <el-alert
+      v-if="firmware.force"
+      title="全量更新将跳过设备文件 Hash 校验，直接复制并替换固件包中的全部文件。"
+      type="warning"
+      :closable="false"
+      show-icon
+      class="section-gap"
+    />
     <el-progress
       v-if="firmware.status !== 'idle'"
       :percentage="firmware.progress"
@@ -466,10 +559,20 @@ onBeforeUnmount(() => {
         <span>设备实时日志</span>
       </div>
     </template>
-    <pre ref="deviceLogView" class="terminal device-log-view">{{ deviceLogs || '暂无设备通信日志' }}</pre>
+    <CopyableLog
+      ref="deviceLogView"
+      :content="deviceLogs"
+      empty-text="暂无设备通信日志"
+      pre-class="terminal device-log-view"
+      copy-success-text="设备通信日志已复制"
+    />
     <template v-if="probe.log">
       <p class="probe-log-title">最近一次主动探测输出</p>
-      <pre class="terminal probe-log-view">{{ probe.log }}</pre>
+      <CopyableLog
+        :content="probe.log"
+        pre-class="terminal probe-log-view"
+        copy-success-text="设备探测日志已复制"
+      />
     </template>
   </el-card>
 </template>

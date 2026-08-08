@@ -26,7 +26,7 @@ CPU 数据通过顶层 `cpu` 对象发送，其中 `frequency_ghz` 是当前 GHz
 - 支持通过 `ws://设备IP:8765/pv1` 连接 ESP32-S3，并在 PONG 中读取当前传输模式和 Wi-Fi 详情。
 - 连接后读取并记录 Pico 开发板型号、屏幕色彩方案、当前固件版本和底层 SDK 版本。
 - Windows 设备管理支持校验 ESP32-S3 完整合并 bin，并经 USB CDC 受控进入 ROM 下载模式完成 SDK 刷写。
-- 下载当前 Monitor 版本对应的 Pico 升级包，经 SHA-256 校验后通过串口升级固件。
+- 下载当前 Monitor 版本对应的 Pico 全量固件包，通过 mpremote 按 SHA-256 增量更新固件。
 - 磁盘汇总统计所有有效本地分区，并发送每个磁盘的设备、挂载点、容量、占用率和可用温度。
 - Linux 支持通过 RAPL 能耗计数器发送实时功耗；不支持的平台明确发送空值。
 - 设备拔插、休眠唤醒或通信失败后自动重连。
@@ -75,9 +75,9 @@ python pico_monitor.py
 --once                      成功发送一次后退出
 --version                   显示 Monitor 构建版本并退出
 --pico-info                 显示已连接 Pico 的板型、屏幕方案和固件版本
---upgrade-pico              下载当前 Monitor 版本升级包并升级 Pico
---upgrade-url URL           开发版或私有发布使用的升级包地址
---upgrade-sha256 HASH       可选的升级包下载摘要校验值
+--upgrade-pico              下载当前 Monitor 版本全量固件包并更新 Pico
+--upgrade-url URL           开发版或私有发布使用的全量固件包地址
+--upgrade-sha256 HASH       可选的全量固件包下载摘要校验值
 ```
 
 开发模式也可通过环境变量 `PICO_MONITOR_DEV=1` 开启。LCD 背光亮度可通过 `PICO_MONITOR_LCD_BRIGHTNESS=1..100` 配置。首次串口扫描未找到 Pico 后，程序不再重试 COM 口，而是按照 `--interval` 周期持续采集，并以 `[DEV][Monitor -> Pico][JSON]` 标识打印完整 `JSON:` 协议行，方便在没有硬件时调试采集数据。
@@ -200,7 +200,7 @@ pico-monitor --pico-info
 
 该命令会自动发现 Pico，也可同时通过 `--port` 指定串口；信息打印完成后程序立即退出。
 
-发布版 Monitor 可执行 `pico-monitor --upgrade-pico`，程序会下载同版本 GitHub Release 中的 `OmniWatch-pico-upgrade-v<版本>.zip`。该无后缀兼容包仅适用于 `rp2040_usb` 与 `st7789vw_2inch`。其他硬件必须从 Release 选择 `OmniWatch-pico-upgrade-v<版本>-<开发板型号>-<屏幕方案>.zip`，并通过 `--upgrade-url` 指定。升级时 Monitor 与 Pico 会持续打印下载、传输、安装百分比；Pico 对每个文件核对长度和 SHA-256，全部通过后替换内部文件并自动软重启。传输或校验失败时只删除临时区，不安装未通过校验的文件。
+发布版 Monitor 使用同版本 GitHub Release 中的 `OmniWatch-pico-full-v<版本>.zip`。该无后缀兼容包仅适用于 `rp2040_usb` 与 `st7789vw_2inch`。其他硬件使用 `OmniWatch-pico-full-v<版本>-<开发板型号>-<屏幕方案>.zip`。Windows 桌面控制中心的设备管理页可分别选择固件 ZIP 和目标串口。默认通过 mpremote 分批读取设备文件大小和 SHA-256，一致文件直接跳过，只上传缺失或摘要不一致的文件；勾选“全量更新”后不读取或计算文件哈希，直接复制并替换包内全部文件。两种模式都会在处理完成后统一复位设备。
 
 ### Linux DEB 安装后升级 Pico
 
@@ -213,7 +213,7 @@ sudo systemctl start pico-monitor
 sudo journalctl -u pico-monitor -n 100 --no-pager
 ```
 
-程序会根据已安装 Monitor 的版本号，从同版本 GitHub Release 下载 `OmniWatch-pico-upgrade-v<版本>.zip`。如果必须显式指定端口，应选择能响应 PV1 PONG 的数据 CDC，而不是 REPL CDC：
+程序会根据已安装 Monitor 的版本号，从同版本 GitHub Release 下载 `OmniWatch-pico-full-v<版本>.zip`。如果必须显式指定端口，应选择能响应 PV1 PONG 的数据 CDC：
 
 ```bash
 sudo /usr/bin/pico-monitor --port /dev/ttyACM1 --upgrade-pico
@@ -227,13 +227,13 @@ sudo /usr/bin/pico-monitor --port /dev/ttyACM1 --upgrade-pico
 
 首次测试前，Pico 中必须已经部署包含 `upgrade_manager.py` 的当前固件，否则设备无法识别 `UPGRADE:` 升级命令。
 
-在 `pico-project` 项目根目录生成本地测试升级包：
+在 `pico-project` 项目根目录生成本地测试全量固件包：
 
 ```powershell
 New-Item -ItemType Directory -Force release-assets
-python tools\package_pico_upgrade.py `
+python tools\package_pico_firmware.py `
   --source picoRP2040 `
-  --output release-assets\OmniWatch-pico-upgrade-vlocal-test.zip `
+  --output release-assets\OmniWatch-pico-full-vlocal-test.zip `
   --version local-test
 ```
 
@@ -251,20 +251,20 @@ cd monitor
 python pico_monitor.py `
   --port COM9 `
   --upgrade-pico `
-  --upgrade-url http://127.0.0.1:8000/OmniWatch-pico-upgrade-vlocal-test.zip
+  --upgrade-url http://127.0.0.1:8000/OmniWatch-pico-full-vlocal-test.zip
 ```
 
-请按实际设备修改 `COM9`。如果需要同时校验升级包下载摘要，可读取生成的 SHA-256 并传给 Monitor：
+请按实际设备修改 `COM9`。如果需要同时校验全量固件包下载摘要，可读取生成的 SHA-256 并传给 Monitor：
 
 ```powershell
 $hash = (Get-FileHash `
-  ..\release-assets\OmniWatch-pico-upgrade-vlocal-test.zip `
+  ..\release-assets\OmniWatch-pico-full-vlocal-test.zip `
   -Algorithm SHA256).Hash.ToLower()
 
 python pico_monitor.py `
   --port COM9 `
   --upgrade-pico `
-  --upgrade-url http://127.0.0.1:8000/OmniWatch-pico-upgrade-vlocal-test.zip `
+  --upgrade-url http://127.0.0.1:8000/OmniWatch-pico-full-vlocal-test.zip `
   --upgrade-sha256 $hash
 ```
 
@@ -274,7 +274,7 @@ python pico_monitor.py `
 .\pico-monitor.exe `
   --port COM9 `
   --upgrade-pico `
-  --upgrade-url http://127.0.0.1:8000/OmniWatch-pico-upgrade-vlocal-test.zip
+  --upgrade-url http://127.0.0.1:8000/OmniWatch-pico-full-vlocal-test.zip
 ```
 
 升级成功时，日志会依次出现 `ACK:UPGRADE:BEGIN:local-test`、文件传输确认、`PROGRESS:UPGRADE:INSTALL:100` 和 `ACK:UPGRADE:COMPLETE:local-test`，随后 Pico 自动重启。提交安装期间不要断开 USB 或关闭电源。
@@ -294,8 +294,8 @@ python pico_monitor.py `
 - `OmniWatch-qnap-noarch-v<版本>.tar.gz`：QTS 5.1+ 与 QuTS hero h5.1+ 安装包
 - `OmniWatch-truenas-noarch-v<版本>.tar.gz`：TrueNAS SCALE 24.10+ 安装包
 - `OmniWatch-SHA256SUMS-nas.txt`：NAS 发布包 SHA-256 摘要
-- `OmniWatch-pico-upgrade-v<版本>-<开发板型号>-<屏幕方案>.zip` 与 `.sha256`：定向 Pico 串口升级包及下载摘要
-- `OmniWatch-pico-upgrade-v<版本>.zip` 与 `.sha256`：默认硬件组合的兼容升级包
+- `OmniWatch-pico-full-v<版本>-<开发板型号>-<屏幕方案>.zip` 与 `.sha256`：定向 Pico 全量固件包及下载摘要
+- `OmniWatch-pico-full-v<版本>.zip` 与 `.sha256`：默认硬件组合的全量固件兼容包
 
 发布示例：
 

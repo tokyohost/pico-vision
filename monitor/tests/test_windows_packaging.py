@@ -84,3 +84,52 @@ class WindowsPackagingTest(unittest.TestCase):
         self.assertIn('collect_submodules("mpremote")', specification)
         self.assertIn("mpremote_stream_copy.py", specification)
         self.assertIn("mpremote>=", requirements)
+
+    def test_device_page_exposes_port_package_and_full_update_mode(self):
+        """确认设备管理固件更新可选择串口、ZIP 包和全量覆盖模式。"""
+        page = (
+            MONITOR_ROOT / "win" / "ui-web" / "src" / "components"
+            / "DevicePage.vue"
+        ).read_text(encoding="utf-8")
+        bridge = (
+            MONITOR_ROOT / "win" / "ui-web-api" / "bridge.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("device.firmware.select", page)
+        self.assertIn("device.firmware.ports", page)
+        self.assertIn("v-model=\"firmware.force\"", page)
+        self.assertIn("packagePath: firmware.package.path", page)
+        self.assertIn('"device.firmware.select"', bridge)
+        self.assertIn('"device.firmware.ports"', bridge)
+
+    def test_full_firmware_update_forwards_mpremote_force_flag(self):
+        """确认全量更新会向 mpremote 复制进程追加 force 参数。"""
+        tray = (MONITOR_ROOT / "win" / "tray.py").read_text(encoding="utf-8")
+        device_api = (
+            MONITOR_ROOT / "win" / "ui-web-api" / "device_api.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('command.append("--force")', tray)
+        self.assertIn("force=force", device_api)
+
+    def test_all_web_log_views_use_copyable_log_component(self):
+        """确认全部 Web 日志滚动框统一提供悬浮复制完整内容的能力。"""
+        component_root = MONITOR_ROOT / "win" / "ui-web" / "src" / "components"
+        copyable_log = (component_root / "CopyableLog.vue").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("navigator.clipboard.writeText(props.content)", copyable_log)
+        self.assertIn('aria-label="复制全部日志"', copyable_log)
+        for component_name in (
+            "CustomDataPage.vue",
+            "DevicePage.vue",
+            "GlobalLoadingOverlay.vue",
+            "LogsPage.vue",
+            "UpdatePage.vue",
+        ):
+            with self.subTest(component=component_name):
+                component = (component_root / component_name).read_text(
+                    encoding="utf-8"
+                )
+                self.assertIn("<CopyableLog", component)

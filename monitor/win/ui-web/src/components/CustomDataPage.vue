@@ -3,6 +3,7 @@ import { onMounted, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '../bridge'
 import { runWithGlobalLoading } from '../globalLoading'
+import CopyableLog from './CopyableLog.vue'
 
 const emit = defineEmits(['plugins-changed', 'catalog-updated'])
 
@@ -310,14 +311,23 @@ onMounted(loadCustomData)
       class="section-gap"
     />
   </section>
-  <pre v-if="customData.output" class="terminal">{{ customData.output }}</pre>
+  <CopyableLog
+    v-if="customData.output"
+    :content="customData.output"
+    pre-class="terminal"
+    copy-success-text="插件操作日志已复制"
+  />
   <el-dialog
     v-model="customData.testResult.visible"
     :title="customData.testResult.title"
     width="min(760px, 88vw)"
     class="plugin-test-result-dialog"
   >
-    <pre class="terminal plugin-test-result">{{ customData.testResult.content }}</pre>
+    <CopyableLog
+      :content="customData.testResult.content"
+      pre-class="terminal plugin-test-result"
+      copy-success-text="插件测试日志已复制"
+    />
     <template #footer>
       <el-button type="primary" @click="customData.testResult.visible = false">关闭</el-button>
     </template>

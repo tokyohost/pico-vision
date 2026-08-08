@@ -19,10 +19,13 @@ import hashlib
 import json
 import logging
 import os
+import re
+import shutil
 import tempfile
 import time
 import urllib.request
 import zipfile
+from pathlib import Path, PurePosixPath
 
 from pico_client import parse_frame
 
@@ -31,18 +34,94 @@ LOGGER = logging.getLogger("pico-monitor.upgrade")
 UPGRADE_CHUNK_SIZE = 384
 
 
-class PicoUpgradePackage:
-    """表示已通过清单与文件摘要校验的 Pico 升级包。"""
+class PicoFirmwareArchive:
+    """表示可安全解压并交给 mpremote 部署的全量固件包。"""
 
     def __init__(self, archive_path):
-        """打开 ZIP 升级包并验证清单中声明的全部文件。"""
+        """打开 ZIP 全量包并校验文件路径、重复项和包内容。"""
+        self.archive_path = Path(archive_path)
+        try:
+            self.archive = zipfile.ZipFile(self.archive_path, "r")
+        except (OSError, zipfile.BadZipFile) as error:
+            raise ValueError("所选文件不是有效的固件全量包") from error
+        try:
+            self.files = []
+            paths = set()
+            for item in self.archive.infolist():
+                if item.is_dir():
+                    continue
+                relative = PurePosixPath(str(item.filename).replace("\\", "/"))
+                if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+                    raise ValueError("固件全量包包含不安全路径：{}".format(item.filename))
+                normalized = relative.as_posix()
+                if normalized in paths:
+                    raise ValueError("固件全量包包含重复文件：{}".format(normalized))
+                paths.add(normalized)
+                self.files.append((item, relative))
+            if not self.files:
+                raise ValueError("固件全量包不包含可部署文件")
+            damaged_file = self.archive.testzip()
+            if damaged_file is not None:
+                raise ValueError("固件全量包文件损坏：{}".format(damaged_file))
+        except Exception:
+            self.archive.close()
+            raise
+
+    def extract_to(self, destination):
+        """将已校验的全部固件文件解压到指定临时目录。"""
+        destination = Path(destination)
+        for item, relative in self.files:
+            target = destination.joinpath(*relative.parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with self.archive.open(item, "r") as source, target.open("wb") as output:
+                shutil.copyfileobj(source, output)
+
+    def close(self):
+        """关闭全量固件包文件句柄。"""
+        self.archive.close()
+
+
+class PicoUpgradePackage:
+    """兼容旧串口协议读取清单包或新的全量固件包。"""
+
+    def __init__(self, archive_path):
+        """打开 ZIP 包；无旧清单时根据全量文件即时生成摘要。"""
         self.archive_path = archive_path
         self.archive = zipfile.ZipFile(archive_path, "r")
-        self.manifest = json.loads(self.archive.read("manifest.json").decode("utf-8"))
-        self.version = str(self.manifest["version"])
-        self.files = self.manifest["files"]
+        if "manifest.json" in self.archive.namelist():
+            self.manifest = json.loads(
+                self.archive.read("manifest.json").decode("utf-8")
+            )
+            self.version = str(self.manifest["version"])
+            self.files = self.manifest["files"]
+        else:
+            firmware_archive = PicoFirmwareArchive(archive_path)
+            try:
+                self.files = []
+                for item, relative in firmware_archive.files:
+                    data = firmware_archive.archive.read(item)
+                    self.files.append({
+                        "path": relative.as_posix(),
+                        "size": len(data),
+                        "sha256": hashlib.sha256(data).hexdigest(),
+                    })
+                config = firmware_archive.archive.read("config.py").decode(
+                    "utf-8", errors="replace"
+                )
+                matched = re.search(
+                    r'(?m)^FIRMWARE_VERSION\s*=\s*["\']([^"\']+)["\']',
+                    config,
+                )
+                self.version = matched.group(1) if matched else "unknown"
+                self.manifest = {
+                    "format": "full",
+                    "version": self.version,
+                    "files": self.files,
+                }
+            finally:
+                firmware_archive.close()
         if not self.files:
-            raise ValueError("升级包不包含固件文件")
+            raise ValueError("固件包不包含固件文件")
         for item in self.files:
             data = self.archive.read(item["path"])
             digest = hashlib.sha256(data).hexdigest()

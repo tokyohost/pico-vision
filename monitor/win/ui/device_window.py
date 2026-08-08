@@ -631,14 +631,14 @@ class DeviceWindowMixin:
                 messages.put(("firmware_error", str(error)))
 
         def install_firmware(updater, asset, latest_version):
-            """下载已确认的新固件包，通过 mpremote 流式复制安装。"""
+            """下载已确认的全量固件包，通过 mpremote 增量复制安装。"""
             package_path = None
             try:
                 package_path = updater.download(asset, ".zip")
                 connection = self._get_device_connection()
                 port = self._mpremote_repl_port(connection)
                 self._stop_worker()
-                self._upgrade_pico_from_package(package_path, port)
+                self._install_pico_firmware_archive(package_path, port)
                 messages.put((
                     "firmware_finished",
                     (True, "设备固件已更新至 {}，正在重新连接设备".format(latest_version)),

@@ -17,10 +17,10 @@ import tempfile
 import threading
 import winreg
 from datetime import datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
-from pico_upgrade import PicoUpgradePackage
+from pico_upgrade import PicoFirmwareArchive
 from windows_update import WindowsReleaseUpdater
 
 from .constants import APPLICATION_NAME, MONITOR_DIRECTORY, WINDOWS_APP_USER_MODEL_ID
@@ -290,7 +290,7 @@ class WindowsTrayApplication(
             pico_path = updater.download(pico_asset, ".zip")
             monitor_path = updater.download(monitor_asset, ".exe")
             self._stop_worker()
-            self._upgrade_pico_from_package(pico_path, port)
+            self._install_pico_firmware_archive(pico_path, port)
             updater.remove_file(pico_path)
             pico_path = None
             self._schedule_monitor_installer(monitor_path)
@@ -337,19 +337,15 @@ class WindowsTrayApplication(
         finally:
             root.destroy()
 
-    def _upgrade_pico_from_package(self, package_path, port, progress_callback=None):
-        """校验并解压升级包，再通过 mpremote 流式复制到 USB 设备。"""
-        package = PicoUpgradePackage(package_path)
+    def _install_pico_firmware_archive(
+        self, package_path, port, progress_callback=None, force=False
+    ):
+        """校验并解压全量固件包，再通过 mpremote 增量或强制复制。"""
+        package = PicoFirmwareArchive(package_path)
         try:
             with tempfile.TemporaryDirectory(prefix="omniwatch-firmware-") as directory:
                 source_directory = Path(directory)
-                for item in package.files:
-                    relative = PurePosixPath(str(item["path"]).replace("\\", "/"))
-                    if relative.is_absolute() or not relative.parts or ".." in relative.parts:
-                        raise ValueError("升级包包含不安全路径：{}".format(item["path"]))
-                    target = source_directory.joinpath(*relative.parts)
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_bytes(package.archive.read(item["path"]))
+                package.extract_to(source_directory)
 
                 if getattr(sys, "frozen", False):
                     command = [sys.executable, "--mpremote-stream-copy"]
@@ -359,6 +355,8 @@ class WindowsTrayApplication(
                         str(MONITOR_DIRECTORY.parent / "tools" / "mpremote_stream_copy.py"),
                     ]
                 command.extend((str(port), "--source", str(source_directory)))
+                if force:
+                    command.append("--force")
                 environment = os.environ.copy()
                 environment.update({
                     "PYTHONIOENCODING": "utf-8",

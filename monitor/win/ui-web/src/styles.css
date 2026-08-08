@@ -283,7 +283,7 @@ body {
   border-radius: 50%; filter: drop-shadow(0 0 7px rgba(91, 140, 255, .42)); animation: global-loading-spin .85s linear infinite;
 }
 .global-loading-logs {
-  overflow: auto; height: 190px; margin: 18px 0 0; padding: 14px; border: 1px solid var(--border); border-radius: 10px;
+  overflow: auto; height: 190px; margin: 0; padding: 14px; border: 1px solid var(--border); border-radius: 10px;
   color: #b9e3c6; background: rgba(2, 8, 18, .88); font: 12px/1.65 "Cascadia Mono", Consolas, monospace; white-space: pre-wrap;
 }
 .global-loading-fade-enter-active, .global-loading-fade-leave-active { transition: opacity .2s ease; }
@@ -356,6 +356,16 @@ body {
 .connection-policy-row .el-switch { flex: 0 0 auto; }
 .sdk-toolbar { display: flex; align-items: center; gap: 10px; }
 .sdk-port-select { min-width: 280px; flex: 1; }
+.firmware-update-toolbar { display: flex; align-items: center; gap: 10px; }
+.firmware-force-checkbox { flex: 0 0 auto; color: #cbd6e7; }
+.firmware-package-summary {
+  display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 9px 12px;
+  border: 1px solid rgba(135, 157, 194, .16); border-radius: 8px;
+  color: #b9c7dc; background: rgba(8, 15, 29, .45); font-size: 12px;
+}
+.firmware-package-summary span:first-child {
+  min-width: 0; overflow: hidden; flex: 1; text-overflow: ellipsis; white-space: nowrap;
+}
 .sdk-status { margin: 14px 0 0; color: #b8c5d8; }
 .sdk-log-view { max-height: 260px; }
 .device-log-view { height: 320px; margin-top: 0; white-space: pre; }
@@ -606,7 +616,34 @@ body {
 .update-runtime { display: grid; gap: 8px; padding-top: 4px; border-top: 1px solid rgba(135, 157, 194, .16); }
 .update-runtime-heading { display: flex; justify-content: space-between; gap: 12px; color: #c8d4e8; font-size: 12px; }
 .update-runtime-heading span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.update-live-log { max-height: 220px; overflow: auto; margin: 0; padding: 12px; border: 1px solid rgba(135, 157, 194, .18); border-radius: 8px; color: #b8c8df; background: #09101d; white-space: pre-wrap; word-break: break-all; font: 12px/1.55 Consolas, "Microsoft YaHei", monospace; }
+.update-live-log {
+  width: 100%; max-height: 220px; overflow: auto; margin: 0; padding: 12px;
+  border: 1px solid rgba(135, 157, 194, .18); border-radius: 8px;
+  color: #b8c8df; background: #09101d; white-space: pre-wrap; word-break: break-all;
+  font: 12px/1.55 Consolas, "Microsoft YaHei", monospace;
+}
+.copyable-log-container {
+  position: relative; min-width: 0; display: flow-root;
+}
+.copyable-log-container > pre { width: 100%; }
+.copyable-log-container > .terminal { margin-top: 0; }
+.copyable-log-container:has(> .global-loading-logs),
+.copyable-log-container:has(> .terminal:not(.device-log-view):not(.probe-log-view):not(.log-view):not(.plugin-test-result)) {
+  margin-top: 18px;
+}
+.copyable-log-button {
+  position: absolute; z-index: 2; top: 9px; right: 16px;
+  width: 30px; height: 30px;
+  opacity: 0; visibility: hidden; pointer-events: none;
+  background: rgba(22, 34, 57, .94) !important;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, .34);
+  transform: translateY(-3px);
+  transition: opacity .16s ease, visibility .16s ease, transform .16s ease;
+}
+.copyable-log-container:hover .copyable-log-button,
+.copyable-log-container:focus-within .copyable-log-button {
+  opacity: 1; visibility: visible; pointer-events: auto; transform: translateY(0);
+}
 .qr-card { text-align: center; }
 .qr-card img {
   display: block; width: min(240px, 100%); aspect-ratio: 1; object-fit: contain;

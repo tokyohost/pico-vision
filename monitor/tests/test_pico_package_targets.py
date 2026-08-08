@@ -1,4 +1,4 @@
-"""验证 RP2040 与 ESP32-S3 升级包的板型专属内容。"""
+"""验证 RP2040 与 ESP32-S3 全量固件包的板型专属内容。"""
 
 
 import importlib.util
@@ -10,17 +10,17 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = PROJECT_ROOT / "picoRP2040"
-PACKAGER_PATH = PROJECT_ROOT / "tools" / "package_pico_upgrade.py"
-SPEC = importlib.util.spec_from_file_location("package_pico_upgrade", PACKAGER_PATH)
+PACKAGER_PATH = PROJECT_ROOT / "tools" / "package_pico_firmware.py"
+SPEC = importlib.util.spec_from_file_location("package_pico_firmware", PACKAGER_PATH)
 PACKAGER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PACKAGER)
 
 
 class PicoPackageTargetsTest(unittest.TestCase):
-    """确认不同开发板升级包启用正确功能并避免携带无用资源。"""
+    """确认不同开发板全量包启用正确功能并避免携带无用资源。"""
 
     def _build(self, directory, board_model):
-        """为指定开发板生成二英寸屏测试升级包。"""
+        """为指定开发板生成二英寸屏测试全量固件包。"""
         output = Path(directory) / (board_model + ".zip")
         PACKAGER.build_package(
             SOURCE_ROOT,
@@ -44,6 +44,7 @@ class PicoPackageTargetsTest(unittest.TestCase):
         self.assertIn("command/wifi_forget.py", names)
         self.assertIn("styles/style_fusion_pixel_test.py", names)
         self.assertFalse(any(name.startswith("fonts/") for name in names))
+        self.assertNotIn("manifest.json", names)
 
     def test_rp2040_package_disables_wireless_and_omits_esp32_resources(self):
         """RP2040 包应关闭无线功能并排除 ESP32 专属资源。"""
@@ -58,6 +59,7 @@ class PicoPackageTargetsTest(unittest.TestCase):
         self.assertNotIn("command/wifi_forget.py", names)
         self.assertIn("styles/style_fusion_pixel_test.py", names)
         self.assertFalse(any(name.startswith("fonts/") for name in names))
+        self.assertNotIn("manifest.json", names)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""将 Pico 固件目录打包为包含 SHA-256 清单的可验证升级包。"""
+"""将 Pico 固件目录打包为供 mpremote 增量部署的全量固件包。"""
 
 
 #  Copyright (c) 2026 xuehui_li
@@ -17,7 +17,6 @@ import argparse
 import ast
 import hashlib
 import importlib.util
-import json
 import pathlib
 import re
 import zipfile
@@ -120,7 +119,7 @@ def collect_files(
     source_directory, board_model=None, lcd_device_type=None,
     firmware_version=None, screen_color_profile=None,
 ):
-    """收集固件源码和字体资源并生成完整性校验清单。"""
+    """收集指定硬件组合需要部署的全部固件文件。"""
     files = []
     for path in sorted(
         path for path in source_directory.rglob("*")
@@ -146,7 +145,7 @@ def build_package(
     source_directory, output_path, version,
     board_model=None, lcd_device_type=None,
 ):
-    """写入固件文件与确定性 JSON 清单，并返回升级包摘要。"""
+    """写入完整固件目录并返回全量包的 SHA-256 摘要。"""
     screen_color_profile = None
     lcd_profiles, lcd_aliases = load_lcd_profiles(source_directory)
     requested_lcd_type = str(lcd_device_type or "").lower()
@@ -168,19 +167,8 @@ def build_package(
     )
     if not files:
         raise ValueError("Pico 固件目录内没有可发布文件")
-    manifest = {"format": 1, "version": version, "files": files}
-    if board_model:
-        manifest["target"] = {
-            "board_model": board_model,
-            "lcd_device_type": lcd_device_type,
-            "screen_color_profile": (
-                screen_color_profile
-                or lcd_profiles[lcd_device_type]["color_profile"]
-            ),
-        }
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"))
         for item in files:
             source_path = source_directory / item["path"]
             data = source_path.read_bytes()
@@ -194,13 +182,13 @@ def build_package(
 
 
 def main():
-    """解析命令行参数并输出升级包及同名 SHA-256 文件。"""
-    parser = argparse.ArgumentParser(description="生成 Pico 串口升级包")
+    """解析命令行参数并输出全量固件包及同名 SHA-256 文件。"""
+    parser = argparse.ArgumentParser(description="生成 Pico 全量固件包")
     parser.add_argument("--source", type=pathlib.Path, required=True, help="Pico 固件源码目录")
     parser.add_argument("--output", type=pathlib.Path, required=True, help="输出 ZIP 路径")
-    parser.add_argument("--version", required=True, help="升级包版本")
-    parser.add_argument("--board-model", help="写入升级包的开发板型号")
-    parser.add_argument("--lcd-device-type", help="写入升级包的 LCD 设备类型")
+    parser.add_argument("--version", required=True, help="固件包版本")
+    parser.add_argument("--board-model", help="写入固件包的开发板型号")
+    parser.add_argument("--lcd-device-type", help="写入固件包的 LCD 设备类型")
     parser.add_argument("--screen-color-profile", help="兼容旧命令的屏幕色彩方案")
     arguments = parser.parse_args()
     lcd_device_type = arguments.lcd_device_type or arguments.screen_color_profile
@@ -210,7 +198,7 @@ def main():
     )
     checksum_path = arguments.output.with_suffix(arguments.output.suffix + ".sha256")
     checksum_path.write_text("{}  {}\n".format(digest, arguments.output.name), encoding="utf-8", newline="\n")
-    print("升级包生成完成：{}，SHA-256={}".format(arguments.output, digest))
+    print("全量固件包生成完成：{}，SHA-256={}".format(arguments.output, digest))
 
 
 if __name__ == "__main__":

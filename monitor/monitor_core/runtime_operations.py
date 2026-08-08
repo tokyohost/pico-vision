@@ -540,12 +540,12 @@ class RuntimeOperationsMixin:
         return False
 
     def _upgrade_pico(self):
-        """下载当前 Monitor 版本升级包，完成串口升级后退出。"""
+        """下载当前 Monitor 版本全量固件包，完成设备更新后退出。"""
         url = self.arguments.upgrade_url
         if not url:
             if not GITHUB_REPOSITORY or MONITOR_VERSION == "development":
-                raise RuntimeError("开发版本必须通过 --upgrade-url 指定 Pico 升级包")
-            url = "https://github.com/{}/releases/download/v{}/OmniWatch-pico-upgrade-v{}.zip".format(
+                raise RuntimeError("开发版本必须通过 --upgrade-url 指定 Pico 全量固件包")
+            url = "https://github.com/{}/releases/download/v{}/OmniWatch-pico-full-v{}.zip".format(
                 GITHUB_REPOSITORY, MONITOR_VERSION, MONITOR_VERSION
             )
         archive_path = PicoUpgradeDownloader.download(url, self.arguments.upgrade_sha256)

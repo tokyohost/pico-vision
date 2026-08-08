@@ -23,7 +23,7 @@ import unittest
 import zlib
 import zipfile
 
-from pico_upgrade import PicoFirmwareUpgrader, PicoUpgradePackage
+from pico_upgrade import PicoFirmwareArchive, PicoFirmwareUpgrader, PicoUpgradePackage
 from pico_client import PicoJsonClient, build_frame, parse_frame
 
 
@@ -113,6 +113,55 @@ class PicoUpgradeTests(unittest.TestCase):
             self.assertEqual(client.serial.commands.count("data"), 3)
             self.assertTrue(all(parse_frame(packet)[0] == "JSONZ" for packet in client.serial.packets))
             self.assertTrue(all(packet.endswith(b"\n") for packet in client.serial.packets))
+
+
+class PicoFirmwareArchiveTests(unittest.TestCase):
+    """验证不含 upgrade 清单的全量固件包可安全解压。"""
+
+    def test_extracts_plain_full_firmware_archive(self):
+        """全量包应直接还原完整目录，且不要求 manifest.json。"""
+        with tempfile.TemporaryDirectory() as directory:
+            archive_path = pathlib.Path(directory) / "firmware.zip"
+            output_directory = pathlib.Path(directory) / "output"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("main.py", "print('ready')\n")
+                archive.writestr("command/reboot.py", "def reboot():\n    pass\n")
+
+            package = PicoFirmwareArchive(archive_path)
+            try:
+                package.extract_to(output_directory)
+            finally:
+                package.close()
+
+            self.assertEqual("print('ready')\n", (output_directory / "main.py").read_text(encoding="utf-8"))
+            self.assertTrue((output_directory / "command" / "reboot.py").is_file())
+
+    def test_legacy_cli_can_read_plain_full_firmware_archive(self):
+        """旧命令行入口应从 config.py 读取版本并为全量文件即时计算摘要。"""
+        with tempfile.TemporaryDirectory() as directory:
+            archive_path = pathlib.Path(directory) / "firmware.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("config.py", 'FIRMWARE_VERSION = "2.3.4"\n')
+                archive.writestr("main.py", "print('ready')\n")
+
+            package = PicoUpgradePackage(archive_path)
+            try:
+                paths = [item["path"] for item in package.files]
+                self.assertEqual("2.3.4", package.version)
+                self.assertEqual(["config.py", "main.py"], paths)
+                self.assertTrue(all(item["sha256"] for item in package.files))
+            finally:
+                package.close()
+
+    def test_rejects_parent_directory_entry(self):
+        """全量包包含父目录跳转时必须在解压前拒绝。"""
+        with tempfile.TemporaryDirectory() as directory:
+            archive_path = pathlib.Path(directory) / "unsafe.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("../main.py", "print('unsafe')\n")
+
+            with self.assertRaisesRegex(ValueError, "不安全路径"):
+                PicoFirmwareArchive(archive_path)
 
 
 if __name__ == "__main__":

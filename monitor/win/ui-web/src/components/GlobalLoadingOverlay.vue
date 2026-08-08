@@ -1,6 +1,7 @@
 <script setup>
 import { nextTick, ref, watch } from 'vue'
 import { useGlobalLoading } from '../globalLoading'
+import CopyableLog from './CopyableLog.vue'
 
 const state = useGlobalLoading()
 const logView = ref(null)
@@ -10,7 +11,7 @@ const logView = ref(null)
  */
 async function scrollLogsToBottom() {
   await nextTick()
-  if (logView.value) logView.value.scrollTop = logView.value.scrollHeight
+  if (logView.value) logView.value.scrollToBottom()
 }
 
 watch(() => state.logs.length, scrollLogsToBottom)
@@ -34,7 +35,12 @@ watch(() => state.logs.length, scrollLogsToBottom)
           :stroke-width="12"
           :show-text="false"
         />
-        <pre ref="logView" class="global-loading-logs">{{ state.logs.join('\n') }}</pre>
+        <CopyableLog
+          ref="logView"
+          :content="state.logs.join('\n')"
+          pre-class="global-loading-logs"
+          copy-success-text="操作日志已复制"
+        />
       </section>
     </div>
   </transition>
