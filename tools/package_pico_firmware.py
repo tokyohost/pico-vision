@@ -37,6 +37,7 @@ ESP32_ONLY_FILES = frozenset((
     "net/discovery.py",
 ))
 DEVICE_EXCLUDED_PREFIXES = ("fonts/",)
+DEVICE_EXCLUDED_PARTS = frozenset(("tests", "__pycache__"))
 
 
 def load_lcd_profiles(source_directory):
@@ -70,12 +71,34 @@ def load_lcd_profiles(source_directory):
 def load_supported_targets(source_directory):
     """从固件模块读取受支持的开发板型号和 LCD 设备类型。"""
     targets = []
-    spec = importlib.util.spec_from_file_location(
-        "pico_board_manager", source_directory / "board_manager.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    targets.append(tuple(module.available_board_models()))
+    board_manager_path = source_directory / "board_manager.py"
+    if board_manager_path.is_file():
+        spec = importlib.util.spec_from_file_location(
+            "pico_board_manager", board_manager_path
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        board_models = tuple(module.available_board_models())
+    else:
+        # 独立维护的 ESP32-S3 工程不再携带旧通用板型注册表，直接从
+        # config.py 读取其唯一板型，避免发布流程继续依赖 picoRP2040。
+        config_tree = ast.parse(
+            (source_directory / "config.py").read_text(encoding="utf-8"),
+            filename=str(source_directory / "config.py"),
+        )
+        configured_board = None
+        for node in config_tree.body:
+            if not isinstance(node, ast.Assign):
+                continue
+            if any(getattr(target, "id", None) == "BOARD_MODEL" for target in node.targets):
+                configured_board = ast.literal_eval(node.value)
+                break
+        if not configured_board:
+            raise ValueError("config.py 中缺少 BOARD_MODEL 配置")
+        board_models = (
+            str(configured_board).strip().lower().replace("_", "-"),
+        )
+    targets.append(board_models)
     lcd_profiles, _ = load_lcd_profiles(source_directory)
     targets.append(tuple(sorted(lcd_profiles)))
     return tuple(targets)
@@ -128,6 +151,8 @@ def collect_files(
     ):
         relative = path.relative_to(source_directory).as_posix()
         if relative.startswith(DEVICE_EXCLUDED_PREFIXES):
+            continue
+        if any(part.lower() in DEVICE_EXCLUDED_PARTS for part in path.relative_to(source_directory).parts):
             continue
         is_esp32_target = str(board_model or "").lower() in ESP32_BOARD_MODELS
         if not is_esp32_target and relative in ESP32_ONLY_FILES:
