@@ -309,3 +309,8 @@ python pico_monitor.py `
 git tag v1.0.0
 git push origin v1.0.0
 ```
+
+
+### 致谢
+
+- Tz. 感谢协助修复intel 平台cpu 温度获取失败问题
