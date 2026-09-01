@@ -14,8 +14,7 @@ from pathlib import Path, PurePosixPath
 DEFAULT_SOURCE = Path(r"E:\WorkSpace\fn-vision\pico-project\esp32-s3")
 REMOTE_MANIFEST_PREFIX = "MPREMOTE_FILE:"
 REMOTE_MANIFEST_BATCH_SIZE = 40
-MPREMOTE_COMMAND_TIMEOUT_SECONDS = 90
-
+MPREMOTE_COMMAND_TIMEOUT_SECONDS = 9
 
 class MpremoteStreamCopier:
     """使用 mpremote 命令逐目录、逐文件复制 Pico 工程。"""

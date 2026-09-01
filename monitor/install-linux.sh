@@ -76,6 +76,12 @@ install_application() {
     install -m 0644 "$script_directory"/net/*.py "$INSTALL_ROOT/net/"
     install -d -m 0755 "$INSTALL_ROOT/collectTask"
     install -m 0644 "$script_directory"/collectTask/*.py "$INSTALL_ROOT/collectTask/"
+    install -d -m 0755 "$INSTALL_ROOT/collectTask/strategy"
+    install -m 0644 "$script_directory"/collectTask/strategy/*.py "$INSTALL_ROOT/collectTask/strategy/"
+    for strategy_category in cpu memory gpu power disk; do
+        install -d -m 0755 "$INSTALL_ROOT/collectTask/strategy/$strategy_category"
+        install -m 0644 "$script_directory"/collectTask/strategy/"$strategy_category"/*.py "$INSTALL_ROOT/collectTask/strategy/$strategy_category/"
+    done
     install -d -m 0755 "$INSTALL_ROOT/collectTask/tasks"
     install -m 0644 "$script_directory"/collectTask/tasks/*.py "$INSTALL_ROOT/collectTask/tasks/"
     install -d -m 0755 "$INSTALL_ROOT/collectTask/tasks/linux"

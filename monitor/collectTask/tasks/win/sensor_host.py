@@ -7,6 +7,8 @@ from constants import HISTORY_LENGTH
 from history import update_per_second
 
 from ...system_tasks import CollectionTask
+from ...strategy import LibreHardwareMonitorSnapshotAdapter
+from ...strategy.base import number
 from ..disk_common import (
     DISK_CAPACITY_HEALTH_FIELDS,
     DISK_RATE_FIELDS,
@@ -24,6 +26,11 @@ class SensorHostTask(CollectionTask):
     order = 15
     supported_platforms = ("Windows",)
 
+    def __init__(self, collector):
+        """初始化采集任务和无状态快照解析适配器。"""
+        super().__init__(collector)
+        self._snapshot_adapter = LibreHardwareMonitorSnapshotAdapter()
+
     def collect(self):
         """读取 SensorHost 快照并转换为 monitor 标准字段。"""
         manager = getattr(self.collector, "sensor_host", None)
@@ -32,8 +39,10 @@ class SensorHostTask(CollectionTask):
         snapshot = manager.snapshot()
         if not snapshot:
             return {}
+        # 策略层只接收 LibreHardwareMonitor 原始硬件数据和当前快照上下文。
+        parsed = self._snapshot_adapter.parse(snapshot.get("hardware") or [], snapshot)
         fragment = {}
-        cpu = self._cpu_fragment(snapshot.get("cpu") or {}, snapshot.get("hardware") or [])
+        cpu = self._cpu_fragment(parsed.get("cpu") or {})
         has_cpu_temperature = False
         if cpu:
             self.collector._sensor_host_cpu_fragment = dict(cpu)
@@ -41,40 +50,36 @@ class SensorHostTask(CollectionTask):
             if cpu.get("percent") is not None:
                 self._mark_available("cpu")
             has_cpu_temperature = cpu.get("temperature_c") is not None
-        memory = self._memory_fragment(snapshot.get("memory") or {})
+        memory = self._memory_fragment(parsed.get("memory") or {})
         if memory:
             fragment["memory"] = memory
             has_memory_usage = memory.get("used_bytes") is not None and memory.get("total_bytes") is not None
             if memory.get("percent") is not None or has_memory_usage:
                 self._mark_available("memory")
-        gpu = self._gpu_fragment(snapshot.get("gpu") or {})
+        gpu = self._gpu_fragment(parsed.get("gpu") or {})
         if gpu is not None:
             fragment["gpu"] = gpu
             if gpu.get("percent") is not None:
                 self._mark_available("gpu")
-        power = self._power_fragment(snapshot.get("power") or {})
+        power = self._power_fragment(parsed.get("power") or {})
         if power:
             fragment["power"] = power
             self._mark_available("power")
         if has_cpu_temperature:
             self._mark_available("cpu_temperature")
-        disk_fragment = self._disk_fragment(snapshot.get("disks") or [])
+        disk_fragment = self._disk_fragment(parsed.get("disks") or [])
         fragment.update(disk_fragment)
         return fragment
 
-    def _cpu_fragment(self, cpu, hardware):
-        """把 SensorHost CPU 数据转换为完整 CPU 快照片段。"""
-        percent = self._number(cpu.get("percent"))
-        frequency_ghz = self._number(cpu.get("frequency_ghz"))
-        if frequency_ghz is None:
-            frequency_ghz = self._cpu_frequency_from_hardware(hardware)
+    def _cpu_fragment(self, cpu):
+        """为已解析 CPU 数据补充历史和非策略采集降级。"""
+        percent = cpu.get("percent")
+        frequency_ghz = cpu.get("frequency_ghz")
         if frequency_ghz is None:
             frequency_reader = getattr(self.collector, "_cpu_frequency_ghz", None)
             if frequency_reader is not None:
-                frequency_ghz = self._number(frequency_reader())
-        temperature_c = self._number(cpu.get("temperature_c"))
-        if temperature_c is None:
-            temperature_c = self._cpu_temperature_from_hardware(hardware)
+                frequency_ghz = number(frequency_reader())
+        temperature_c = cpu.get("temperature_c")
         if percent is None and frequency_ghz is None and temperature_c is None:
             return None
         if percent is not None:
@@ -92,13 +97,10 @@ class SensorHostTask(CollectionTask):
         }
 
     def _memory_fragment(self, memory):
-        """把 SensorHost 内存数据转换为 monitor 内存快照片段。"""
-        # 新版 SensorHost 明确拆分物理内存与虚拟内存；旧版扁平结构仅用于兼容升级过程。
-        physical_memory = memory.get("physical") or memory
-        percent = self._number(physical_memory.get("percent"))
-        used_bytes = self._integer(physical_memory.get("used_bytes"))
-        available_bytes = self._integer(physical_memory.get("available_bytes"))
-        total_bytes = used_bytes + available_bytes if used_bytes is not None and available_bytes is not None else None
+        """为已解析物理内存数据补充历史。"""
+        percent = memory.get("percent")
+        used_bytes = memory.get("used_bytes")
+        total_bytes = memory.get("total_bytes")
         if percent is None and used_bytes is None and total_bytes is None:
             return None
         if percent is not None:
@@ -116,16 +118,16 @@ class SensorHostTask(CollectionTask):
         }
 
     def _gpu_fragment(self, gpu):
-        """把 SensorHost GPU 数据转换为 monitor GPU 快照片段。"""
+        """为已解析 GPU 数据补充历史和来源。"""
         if not gpu:
             return None
-        percent = self._number(gpu.get("percent"))
-        temperature_c = self._number(gpu.get("temperature_c"))
-        core_clock_mhz = self._number(gpu.get("core_clock_mhz"))
-        memory_clock_mhz = self._number(gpu.get("memory_clock_mhz"))
-        power_watts = self._number(gpu.get("power_watts"))
-        dedicated_memory_used_bytes = self._integer(gpu.get("dedicated_memory_used_bytes"))
-        dedicated_memory_total_bytes = self._integer(gpu.get("dedicated_memory_total_bytes"))
+        percent = gpu.get("percent")
+        temperature_c = gpu.get("temperature_c")
+        core_clock_mhz = gpu.get("core_clock_mhz")
+        memory_clock_mhz = gpu.get("memory_clock_mhz")
+        power_watts = gpu.get("power_watts")
+        dedicated_memory_used_bytes = gpu.get("dedicated_memory_used_bytes")
+        dedicated_memory_total_bytes = gpu.get("dedicated_memory_total_bytes")
         if all(value is None for value in (
             percent,
             temperature_c,
@@ -157,8 +159,8 @@ class SensorHostTask(CollectionTask):
         }
 
     def _power_fragment(self, power):
-        """把 SensorHost 功耗数据转换为 monitor 功耗快照片段。"""
-        watts = self._number(power.get("watts"))
+        """为已解析功耗数据补充历史。"""
+        watts = power.get("watts")
         if watts is None:
             return None
         if watts is not None:
@@ -189,11 +191,11 @@ class SensorHostTask(CollectionTask):
                 continue
             item = {
                 "name": name,
-                "temperature_c": self._number(disk.get("temperature_c")),
-                "percent": self._number(disk.get("used_space_percent")),
-                "health": self._health_level(disk.get("health_percent")),
-                "read_bps": self._integer(disk.get("read_bytes_per_second")),
-                "write_bps": self._integer(disk.get("write_bytes_per_second")),
+                "temperature_c": disk.get("temperature_c"),
+                "percent": disk.get("percent"),
+                "health": disk.get("health"),
+                "read_bps": disk.get("read_bps"),
+                "write_bps": disk.get("write_bps"),
             }
             self._append_disk_rate_history(item)
             has_capacity_health = has_capacity_health or item["percent"] is not None or item["health"] is not None
@@ -221,50 +223,6 @@ class SensorHostTask(CollectionTask):
             replace_physical_disks=has_capacity_health,
         )
 
-    @classmethod
-    def _cpu_temperature_from_hardware(cls, hardware):
-        """从 SensorHost 原始硬件传感器中兜底提取 CPU 温度。"""
-        preferred_names = ("CPU Package", "CPU Tctl/Tdie", "Core Max", "CPU")
-        candidates = []
-        for item in hardware:
-            hardware_type = str(item.get("type") or "")
-            for sensor in item.get("sensors") or ():
-                if str(sensor.get("type") or "") != "Temperature":
-                    continue
-                name = str(sensor.get("name") or "")
-                value = cls._number(sensor.get("value"))
-                if value is None:
-                    continue
-                if hardware_type == "Cpu" or name in preferred_names or name.startswith("CPU"):
-                    candidates.append((name, value))
-        for preferred in preferred_names:
-            for name, value in candidates:
-                if name == preferred:
-                    return value
-        return candidates[0][1] if candidates else None
-
-    @classmethod
-    def _cpu_frequency_from_hardware(cls, hardware):
-        """从 SensorHost 原始硬件传感器中兜底提取 CPU MHz 并换算为 GHz。"""
-        preferred_names = ("Cores (Average)", "CPU Core")
-        candidates = []
-        for item in hardware:
-            hardware_type = str(item.get("type") or "")
-            for sensor in item.get("sensors") or ():
-                if str(sensor.get("type") or "") != "Clock":
-                    continue
-                name = str(sensor.get("name") or "")
-                value = cls._number(sensor.get("value"))
-                if value is None or value <= 0:
-                    continue
-                if hardware_type == "Cpu" or name in preferred_names or name.startswith("CPU"):
-                    candidates.append((name, value))
-        for preferred in preferred_names:
-            values = [value for name, value in candidates if name == preferred or preferred in name]
-            if values:
-                return round(sum(values) / len(values) / 1000, 2)
-        return round(candidates[0][1] / 1000, 2) if candidates else None
-
     def _append_disk_rate_history(self, item):
         """维护 SensorHost 磁盘读写速率历史，保证显示端趋势字段完整。"""
         name = item.get("name") or "DISK"
@@ -283,22 +241,6 @@ class SensorHostTask(CollectionTask):
             update_per_second(history, value, state, now)
             item[history_name + "_history"] = list(history)
 
-    @classmethod
-    def _health_level(cls, health_percent):
-        """把 SensorHost 健康剩余百分比映射为项目统一的 0 至 5 健康等级。"""
-        value = cls._number(health_percent)
-        if value is None:
-            return None
-        if value <= 0:
-            return 5
-        if value < 10:
-            return 4
-        if value < 25:
-            return 3
-        if value < 60:
-            return 2
-        return 1
-
     @staticmethod
     def _disk_summary(disks):
         """根据 SensorHost 物理盘占用率生成轻量磁盘汇总。"""
@@ -312,19 +254,3 @@ class SensorHostTask(CollectionTask):
         marker = getattr(self.collector, "mark_sensor_host_metric_available", None)
         if marker is not None:
             marker(metric_name)
-
-    @staticmethod
-    def _number(value):
-        """把输入值转换为浮点数，失败时返回空值。"""
-        try:
-            return round(float(value), 2) if value is not None else None
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _integer(value):
-        """把输入值转换为整数，失败时返回空值。"""
-        try:
-            return int(value) if value is not None else None
-        except (TypeError, ValueError):
-            return None

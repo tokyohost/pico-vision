@@ -27,6 +27,7 @@ LOGGER = logging.getLogger("pico-monitor.sensor-host")
 DEFAULT_PIPE_NAME = "omniwatch.sensorhost"
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 2.0
 DEFAULT_STARTUP_GRACE_SECONDS = 2.0
+SNAPSHOT_LOG_INTERVAL_SECONDS = 300.0
 SENSOR_HOST_LEGACY_EXECUTABLE_NAME = "OmniWatch.SensorHost.exe"
 SENSOR_HOST_VERSIONED_EXECUTABLE_PATTERN = "OmniWatch.SensorHost-v*.exe"
 SENSOR_HOST_VERSION_PATTERN = re.compile(r"^OmniWatch\.SensorHost-v(?P<version>\d+(?:\.\d+)*)\.exe$", re.IGNORECASE)
@@ -49,6 +50,7 @@ class SensorHostManager:
         self.dependency_unavailable_message = self._dependency_unavailable_reason()
         self.available = self.dependency_unavailable_message is None and self.executable_path is not None
         self._unavailable_logged = False
+        self._last_snapshot_log_at = None
 
     def start(self):
         """启动 SensorHost 并把子进程加入 Job Object。"""
@@ -69,6 +71,7 @@ class SensorHostManager:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             self.process_started_at = time.monotonic()
+            self._last_snapshot_log_at = None
             self._attach_job_object()
             LOGGER.info("SensorHost 已启动：pid=%s，pipe=%s", self.process.pid, self.pipe_name)
             return True
@@ -85,10 +88,32 @@ class SensorHostManager:
         if not self._is_ready_for_request():
             return None
         try:
-            return self._request("snapshot", timeout)
+            snapshot = self._request("snapshot", timeout)
+            self._log_snapshot_result(snapshot)
+            return snapshot
         except SensorHostError as error:
             LOGGER.warning("SensorHost 快照请求失败：%s", error)
             return None
+
+    def _log_snapshot_result(self, snapshot):
+        """开发模式逐次输出，正式模式首次及每隔五分钟输出完整结果。"""
+        if LOGGER.isEnabledFor(logging.DEBUG):
+            LOGGER.debug("[DEV] SensorHost 获取结果：[JSON] %s", self._snapshot_result_text(snapshot))
+            return
+        now = time.monotonic()
+        last_logged_at = getattr(self, "_last_snapshot_log_at", None)
+        if last_logged_at is not None and now - last_logged_at < SNAPSHOT_LOG_INTERVAL_SECONDS:
+            return
+        self._last_snapshot_log_at = now
+        LOGGER.info("SensorHost 获取结果：[JSON] %s", self._snapshot_result_text(snapshot))
+
+    @staticmethod
+    def _snapshot_result_text(snapshot):
+        """把 SensorHost 结果转换为紧凑且保留中文的 JSON 日志文本。"""
+        try:
+            return json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        except (TypeError, ValueError):
+            return repr(snapshot)
 
     def close(self):
         """优雅关闭 SensorHost，失败时终止 Job Object 或进程。"""
@@ -104,6 +129,7 @@ class SensorHostManager:
                 self._terminate_process_tree(process)
         self.process = None
         self.process_started_at = None
+        self._last_snapshot_log_at = None
         self._close_job_handle()
 
     def _is_process_running(self):

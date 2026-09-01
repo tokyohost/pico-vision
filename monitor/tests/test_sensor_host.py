@@ -214,7 +214,40 @@ class SensorHostManagerStartupTest(unittest.TestCase):
         manager.dependency_unavailable_message = None
         manager.available = True
         manager._unavailable_logged = False
+        manager._last_snapshot_log_at = None
         return sensor_host_module, manager
+
+    def test_snapshot_result_log_is_immediate_and_rate_limited(self):
+        """确认首次完整输出结果，五分钟内的后续快照不会刷屏。"""
+        sensor_host_module, manager = self._build_manager()
+        snapshot = {"cpu": {"temperature_c": None}, "hardware": [{"type": "Cpu"}]}
+
+        with mock.patch.object(sensor_host_module.LOGGER, "isEnabledFor", return_value=False), \
+                mock.patch.object(sensor_host_module.time, "monotonic", side_effect=(100.0, 101.0, 401.0)), \
+                mock.patch.object(sensor_host_module.LOGGER, "info") as log_info:
+            manager._log_snapshot_result(snapshot)
+            manager._log_snapshot_result(snapshot)
+            manager._log_snapshot_result(snapshot)
+
+        self.assertEqual(log_info.call_count, 2)
+        self.assertIn("SensorHost 获取结果", log_info.call_args_list[0].args[0])
+        self.assertIn('"temperature_c":null', log_info.call_args_list[0].args[1])
+
+    def test_dev_mode_logs_every_snapshot_result_directly(self):
+        """确认开发模式下每次调用都会直接输出完整 SensorHost 结果。"""
+        sensor_host_module, manager = self._build_manager()
+        snapshots = ({"sequence": 1}, {"sequence": 2})
+
+        with mock.patch.object(sensor_host_module.LOGGER, "isEnabledFor", return_value=True), \
+                mock.patch.object(sensor_host_module.LOGGER, "debug") as log_debug, \
+                mock.patch.object(sensor_host_module.LOGGER, "info") as log_info:
+            for snapshot in snapshots:
+                manager._log_snapshot_result(snapshot)
+
+        self.assertEqual(log_debug.call_count, 2)
+        self.assertIn("[DEV]", log_debug.call_args_list[0].args[0])
+        self.assertIn('"sequence":2', log_debug.call_args_list[1].args[1])
+        log_info.assert_not_called()
 
     def test_snapshot_skips_pipe_request_during_startup_grace(self):
         """确认刚启动的 SensorHost 不会立即连接命名管道。"""
