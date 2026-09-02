@@ -20,6 +20,10 @@
 #define WebView2Bootstrapper "dist\MicrosoftEdgeWebview2Setup.exe"
 #endif
 
+#ifndef PawnIoInstaller
+#define PawnIoInstaller "dist\PawnIO_setup.exe"
+#endif
+
 [Setup]
 AppId={{B7BA6741-67A0-4B49-89F2-5BC22215E90B}
 AppName=OmniWatch Monitor
@@ -49,6 +53,8 @@ Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "pico-monitor.exe"; Flags: i
 Source: "{#PluginRuntime}\*"; DestDir: "{app}\plugin-runtime"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Bootstrapper 仅在安装阶段使用，安装结束后由 Inno Setup 清理临时文件。
 Source: "{#WebView2Bootstrapper}"; DestDir: "{tmp}"; DestName: "MicrosoftEdgeWebview2Setup.exe"; Flags: deleteafterinstall
+; PawnIO 只在主安装程序的管理员上下文中安装，SensorHost 子进程不得自行安装或弹出界面。
+Source: "{#PawnIoInstaller}"; DestDir: "{tmp}"; DestName: "PawnIO_setup.exe"; Flags: deleteafterinstall
 
 [Icons]
 Name: "{group}\OmniWatch Monitor"; Filename: "{app}\pico-monitor.exe"
@@ -58,12 +64,14 @@ Name: "{autodesktop}\OmniWatch Monitor"; Filename: "{app}\pico-monitor.exe"; Tas
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加快捷方式："; Flags: unchecked
 
 [Run]
+Filename: "{tmp}\PawnIO_setup.exe"; Parameters: "-install"; StatusMsg: "正在安装 PawnIO 硬件访问驱动..."; Flags: waituntilterminated; Check: ShouldInstallPawnIo
 Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "正在安装 Microsoft Edge WebView2 Runtime..."; Flags: waituntilterminated; Check: not IsWebView2RuntimeInstalled
 Filename: "{app}\pico-monitor.exe"; Description: "启动 OmniWatch Monitor"; Flags: nowait postinstall skipifsilent runascurrentuser
 
 [Code]
 const
   WebView2ClientKey = 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+  PawnIoUninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\PawnIO';
 
 { 判断指定注册表位置是否包含有效的 WebView2 Runtime 版本。 }
 function HasUsableWebView2Version(RootKey: Integer; const ClientKey: String): Boolean;
@@ -80,4 +88,24 @@ begin
   { WebView2 的机器级注册信息位于 32 位注册表视图，用户级安装位于 HKCU。 }
   Result := HasUsableWebView2Version(HKCU, WebView2ClientKey) or
     HasUsableWebView2Version(HKLM32, WebView2ClientKey);
+end;
+
+{ 检查机器级注册表中是否已经存在 PawnIO 安装版本。 }
+function IsPawnIoInstalled(): Boolean;
+var
+  Version: String;
+begin
+  Result := False;
+  if IsWin64 then
+    Result := RegQueryStringValue(HKLM64, PawnIoUninstallKey, 'DisplayVersion', Version) and
+      (Trim(Version) <> '');
+  if not Result then
+    Result := RegQueryStringValue(HKLM32, PawnIoUninstallKey, 'DisplayVersion', Version) and
+      (Trim(Version) <> '');
+end;
+
+{ 仅在支持 SensorHost 的 64 位 Windows 且 PawnIO 未安装时执行驱动安装。 }
+function ShouldInstallPawnIo(): Boolean;
+begin
+  Result := IsWin64 and (not IsPawnIoInstalled());
 end;

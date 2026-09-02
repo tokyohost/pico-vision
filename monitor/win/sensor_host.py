@@ -51,6 +51,7 @@ class SensorHostManager:
         self.available = self.dependency_unavailable_message is None and self.executable_path is not None
         self._unavailable_logged = False
         self._last_snapshot_log_at = None
+        self._hardware_access_warning_logged = False
 
     def start(self):
         """启动 SensorHost 并把子进程加入 Job Object。"""
@@ -72,6 +73,7 @@ class SensorHostManager:
             )
             self.process_started_at = time.monotonic()
             self._last_snapshot_log_at = None
+            self._hardware_access_warning_logged = False
             self._attach_job_object()
             LOGGER.info("SensorHost 已启动：pid=%s，pipe=%s", self.process.pid, self.pipe_name)
             return True
@@ -97,6 +99,7 @@ class SensorHostManager:
 
     def _log_snapshot_result(self, snapshot):
         """开发模式逐次输出，正式模式首次及每隔五分钟输出完整结果。"""
+        self._log_hardware_access_warning(snapshot)
         if LOGGER.isEnabledFor(logging.DEBUG):
             LOGGER.debug("[DEV] SensorHost 获取结果：[JSON] %s", self._snapshot_result_text(snapshot))
             return
@@ -106,6 +109,29 @@ class SensorHostManager:
             return
         self._last_snapshot_log_at = now
         LOGGER.info("SensorHost 获取结果：[JSON] %s", self._snapshot_result_text(snapshot))
+
+    def _log_hardware_access_warning(self, snapshot):
+        """首次发现 PawnIO 或关键传感器异常时输出明确告警。"""
+        if self._hardware_access_warning_logged or not isinstance(snapshot, dict):
+            return
+        diagnostics = snapshot.get("hardware_access")
+        if not isinstance(diagnostics, dict):
+            return
+        status = str(diagnostics.get("status") or "unknown")
+        if status == "ready":
+            return
+        self._hardware_access_warning_logged = True
+        LOGGER.warning(
+            "SensorHost 硬件访问异常：status=%s，backend=%s，pawnio_installed=%s，"
+            "pawnio_version=%s，device_available=%s，process_elevated=%s，message=%s",
+            status,
+            diagnostics.get("backend"),
+            diagnostics.get("pawn_io_installed"),
+            diagnostics.get("pawn_io_version"),
+            diagnostics.get("device_available"),
+            diagnostics.get("process_elevated"),
+            diagnostics.get("message"),
+        )
 
     @staticmethod
     def _snapshot_result_text(snapshot):
@@ -130,6 +156,7 @@ class SensorHostManager:
         self.process = None
         self.process_started_at = None
         self._last_snapshot_log_at = None
+        self._hardware_access_warning_logged = False
         self._close_job_handle()
 
     def _is_process_running(self):

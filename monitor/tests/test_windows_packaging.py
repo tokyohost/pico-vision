@@ -72,6 +72,30 @@ class WindowsPackagingTest(unittest.TestCase):
         self.assertIn("prepare-webview2-bootstrapper.ps1", workflow)
         self.assertIn("/DWebView2Bootstrapper=", workflow)
 
+    def test_windows_installer_installs_pawnio_outside_sensor_host(self):
+        """确认 PawnIO 由主安装器安装，SensorHost 子进程只负责检测和采集。"""
+        installer = (MONITOR_ROOT / "pico_monitor_setup.iss").read_text(
+            encoding="utf-8"
+        )
+        workflow = (
+            PROJECT_ROOT / ".github" / "workflows" / "build-windows-exe.yml"
+        ).read_text(encoding="utf-8")
+        local_build = (MONITOR_ROOT / "build-exe.bat").read_text(
+            encoding="utf-8"
+        )
+        prepare_script = (MONITOR_ROOT / "prepare-pawnio-installer.ps1").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('Source: "{#PawnIoInstaller}"', installer)
+        self.assertIn('Parameters: "-install"', installer)
+        self.assertIn("Check: ShouldInstallPawnIo", installer)
+        self.assertIn("prepare-pawnio-installer.ps1", workflow)
+        self.assertIn("/DPawnIoInstaller=", workflow)
+        self.assertIn("prepare-pawnio-installer.ps1", local_build)
+        self.assertIn("Get-FileHash", prepare_script)
+        self.assertIn("1F519A22E47187F70A1379A48CA604981C4FCF694F4E65B734AAA74A9FBA3032", prepare_script)
+
     def test_mpremote_firmware_updater_is_bundled(self):
         """确认发布版包含 mpremote 模块和流式复制脚本。"""
         specification = (MONITOR_ROOT / "pico_monitor.spec").read_text(

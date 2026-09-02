@@ -215,7 +215,30 @@ class SensorHostManagerStartupTest(unittest.TestCase):
         manager.available = True
         manager._unavailable_logged = False
         manager._last_snapshot_log_at = None
+        manager._hardware_access_warning_logged = False
         return sensor_host_module, manager
+
+    def test_hardware_access_warning_is_logged_only_once(self):
+        """确认子进程返回 PawnIO 异常时只输出一次明确告警。"""
+        sensor_host_module, manager = self._build_manager()
+        snapshot = {
+            "hardware_access": {
+                "backend": "pawnio",
+                "pawn_io_installed": False,
+                "pawn_io_version": None,
+                "device_available": False,
+                "process_elevated": True,
+                "status": "pawnio_not_installed",
+                "message": "未检测到 PawnIO 安装信息。",
+            },
+        }
+
+        with mock.patch.object(sensor_host_module.LOGGER, "warning") as log_warning:
+            manager._log_hardware_access_warning(snapshot)
+            manager._log_hardware_access_warning(snapshot)
+
+        log_warning.assert_called_once()
+        self.assertIn("pawnio_not_installed", log_warning.call_args.args)
 
     def test_snapshot_result_log_is_immediate_and_rate_limited(self):
         """确认首次完整输出结果，五分钟内的后续快照不会刷屏。"""
