@@ -96,6 +96,24 @@ class WindowsPackagingTest(unittest.TestCase):
         self.assertIn("Get-FileHash", prepare_script)
         self.assertIn("1F519A22E47187F70A1379A48CA604981C4FCF694F4E65B734AAA74A9FBA3032", prepare_script)
 
+    def test_sensor_host_is_installed_outside_pyinstaller_archive(self):
+        """确认独立 SensorHost 由安装器直装，避免从 _MEI 临时目录启动。"""
+        specification = (MONITOR_ROOT / "pico_monitor.spec").read_text(
+            encoding="utf-8"
+        )
+        installer = (MONITOR_ROOT / "pico_monitor_setup.iss").read_text(
+            encoding="utf-8"
+        )
+        workflow = (
+            PROJECT_ROOT / ".github" / "workflows" / "build-windows-exe.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn('Path("sensorhost")', specification)
+        self.assertIn('Source: "{#SensorHostDirectory}\\*"', installer)
+        self.assertIn('DestDir: "{app}\\sensorhost"', installer)
+        self.assertIn("Check: IsWin64", installer)
+        self.assertIn('/DSensorHostDirectory="sensorhost"', workflow)
+
     def test_mpremote_firmware_updater_is_bundled(self):
         """确认发布版包含 mpremote 模块和流式复制脚本。"""
         specification = (MONITOR_ROOT / "pico_monitor.spec").read_text(

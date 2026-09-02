@@ -24,6 +24,10 @@
 #define PawnIoInstaller "dist\PawnIO_setup.exe"
 #endif
 
+#ifndef SensorHostDirectory
+#define SensorHostDirectory "sensorhost"
+#endif
+
 [Setup]
 AppId={{B7BA6741-67A0-4B49-89F2-5BC22215E90B}
 AppName=OmniWatch Monitor
@@ -51,6 +55,8 @@ Name: "chinesesimplified"; MessagesFile: "packaging\languages\ChineseSimplified.
 [Files]
 Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "pico-monitor.exe"; Flags: ignoreversion
 Source: "{#PluginRuntime}\*"; DestDir: "{app}\plugin-runtime"; Flags: ignoreversion recursesubdirs createallsubdirs
+; SensorHost 是独立的 x64 子进程，直接安装到稳定目录，避免经过 PyInstaller _MEI 临时目录二次解包。
+Source: "{#SensorHostDirectory}\*"; DestDir: "{app}\sensorhost"; Flags: ignoreversion recursesubdirs createallsubdirs; Check: IsWin64
 ; Bootstrapper 仅在安装阶段使用，安装结束后由 Inno Setup 清理临时文件。
 Source: "{#WebView2Bootstrapper}"; DestDir: "{tmp}"; DestName: "MicrosoftEdgeWebview2Setup.exe"; Flags: deleteafterinstall
 ; PawnIO 只在主安装程序的管理员上下文中安装，SensorHost 子进程不得自行安装或弹出界面。

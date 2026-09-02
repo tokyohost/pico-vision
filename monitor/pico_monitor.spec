@@ -14,13 +14,6 @@ for binary_name in ("PresentMon.exe", "adlx_fps_bridge.dll"):
 optional_datas = [("icon/icon.png", "icon"), ("assert/fishQr.png", "assert"), ("win/fps/PRESENTMON_LICENSE.txt", "win/fps"), ("custom_data/runner.py", "custom_data"), ("win/ui-web/dist", "win/ui-web/dist"), ("../tools/mpremote_stream_copy.py", "tools")]
 optional_datas.extend(collect_data_files("esptool"))
 optional_datas.extend(collect_data_files("webview"))
-sensor_host_directory = Path("sensorhost")
-if sensor_host_directory.is_dir():
-    for sensor_host_file in sensor_host_directory.rglob("*"):
-        if sensor_host_file.is_file():
-            target_directory = Path("sensorhost") / sensor_host_file.relative_to(sensor_host_directory).parent
-            optional_datas.append((str(sensor_host_file), str(target_directory)))
-
 analysis = Analysis(
     ["pico_monitor.py"],
     pathex=[],
