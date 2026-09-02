@@ -32,7 +32,8 @@ Monitor HTTP 管理服务。
 
 Windows 可在“设置 → HTTP 管理页面”中配置启停、端口和 Auth，默认端口为
 `9876`，首次运行会生成随机 Auth。Linux 通过 `pico-monitor.conf` 的 `http`
-节点配置。浏览器首次访问会要求输入 Auth，并保存到当前浏览器的
+节点配置，默认启用，初始 Auth 为 `omni-watch-123456789`；部署后应立即更换
+该公开默认值。浏览器首次访问会要求输入 Auth，并保存到当前浏览器的
 `localStorage`。
 
 如果配置端口被占用、被 Windows 排除或没有监听权限，服务会从该端口开始
