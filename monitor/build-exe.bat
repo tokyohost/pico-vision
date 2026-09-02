@@ -3,6 +3,8 @@ setlocal
 cd /d "%~dp0"
 
 if exist ".venv\Scripts\python.exe" (set "PYTHON=.venv\Scripts\python.exe") else (set "PYTHON=python")
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0verify-sensor-host.ps1" -SensorHostDirectory "%~dp0sensorhost"
+if errorlevel 1 exit /b 1
 "%PYTHON%" -m pip install -r requirements.txt -r requirements-build.txt
 if errorlevel 1 exit /b 1
 call npm ci --prefix win\ui-web

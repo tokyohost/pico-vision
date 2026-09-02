@@ -37,6 +37,14 @@ jobs:
     steps:
       - name: 检出项目代码
         uses: actions/checkout@v6
+        with:
+          # SensorHost、PawnIO 和 PresentMon 均由 Git LFS 管理，必须拉取真实二进制文件。
+          lfs: true
+
+      - name: 校验 SensorHost 发布文件
+        shell: pwsh
+        run: |
+          & .\verify-sensor-host.ps1 -SensorHostDirectory "$PWD\sensorhost"
 
       - name: 安装对应架构 Python
         uses: actions/setup-python@v6

@@ -114,6 +114,26 @@ class WindowsPackagingTest(unittest.TestCase):
         self.assertIn("Check: IsWin64", installer)
         self.assertIn('/DSensorHostDirectory="sensorhost"', workflow)
 
+    def test_sensor_host_lfs_file_is_downloaded_and_validated_before_packaging(self):
+        """确认 CI 拉取 LFS 真实文件，并在打包前校验 x64 PE 文件头。"""
+        workflow = (
+            PROJECT_ROOT / ".github" / "workflows" / "build-windows-exe.yml"
+        ).read_text(encoding="utf-8")
+        local_build = (MONITOR_ROOT / "build-exe.bat").read_text(
+            encoding="utf-8"
+        )
+        verification = (MONITOR_ROOT / "verify-sensor-host.ps1").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("lfs: true", workflow)
+        self.assertIn("verify-sensor-host.ps1", workflow)
+        self.assertIn("verify-sensor-host.ps1", local_build)
+        self.assertIn("git-lfs.github.com/spec/", verification)
+        self.assertIn("0x5A4D", verification)
+        self.assertIn("0x00004550", verification)
+        self.assertIn("0x8664", verification)
+
     def test_mpremote_firmware_updater_is_bundled(self):
         """确认发布版包含 mpremote 模块和流式复制脚本。"""
         specification = (MONITOR_ROOT / "pico_monitor.spec").read_text(
