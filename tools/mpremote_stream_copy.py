@@ -15,6 +15,9 @@ DEFAULT_SOURCE = Path(r"E:\WorkSpace\fn-vision\pico-project\esp32-s3")
 REMOTE_MANIFEST_PREFIX = "MPREMOTE_FILE:"
 REMOTE_MANIFEST_BATCH_SIZE = 40
 MPREMOTE_COMMAND_TIMEOUT_SECONDS = 9
+# 文件传输包含串口往返和闪存写入，按每秒 1 KiB 预留时间，至少等待 60 秒。
+MPREMOTE_COPY_MIN_TIMEOUT_SECONDS = 60
+MPREMOTE_COPY_BYTES_PER_SECOND = 1024
 
 class MpremoteStreamCopier:
     """使用 mpremote 命令逐目录、逐文件复制 Pico 工程。"""
@@ -59,7 +62,12 @@ class MpremoteStreamCopier:
             return False
         return True
 
-    def _run_mpremote(self, arguments: list[str], description: str) -> None:
+    def _run_mpremote(
+        self,
+        arguments: list[str],
+        description: str,
+        timeout_seconds: int = MPREMOTE_COMMAND_TIMEOUT_SECONDS,
+    ) -> None:
         """执行 mpremote 子命令，并将命令输出实时转发到当前终端。"""
         command = [*self.mpremote_command, "connect", self.port, *arguments]
         print(f"  {description}", flush=True)
@@ -67,14 +75,14 @@ class MpremoteStreamCopier:
             result = subprocess.run(
                 command,
                 check=False,
-                timeout=MPREMOTE_COMMAND_TIMEOUT_SECONDS,
+                timeout=timeout_seconds,
             )
         except KeyboardInterrupt:
             print("\n复制已由用户中止。", file=sys.stderr)
             raise
         except subprocess.TimeoutExpired as error:
             raise RuntimeError(
-                f"mpremote 执行超时（{MPREMOTE_COMMAND_TIMEOUT_SECONDS} 秒）：{description}"
+                f"mpremote 执行超时（{timeout_seconds} 秒）：{description}"
             ) from error
         if result.returncode != 0:
             raise RuntimeError(
@@ -306,6 +314,12 @@ class MpremoteStreamCopier:
                 self._run_mpremote(
                     ["fs", "cp", str(file), remote_path],
                     f"复制到 {remote_path[1:]}",
+                    timeout_seconds=max(
+                        MPREMOTE_COPY_MIN_TIMEOUT_SECONDS,
+                        MPREMOTE_COMMAND_TIMEOUT_SECONDS
+                        + (file_size + MPREMOTE_COPY_BYTES_PER_SECOND - 1)
+                        // MPREMOTE_COPY_BYTES_PER_SECOND,
+                    ),
                 )
                 copied_files += 1
                 copied_bytes += file_size

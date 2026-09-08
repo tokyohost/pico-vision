@@ -1,9 +1,25 @@
 """为设备端历史序列补齐缺失秒，并允许真实采样覆盖保持值。"""
 
 
-def _is_history_field(name):
-    """判断字段名称是否表示固定时间格历史序列。"""
-    return name == "history" or str(name).endswith("_history")
+def _is_kline_history(value):
+    """判断数组是否为带 OHLC 字段的股票 K 线历史。"""
+    if not isinstance(value, (list, tuple)):
+        return False
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        return all(
+            key in item for key in ("open", "close", "high", "low")
+        )
+    return False
+
+
+def _is_history_field(name, value=None):
+    """判断字段名称是否表示固定时间格历史序列，并排除股票 K 线数组。"""
+    return (
+        (name == "history" or str(name).endswith("_history"))
+        and not _is_kline_history(value)
+    )
 
 
 def _history_values(value):
@@ -66,7 +82,7 @@ class HistoryIncrease:
         """递归右移所有历史序列，并按缺失秒数追加最近值。"""
         if isinstance(container, dict):
             for name, value in container.items():
-                history = _history_values(value) if _is_history_field(name) else None
+                history = _history_values(value) if _is_history_field(name, value) else None
                 if history is not None:
                     if history:
                         latest_value = history[-1]
@@ -88,7 +104,7 @@ class HistoryIncrease:
         result = dict(incoming)
         for name, value in incoming.items():
             previous_value = previous.get(name)
-            if _is_history_field(name):
+            if _is_history_field(name, value):
                 real_history = _history_values(value)
                 local_history = _history_values(previous_value)
                 if (

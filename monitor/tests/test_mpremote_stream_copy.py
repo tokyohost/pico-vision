@@ -21,6 +21,44 @@ SPEC.loader.exec_module(MODULE)
 class MpremoteStreamCopyTest(unittest.TestCase):
     """确认内容一致文件被跳过，变化文件才上传。"""
 
+    def test_copy_allows_slow_transfers_and_scales_with_file_size(self):
+        """模拟超过九秒的上传，确认普通文件和大文件均有足够的传输时间。"""
+        for file_size, duration in ((42918, 15), (128 * 1024, 100)):
+            with self.subTest(file_size=file_size), tempfile.TemporaryDirectory() as directory:
+                source = Path(directory)
+                (source / "main.py").write_bytes(b"x" * file_size)
+                copier = MODULE.MpremoteStreamCopier("COM_TEST", source)
+
+                def run(command, **kwargs):
+                    """模拟传输耗时超过子进程期限时抛出超时异常。"""
+                    if kwargs["timeout"] < duration:
+                        raise MODULE.subprocess.TimeoutExpired(command, kwargs["timeout"])
+                    return MODULE.subprocess.CompletedProcess(command, 0)
+
+                with mock.patch.object(copier, "_check_environment"), mock.patch.object(
+                    MODULE.subprocess, "run", side_effect=run
+                ) as run_process, contextlib.redirect_stdout(io.StringIO()):
+                    copier.copy(force=True, restart=False)
+
+                self.assertEqual(1, run_process.call_count)
+                self.assertIn("cp", run_process.call_args.args[0])
+                self.assertGreaterEqual(run_process.call_args.kwargs["timeout"], 60)
+
+    def test_command_timeout_reports_actual_limit(self):
+        """普通命令保留九秒期限，上传超时应报告实际使用的期限。"""
+        copier = MODULE.MpremoteStreamCopier("COM_TEST", PROJECT_ROOT)
+        for timeout in (None, 60):
+            expected = 9 if timeout is None else timeout
+            options = {} if timeout is None else {"timeout_seconds": timeout}
+            with self.subTest(timeout=timeout), mock.patch.object(
+                MODULE.subprocess,
+                "run",
+                side_effect=MODULE.subprocess.TimeoutExpired("mpremote", expected),
+            ) as run_process, contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(RuntimeError, f"超时（{expected} 秒）"):
+                    copier._run_mpremote(["reset"], "测试命令", **options)
+                self.assertEqual(expected, run_process.call_args.kwargs["timeout"])
+
     def test_remote_manifest_parser_accepts_markers_among_noise(self):
         """设备输出含启动日志时仍应正确解析文件指纹。"""
         remote_path = "/目录/main.py"

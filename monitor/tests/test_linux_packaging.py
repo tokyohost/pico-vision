@@ -119,6 +119,20 @@ class LinuxPackagingTest(unittest.TestCase):
                     manifest,
                 )
 
+    def test_linux_installers_include_websocket_runtime_dependency(self):
+        """确认 DEB 与通用安装包都会安装 WebSocket 客户端运行依赖。"""
+        debian_control = (MONITOR_ROOT / "debian" / "control").read_text(
+            encoding="utf-8-sig"
+        )
+        requirements = (MONITOR_ROOT / "requirements.txt").read_text(
+            encoding="utf-8-sig"
+        )
+        installer = (MONITOR_ROOT / "install-linux.sh").read_text(encoding="utf-8-sig")
+
+        self.assertIn("python3-websocket", debian_control)
+        self.assertIn("websocket-client>=1.7", requirements)
+        self.assertIn('pip install -r "$INSTALL_ROOT/requirements.txt"', installer)
+
     def test_nas_release_packages_contain_version_and_all_strategies(self):
         """确认每种 NAS 发布包包含版本清单和完整系统策略。"""
         with tempfile.TemporaryDirectory() as directory:

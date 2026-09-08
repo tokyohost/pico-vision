@@ -39,6 +39,28 @@ class HistoryIncreaseTest(unittest.TestCase):
 
         self.assertEqual(normalized["cpu"]["history"], [20, 30, 45])
 
+    def test_kline_history_is_not_shifted_by_second_projection(self):
+        """确认股票 OHLC 历史不会被通用秒级补齐逻辑改写。"""
+        increase = HistoryIncrease()
+        snapshot = {
+            "stock": {
+                "history": [
+                    {"open": 10, "close": 11, "high": 12, "low": 9},
+                    {"open": 11, "close": 12, "high": 13, "low": 10},
+                ]
+            }
+        }
+        increase.receive(None, snapshot, 0)
+        increase.increase(snapshot, 10)
+
+        self.assertEqual(
+            snapshot["stock"]["history"],
+            [
+                {"open": 10, "close": 11, "high": 12, "low": 9},
+                {"open": 11, "close": 12, "high": 13, "low": 10},
+            ],
+        )
+
     def test_multiple_missing_seconds_repeat_latest_value(self):
         """确认一次跨过多秒时按固定时间格重复最近值。"""
         increase = HistoryIncrease()

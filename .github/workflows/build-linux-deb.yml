@@ -70,6 +70,12 @@ jobs:
           for package_file in ../pico-monitor_*_${{ matrix.arch }}.deb; do
             cp "${package_file}" "release-assets/OmniWatch_${package_file#../pico-monitor_}"
           done
+          for package_file in release-assets/*.deb; do
+            if ! dpkg-deb --field "${package_file}" Depends | grep -Eq '(^|, )python3-websocket([[:space:](,]|$)'; then
+              echo "DEB 运行依赖缺少 python3-websocket：${package_file}" >&2
+              exit 1
+            fi
+          done
           dpkg-deb --info release-assets/*.deb
           dpkg-deb --contents release-assets/*.deb
 
