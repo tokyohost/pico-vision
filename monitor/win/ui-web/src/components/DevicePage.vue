@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { invoke } from '../bridge'
+import { invoke, isHttpBridge, uploadFile } from '../bridge'
 import CopyableLog from './CopyableLog.vue'
 
 const props = defineProps({
@@ -34,6 +34,8 @@ const firmware = reactive({
 })
 const sdkLogView = ref(null)
 const deviceLogView = ref(null)
+const firmwareFileInput = ref(null)
+const sdkFileInput = ref(null)
 const deviceLogs = ref('')
 const registration = reactive({ registered: false, checking: false, uuid: '' })
 let refreshTimer = null
@@ -195,8 +197,31 @@ async function refreshRuntimeState(showError = false) {
  * 选择并校验本地固件全量包。
  */
 async function selectFirmwarePackage() {
+  if (isHttpBridge()) {
+    firmwareFileInput.value?.click()
+    return
+  }
   try {
     const result = await invoke('device.firmware.select')
+    if (!result.cancelled) {
+      firmware.package = result.package
+      ElMessage.success('固件 ZIP 包校验通过')
+    }
+  } catch (error) {
+    ElMessage.error(error?.message || String(error))
+  }
+}
+
+/**
+ * 接收浏览器上传的固件 ZIP，并调用统一固件包校验 action。
+ */
+async function handleBrowserFirmwareFile(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  try {
+    const upload = await uploadFile('firmware', [file])
+    const result = await invoke('device.firmware.select', { uploadId: upload.uploadId })
     if (!result.cancelled) {
       firmware.package = result.package
       ElMessage.success('固件 ZIP 包校验通过')
@@ -244,11 +269,13 @@ async function updateLocalFirmware() {
       '确认本地固件更新',
       { type: 'warning', confirmButtonText: '开始更新', distinguishCancelAndClose: true },
     )
-    const result = await invoke('device.firmware.updateLocal', {
-      packagePath: firmware.package.path,
+    const payload = {
       port: firmware.selectedPort,
       force: firmware.force,
-    })
+    }
+    if (firmware.package.uploadId) payload.uploadId = firmware.package.uploadId
+    else payload.packagePath = firmware.package.path
+    const result = await invoke('device.firmware.updateLocal', payload)
     if (result.started) {
       ElMessage.success(`已开始${firmware.force ? '全量' : '增量'}更新：${result.packageName}`)
       await refreshRuntimeState()
@@ -264,10 +291,33 @@ async function updateLocalFirmware() {
  * 选择并校验待刷写的 ESP32-S3 SDK 镜像。
  */
 async function selectSdkImage() {
+  if (isHttpBridge()) {
+    sdkFileInput.value?.click()
+    return
+  }
   try {
     const result = await invoke('device.sdk.select')
     if (!result.cancelled) {
       sdk.image = result.image
+      ElMessage.success('SDK 镜像校验通过')
+    }
+  } catch (error) {
+    ElMessage.error(error?.message || String(error))
+  }
+}
+
+/**
+ * 接收浏览器上传的 SDK 镜像，并调用统一镜像校验 action。
+ */
+async function handleBrowserSdkFile(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  try {
+    const upload = await uploadFile('sdk', [file])
+    const result = await invoke('device.sdk.select', { uploadId: upload.uploadId })
+    if (!result.cancelled) {
+      sdk.image = { ...result.image, uploadId: upload.uploadId }
       ElMessage.success('SDK 镜像校验通过')
     }
   } catch (error) {
@@ -313,10 +363,12 @@ async function startSdkFlash(force = false) {
       force ? '确认强刷 SDK' : '确认刷写 USB SDK',
       { type: 'warning', confirmButtonText: '开始刷写', distinguishCancelAndClose: true },
     )
-    const result = await invoke('device.sdk.flash', {
+    const payload = {
       force,
       port: force ? sdk.selectedPort : '',
-    })
+    }
+    if (sdk.image.uploadId) payload.uploadId = sdk.image.uploadId
+    const result = await invoke('device.sdk.flash', payload)
     Object.assign(sdk, result)
     ElMessage.success('SDK 更新任务已启动')
   } catch (error) {
@@ -451,6 +503,14 @@ onBeforeUnmount(() => {
     />
     <div class="sdk-toolbar section-gap">
       <el-button :disabled="sdk.busy" @click="selectSdkImage">选择并校验 SDK 镜像</el-button>
+      <input
+        v-if="isHttpBridge()"
+        ref="sdkFileInput"
+        type="file"
+        accept=".bin"
+        hidden
+        @change="handleBrowserSdkFile"
+      />
       <el-select
         v-model="sdk.selectedPort"
         :disabled="sdk.busy"
@@ -503,6 +563,14 @@ onBeforeUnmount(() => {
       <el-button :disabled="firmware.busy" @click="selectFirmwarePackage">
         选择固件 ZIP
       </el-button>
+      <input
+        v-if="isHttpBridge()"
+        ref="firmwareFileInput"
+        type="file"
+        accept=".zip"
+        hidden
+        @change="handleBrowserFirmwareFile"
+      />
       <el-select
         v-model="firmware.selectedPort"
         :disabled="firmware.busy"

@@ -243,8 +243,9 @@ class DeviceApiMixin:
 
     def _select_firmware_package(self, payload):
         """选择并校验待写入设备的本地全量固件包。"""
-        del payload
-        path = self._select_file(FIRMWARE_PACKAGE_FILE_TYPES)
+        path = str(payload.get("sourcePath") or "").strip()
+        if not path:
+            path = self._select_file(FIRMWARE_PACKAGE_FILE_TYPES)
         if not path:
             return {"cancelled": True}
         package_path = self._validate_firmware_package(path)
@@ -375,7 +376,9 @@ class DeviceApiMixin:
 
     def _start_local_firmware_update(self, payload):
         """使用用户选择的固件包、串口和更新模式启动后台任务。"""
-        package_path = self._validate_firmware_package(payload.get("packagePath"))
+        package_path = self._validate_firmware_package(
+            payload.get("sourcePath") or payload.get("packagePath")
+        )
         port = self._validate_selected_firmware_port(payload.get("port"))
         force = bool(payload.get("force"))
         if not self._application.update_lock.acquire(blocking=False):
@@ -457,11 +460,12 @@ class DeviceApiMixin:
 
     def _select_sdk_image(self, payload):
         """选择并严格校验 ESP32-S3 完整合并 SDK 镜像。"""
-        del payload
         with self._sdk_lock:
             if self._sdk_state["busy"]:
                 raise RuntimeError("SDK 更新正在执行，不能更换镜像")
-        path = self._select_file(SDK_IMAGE_FILE_TYPES)
+        path = str(payload.get("sourcePath") or "").strip()
+        if not path:
+            path = self._select_file(SDK_IMAGE_FILE_TYPES)
         if not path:
             return {"cancelled": True}
         information = _inspect_sdk_image(path)

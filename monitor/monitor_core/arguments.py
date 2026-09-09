@@ -88,6 +88,7 @@ def create_argument_parser(config=None):
     parser.add_argument("--upgrade-url", default=config_value(config, "PICO_MONITOR_UPGRADE_URL") or None, help="覆盖 Pico 全量固件包下载地址")
     parser.add_argument("--upgrade-sha256", default=config_value(config, "PICO_MONITOR_UPGRADE_SHA256") or None, help="可选的全量固件包 SHA-256 摘要")
     parser.add_argument("--update", action="store_true", help="从 GitHub 最新 Release 下载并安装当前架构的 Linux DEB")
+    parser.add_argument("--market-url", default=config_value(config, "PICO_MONITOR_MARKET_URL", "https://omni.mzlblog.com"), help="插件市场地址；HTTP 管理页面从该地址加载插件市场")
     http_group = parser.add_mutually_exclusive_group()
     http_group.add_argument("--http-enabled", dest="http_enabled", action="store_true", help="启用 HTTP 管理页面")
     http_group.add_argument("--no-http", dest="http_enabled", action="store_false", help="关闭 HTTP 管理页面")

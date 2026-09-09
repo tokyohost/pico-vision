@@ -115,7 +115,9 @@ class StyleApiMixin:
 
     def _style_upload(self, payload):
         """选择、校验并上传 Python 文件或 ZIP 样式包。"""
-        path = self._select_file(("屏幕样式 (*.py;*.zip)",))
+        path = str(payload.get("sourcePath") or "").strip()
+        if not path:
+            path = self._select_file(("屏幕样式 (*.py;*.zip)",))
         if not path:
             return {"cancelled": True}
         return self._upload_style_source(path, payload)

@@ -23,7 +23,7 @@ sudo journalctl -u pico-monitor -n 50 --no-pager
 
 然后使用浏览器访问 `http://Linux主机IP:9876/`，首次访问时输入 `omni-watch-123456789`。该初始 Auth 是公开默认值，首次登录后应立即替换为高强度随机密钥；如果 `auth` 留空，程序会在每次启动时随机生成 Auth，并将它写入启动日志。
 
-当前版本的 Linux HTTP 后端只支持读取应用信息和设备连接状态，尚未开放 `wifi.list`、`wifi.connect` 和 `wifi.forget`。因此页面虽然包含 Wi-Fi 界面，但点击扫描、连接或忘记网络时会返回“Linux HTTP 管理页面暂不支持此操作”。设备配网仍需使用本文后续的命令行控制方式。
+当前版本的 Linux HTTP 后端已经开放 `wifi.list`、`wifi.connect` 和 `wifi.forget`。这些动作会排队交给 Monitor 主循环执行，避免 HTTP 线程与设备协议流并发读写；设备配网可以直接在浏览器页面完成，也可以继续使用本文后续的命令行控制方式。
 
 > 将 `host` 配置为 `0.0.0.0` 会向局域网开放管理页面。请设置高强度 Auth，并通过主机防火墙限制访问来源；仅在本机使用时建议配置为 `127.0.0.1`。
 

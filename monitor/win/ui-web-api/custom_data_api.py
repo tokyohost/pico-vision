@@ -67,22 +67,18 @@ class CustomDataApiMixin:
 
     def _custom_data_import(self, payload):
         """选择 ZIP 插件包并导入自定义数据插件。"""
-        path = (
-            str(payload.get("sourcePath") or "").strip()
-            if payload.get("overwrite")
-            else self._select_file(("插件包 (*.zip)",))
-        )
+        path = str(payload.get("sourcePath") or "").strip()
+        if not path:
+            path = self._select_file(("插件包 (*.zip)",))
         if not path:
             return {"cancelled": True}
         return self._import_custom_data_source(path, payload)
 
     def _custom_data_import_directory(self, payload):
         """选择包含 plugin.json 的本地目录并导入自定义数据插件。"""
-        path = (
-            str(payload.get("sourcePath") or "").strip()
-            if payload.get("overwrite")
-            else self._select_directory()
-        )
+        path = str(payload.get("sourcePath") or "").strip()
+        if not path:
+            path = self._select_directory()
         if not path:
             return {"cancelled": True}
         return self._import_custom_data_source(path, payload)

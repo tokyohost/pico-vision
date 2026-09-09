@@ -118,9 +118,16 @@ class MonitorService(
         self.reboot_requested = threading.Event()
         self.sdk_bootloader_requested = threading.Event()
         self.custom_style_catalog_requested = threading.Event()
+        # HTTP 管理页面需要等待设备主循环返回结果，不能与快照发送线程并发
+        # 访问同一条协议流，因此为各类控制请求保留独立响应队列。
+        self.custom_style_catalog_waiters = queue.Queue()
         self.custom_style_uploads = queue.Queue()
+        self.custom_style_upload_waiters = queue.Queue()
         self.custom_style_deletes = queue.Queue()
+        self.custom_style_delete_waiters = queue.Queue()
         self.screenshot_requested = threading.Event()
+        self.screenshot_waiters = queue.Queue()
+        self.device_control_operations = queue.Queue()
         self.initialize_wifi_commands()
         self.initialize_websocket_client_commands()
         self.available_styles = set(BUILTIN_LCD_STYLES)
@@ -324,6 +331,118 @@ class MonitorService(
             ),
             flush=True,
         )
+
+    def request_device_control(self, action, payload=None, result_queue=None):
+        """安排一个需要独占设备协议流的控制动作。"""
+        self.device_control_operations.put(
+            (str(action), dict(payload or {}), result_queue)
+        )
+
+    def has_pending_device_control(self):
+        """返回是否存在等待主循环执行的设备控制动作。"""
+        operations = getattr(self, "device_control_operations", None)
+        return operations is not None and not operations.empty()
+
+    def publish_device_control(self):
+        """在设备协议空闲时执行 HTTP 管理页面提交的控制动作。"""
+        action, payload, result_queue = self.device_control_operations.get_nowait()
+        try:
+            if action == "device.firmware.update":
+                from pico_upgrade import PicoFirmwareUpgrader, PicoUpgradePackage
+
+                package_path = str(payload.get("path") or "").strip()
+                if not package_path:
+                    raise ValueError("缺少固件升级包路径")
+                package = PicoUpgradePackage(package_path)
+                try:
+                    PicoFirmwareUpgrader(self.client).upgrade(package)
+                finally:
+                    package.close()
+                result = {
+                    "status": "ok",
+                    "data": {"updated": True, "path": package_path},
+                }
+            elif action == "device.sdk.flash":
+                from sdk_flash import (
+                    run_esptool_flash,
+                    wait_for_esp32s3_bootloader_port,
+                )
+
+                image_path = str(payload.get("path") or "").strip()
+                port = str(payload.get("port") or "").strip()
+                if not image_path or not port:
+                    raise ValueError("缺少 SDK 镜像或刷写串口")
+                # 强刷时由 esptool 负责复位进入 ROM；普通刷写由调用方先让
+                # Pico 通过协议切换到 ROM 串口，再使用 no-reset 保护现有状态。
+                force = bool(payload.get("force"))
+                before = "default-reset" if force else "no-reset"
+                if not force:
+                    from serial.tools import list_ports
+
+                    previous_ports = tuple(list_ports.comports())
+                    self.client.enter_sdk_bootloader()
+                    self.client.close()
+                    port = wait_for_esp32s3_bootloader_port(
+                        port,
+                        previous_ports,
+                    )
+                exit_code = run_esptool_flash(
+                    port,
+                    image_path,
+                    before=before,
+                )
+                if exit_code not in (None, 0):
+                    raise RuntimeError("esptool 返回非零状态：{}".format(exit_code))
+                result = {
+                    "status": "ok",
+                    "data": {"flashed": True, "path": image_path, "port": port},
+                }
+            elif action == "device.reboot":
+                self.client.reboot()
+                result = {"status": "ok", "data": {"rebooted": True}}
+            elif action == "device.screenshot":
+                from datetime import datetime
+                from pathlib import Path
+
+                from PIL import Image
+
+                metadata, pixels = self.client.screenshot()
+                width = int(metadata["width"])
+                height = int(metadata["height"])
+                # Pico 回传 LCD 使用的大端 RGB565，Pillow 的 BGR;16 解码器
+                # 需要小端数据，因此先交换每个像素的两个字节。
+                little_endian_pixels = bytearray(len(pixels))
+                little_endian_pixels[0::2] = pixels[1::2]
+                little_endian_pixels[1::2] = pixels[0::2]
+                image = Image.frombytes(
+                    "RGB",
+                    (width, height),
+                    bytes(little_endian_pixels),
+                    "raw",
+                    "BGR;16",
+                )
+                screenshot_directory = Path(
+                    os.getenv(
+                        "PICO_MONITOR_SCREENSHOT_DIR",
+                        Path.cwd() / "screenshot",
+                    )
+                )
+                screenshot_directory.mkdir(parents=True, exist_ok=True)
+                path = screenshot_directory / datetime.now().strftime(
+                    "screenshot_%Y%m%d_%H%M%S_%f.png"
+                )
+                image.save(path, "PNG")
+                result = {
+                    "status": "ok",
+                    "data": {"requested": True, "path": str(path.resolve())},
+                }
+            else:
+                raise ValueError("不支持的设备控制动作：{}".format(action))
+        except Exception as error:
+            LOGGER.exception("执行设备控制动作失败：%s", action)
+            result = {"status": "error", "message": str(error) or "设备操作失败"}
+        if result_queue is not None:
+            result_queue.put(result)
 
     def _apply_runtime_qbittorrent(self, payload):
         """根据最新配置启动、停止或替换 qBittorrent 采集器。"""
@@ -815,6 +934,7 @@ class MonitorService(
                     or self.screenshot_requested.is_set()
                     or not self.custom_style_uploads.empty()
                     or not self.custom_style_deletes.empty()
+                    or self.has_pending_device_control()
                     or self.has_pending_wifi_operation()
                     or self.has_pending_websocket_client_operation()
                 )
@@ -828,6 +948,9 @@ class MonitorService(
                     self._publish_custom_style_upload()
                 if not self.custom_style_deletes.empty():
                     self._publish_custom_style_delete()
+                    continue
+                if self.has_pending_device_control():
+                    self.publish_device_control()
                     continue
                 if self.has_pending_wifi_operation():
                     self.publish_wifi_operation()

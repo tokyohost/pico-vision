@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import queue
 from datetime import datetime
 from pathlib import Path
 
@@ -70,12 +71,18 @@ class StyleCommandMixin:
         self.sdk_bootloader_requested.set()
         self.stopping.set()
 
-    def request_custom_style_catalog(self):
+    def request_custom_style_catalog(self, result_queue=None):
         """安排主循环在当前串口交互结束后查询自定义样式。"""
+        waiters = getattr(self, "custom_style_catalog_waiters", None)
+        if result_queue is not None and waiters is not None:
+            waiters.put(result_queue)
         self.custom_style_catalog_requested.set()
 
-    def request_screenshot(self):
+    def request_screenshot(self, result_queue=None):
         """安排主循环在当前串口交互完成后截取 LCD 画面。"""
+        waiters = getattr(self, "screenshot_waiters", None)
+        if result_queue is not None and waiters is not None:
+            waiters.put(result_queue)
         self.screenshot_requested.set()
 
     def _publish_screenshot(self):
@@ -111,6 +118,13 @@ class StyleCommandMixin:
             + json.dumps(result, ensure_ascii=False, separators=(",", ":")),
             flush=True,
         )
+        waiters = getattr(self, "screenshot_waiters", None)
+        try:
+            waiter = waiters.get_nowait() if waiters is not None else None
+        except queue.Empty:
+            waiter = None
+        if waiter is not None:
+            waiter.put(result)
 
     def _publish_custom_style_catalog(self):
         """通过 Pico 指令查询全部样式，同步配置后输出给托盘进程。"""
@@ -135,9 +149,19 @@ class StyleCommandMixin:
             + json.dumps(result, ensure_ascii=False, separators=(",", ":")),
             flush=True,
         )
+        waiters = getattr(self, "custom_style_catalog_waiters", None)
+        try:
+            waiter = waiters.get_nowait() if waiters is not None else None
+        except queue.Empty:
+            waiter = None
+        if waiter is not None:
+            waiter.put(result)
 
-    def request_custom_style_upload(self, payload):
+    def request_custom_style_upload(self, payload, result_queue=None):
         """安排主循环在串口空闲时上传一个已校验的自定义样式。"""
+        waiters = getattr(self, "custom_style_upload_waiters", None)
+        if result_queue is not None and waiters is not None:
+            waiters.put(result_queue)
         self.custom_style_uploads.put(dict(payload))
 
     def _publish_custom_style_upload(self):
@@ -177,9 +201,19 @@ class StyleCommandMixin:
             + json.dumps(result, ensure_ascii=False, separators=(",", ":")),
             flush=True,
         )
+        waiters = getattr(self, "custom_style_upload_waiters", None)
+        try:
+            waiter = waiters.get_nowait() if waiters is not None else None
+        except queue.Empty:
+            waiter = None
+        if waiter is not None:
+            waiter.put(result)
 
-    def request_custom_style_delete(self, payload):
+    def request_custom_style_delete(self, payload, result_queue=None):
         """安排主循环删除指定自定义样式。"""
+        waiters = getattr(self, "custom_style_delete_waiters", None)
+        if result_queue is not None and waiters is not None:
+            waiters.put(result_queue)
         self.custom_style_deletes.put(dict(payload))
 
     def _publish_custom_style_delete(self):
@@ -206,6 +240,13 @@ class StyleCommandMixin:
             + json.dumps(result, ensure_ascii=False, separators=(",", ":")),
             flush=True,
         )
+        waiters = getattr(self, "custom_style_delete_waiters", None)
+        try:
+            waiter = waiters.get_nowait() if waiters is not None else None
+        except queue.Empty:
+            waiter = None
+        if waiter is not None:
+            waiter.put(result)
 
     def apply_display_config(self, payload):
         """校验并热更新 Windows 托盘下发的显示配置。"""

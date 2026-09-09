@@ -8,8 +8,8 @@ except ImportError:
     _native_canvas = None
 
 
-NATIVE_CANVAS_API_VERSION = 9
-COMPATIBLE_NATIVE_CANVAS_API_VERSIONS = (7, 8, NATIVE_CANVAS_API_VERSION)
+NATIVE_CANVAS_API_VERSION = 10
+COMPATIBLE_NATIVE_CANVAS_API_VERSIONS = (7, 8, 9, NATIVE_CANVAS_API_VERSION)
 NATIVE_CANVAS_METHODS = (
     "clear", "pixel", "fill_rect", "line", "fill_polygon", "draw_columns",
     "draw_rect", "draw_grid", "draw_polyline", "draw_line_chart",
@@ -24,11 +24,12 @@ _FONT_KINDS = {
     "screen_2inch_compact": 2,
     "wqy_8x16": 3,
     "fusion_pixel_8x16": 4,
+    "zlabs_pixel_12px": 5,
 }
 
 
 def native_canvas_supported():
-    """检查当前 UF2 是否完整提供 API 7 或 API 8 的 Canvas C 接口。"""
+    """检查当前固件是否提供兼容版本的 Canvas C 接口。"""
     if _native_canvas is None:
         return False
     try:
@@ -49,7 +50,7 @@ def builtin_fonts_supported():
         return False
     try:
         return (
-            _native_canvas.api_version() >= NATIVE_CANVAS_API_VERSION
+            _native_canvas.api_version() >= 9
             and all(
                 callable(getattr(_native_canvas, method_name, None))
                 for method_name in BUILTIN_FONT_METHODS
@@ -65,7 +66,7 @@ def gradient_ring_supported():
         return False
     try:
         return (
-            _native_canvas.api_version() >= NATIVE_CANVAS_API_VERSION
+            _native_canvas.api_version() >= 9
             and all(
                 callable(getattr(_native_canvas, method_name, None))
                 for method_name in GRADIENT_RING_METHODS
@@ -148,6 +149,8 @@ class CanvasC(PythonCanvas):
                 PythonCanvas._draw_text(self, x, y, value, color, scale)
                 return
             font_kind = _FONT_KINDS.get(self._font_name, 0)
+            if font_kind == 5 and _native_canvas.api_version() < 10:
+                raise RuntimeError("Z工坊字体需要 fn_canvas API 10，请更新固件")
             if font_kind >= 3 and not builtin_fonts_supported():
                 raise RuntimeError("当前 UF2 未编译固件内置字体")
             _native_canvas.draw_text(
@@ -164,6 +167,8 @@ class CanvasC(PythonCanvas):
         previous = self._select_text_font(font_name)
         try:
             font_kind = _FONT_KINDS.get(self._font_name, 0)
+            if font_kind == 5 and _native_canvas.api_version() < 10:
+                raise RuntimeError("Z工坊字体需要 fn_canvas API 10，请更新固件")
             if font_kind >= 3:
                 if not builtin_fonts_supported():
                     raise RuntimeError("当前 UF2 未编译固件内置字体")

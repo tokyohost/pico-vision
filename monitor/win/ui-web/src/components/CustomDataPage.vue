@@ -1,11 +1,13 @@
 <script setup>
-import { onMounted, reactive } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { invoke } from '../bridge'
+import { invoke, isHttpBridge, uploadFile } from '../bridge'
 import { runWithGlobalLoading } from '../globalLoading'
 import CopyableLog from './CopyableLog.vue'
 
 const emit = defineEmits(['plugins-changed', 'catalog-updated'])
+const dataZipInput = ref(null)
+const dataDirectoryInput = ref(null)
 
 const customData = reactive({
   loading: false,
@@ -38,18 +40,31 @@ async function loadCustomData() {
  * 选择插件来源并处理重复插件覆盖确认。
  */
 async function importCustomData(action, sourceLabel) {
+  if (isHttpBridge()) {
+    const input = action === 'data.importDirectory'
+      ? dataDirectoryInput.value
+      : dataZipInput.value
+    input?.click()
+    return
+  }
+  await importCustomDataPayload(action, sourceLabel, {})
+}
+
+/**
+ * 使用指定参数导入插件，并在重复时复用浏览器上传内容或本地来源路径。
+ */
+async function importCustomDataPayload(action, sourceLabel, payload) {
   try {
-    let result = await invoke(action)
+    let result = await invoke(action, payload)
     if (result.requiresOverwrite) {
       await ElMessageBox.confirm(
         `${result.message}\n\n覆盖会删除旧插件目录及其独立环境，确定继续吗？`,
         '覆盖插件',
         { type: 'warning', confirmButtonText: '确认覆盖' },
       )
-      result = await invoke(action, {
-        overwrite: true,
-        sourcePath: result.sourcePath,
-      })
+      result = await invoke(action, payload.uploadId
+        ? { ...payload, overwrite: true }
+        : { overwrite: true, sourcePath: result.sourcePath })
     }
     if (!result.cancelled) {
       ElMessage.success(`${sourceLabel}“${result.chineseName}”导入成功`)
@@ -60,6 +75,23 @@ async function importCustomData(action, sourceLabel) {
     if (error !== 'cancel' && error !== 'close') {
       ElMessage.error(error?.message || String(error))
     }
+  }
+}
+
+/**
+ * 接收浏览器选择的 ZIP 或目录文件，并调用对应插件导入 action。
+ */
+async function handleBrowserImport(event, directory) {
+  const files = Array.from(event.target.files || [])
+  event.target.value = ''
+  if (!files.length) return
+  const action = directory ? 'data.importDirectory' : 'data.import'
+  const sourceLabel = directory ? '目录插件' : '插件'
+  try {
+    const upload = await uploadFile(directory ? 'data-directory' : 'data', files)
+    await importCustomDataPayload(action, sourceLabel, { uploadId: upload.uploadId })
+  } catch (error) {
+    ElMessage.error(error?.message || String(error))
   }
 }
 
@@ -243,6 +275,22 @@ onMounted(loadCustomData)
   <div class="custom-data-toolbar">
     <el-button @click="importCustomData('data.importDirectory', '目录插件')">导入目录</el-button>
     <el-button type="primary" @click="importCustomData('data.import', '插件')">导入 ZIP</el-button>
+    <input
+      v-if="isHttpBridge()"
+      ref="dataDirectoryInput"
+      type="file"
+      webkitdirectory
+      hidden
+      @change="handleBrowserImport($event, true)"
+    />
+    <input
+      v-if="isHttpBridge()"
+      ref="dataZipInput"
+      type="file"
+      accept=".zip"
+      hidden
+      @change="handleBrowserImport($event, false)"
+    />
   </div>
   <section class="custom-data-section section-gap" v-loading="customData.loading">
     <el-empty v-if="!customData.items.length" description="暂无插件" />

@@ -8,7 +8,7 @@ from importlib import import_module
 from pathlib import Path
 from unittest import mock
 
-from aiohttp import ClientSession, WSServerHandshakeError
+from aiohttp import ClientSession, FormData, WSServerHandshakeError
 
 from monitor_core.arguments import create_argument_parser
 from web_admin import HttpAdminServer
@@ -93,6 +93,27 @@ class HttpAdminServerTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(200, response.status)
                 self.assertTrue((await response.json())["ok"])
 
+    async def test_http_market_action_keeps_existing_invoke_protocol(self):
+        """确认 Windows HTTP 插件市场动作仍沿用原有 WebView invoke 契约。"""
+        url = "http://127.0.0.1:{}/api/invoke".format(self.port)
+        payload = {
+            "action": "market.install",
+            "payload": {
+                "pluginName": "测试插件",
+                "pluginType": "plugin",
+                "downloadUrl": "https://market.example/plugins/demo.zip",
+            },
+        }
+        async with ClientSession() as session:
+            async with session.post(
+                url,
+                json=payload,
+                headers={"Authorization": "Bearer test-auth"},
+            ) as response:
+                result = await response.json()
+        self.assertTrue(result["ok"])
+        self.assertEqual(("market.install", payload["payload"]), self.bridge.last_call)
+
     async def test_websocket_proxies_invoke_with_request_id(self):
         """确认合法连接可以按请求编号代理 invoke 并返回结果。"""
         async with ClientSession() as session:
@@ -137,6 +158,63 @@ class HttpAdminServerTest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(response["result"]["ok"])
             self.assertIsNone(self.bridge.last_call)
             await socket_client.close()
+
+    async def test_browser_upload_resolves_to_server_owned_path(self):
+        """确认浏览器上传可以驱动原有 action，且不会接受任意本地路径。"""
+        form = FormData()
+        form.add_field(
+            "files",
+            b'{"name":"demo"}',
+            filename="Demo/plugin.json",
+            content_type="application/json",
+        )
+        form.add_field(
+            "files",
+            b"print('demo')\n",
+            filename="Demo/main.py",
+            content_type="text/x-python",
+        )
+        upload_url = "http://127.0.0.1:{}/api/uploads/data-directory".format(self.port)
+        invoke_url = "http://127.0.0.1:{}/api/invoke".format(self.port)
+        async with ClientSession() as session:
+            async with session.post(
+                upload_url,
+                data=form,
+                headers={"Authorization": "Bearer test-auth"},
+            ) as response:
+                self.assertEqual(200, response.status)
+                upload = (await response.json())["data"]
+            async with session.post(
+                invoke_url,
+                json={
+                    "action": "data.importDirectory",
+                    "payload": {"uploadId": upload["uploadId"]},
+                },
+                headers={"Authorization": "Bearer test-auth"},
+            ) as response:
+                result = await response.json()
+        self.assertTrue(result["ok"])
+        action, payload = self.bridge.last_call
+        self.assertEqual("data.importDirectory", action)
+        self.assertTrue(str(payload["sourcePath"]).endswith("Demo"))
+        self.assertNotIn(upload["uploadId"], self.server._uploads)
+
+    async def test_file_action_without_browser_upload_is_rejected(self):
+        """确认 HTTP 页面不会把任意服务器本地路径传入文件选择 action。"""
+        url = "http://127.0.0.1:{}/api/invoke".format(self.port)
+        async with ClientSession() as session:
+            async with session.post(
+                url,
+                json={
+                    "action": "style.upload",
+                    "payload": {"sourcePath": "C:/secret/style.py"},
+                },
+                headers={"Authorization": "Bearer test-auth"},
+            ) as response:
+                result = await response.json()
+        self.assertFalse(result["ok"])
+        self.assertIn("浏览器", result["message"])
+        self.assertIsNone(self.bridge.last_call)
 
     async def test_server_automatically_uses_next_available_port(self):
         """确认配置端口被占用时服务会自动监听后续可用端口。"""
@@ -191,6 +269,13 @@ class HttpAdminConfigurationTest(unittest.TestCase):
         self.assertEqual("127.0.0.1", arguments.http_host)
         self.assertEqual(9988, arguments.http_port)
         self.assertEqual("configured-auth", arguments.http_auth)
+
+    def test_market_url_reads_yaml_value(self):
+        """确认 Linux YAML 的 market.url 会成为插件市场配置。"""
+        arguments = create_argument_parser({
+            "market": {"url": "https://market.example/market"},
+        }).parse_args([])
+        self.assertEqual("https://market.example/market", arguments.market_url)
 
 
 class WindowsSettingsDefaultTest(unittest.TestCase):

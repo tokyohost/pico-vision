@@ -8,11 +8,15 @@ Pico Monitor 在 Linux 上默认启用无桌面的 HTTP 管理页面，适合服
 
 当前 Linux HTTP 后端支持：
 
-- 查看应用名称、Monitor 版本和基础配置；
-- 查看设备是否连接、当前端口和传输类型；
-- 通过健康检查接口确认 HTTP 服务是否正常。
+- 查看和保存应用配置、设备连接状态、Wi-Fi 与 WebSocket 客户端策略；
+- 通过设备主循环执行设备探测、截图、重启、样式目录管理和 Wi-Fi 操作；
+- 在浏览器中上传 ZIP 插件、目录插件、PY/ZIP 样式、固件 ZIP 和 SDK 镜像；
+- 在同源插件市场中安装数据插件和屏幕样式，并查询安装进度；
+- 查询、清理日志和检查/安装 Linux 应用更新。
 
-当前 Linux HTTP 后端暂不支持修改配置、扫描或连接 Wi-Fi、管理 WebSocket 客户端、上传样式和选择服务器本地文件。页面调用未开放的功能时，会返回“Linux HTTP 管理页面暂不支持此操作”。设备 Wi-Fi 配置请参阅 [`linux-wifi-config.md`](linux-wifi-config.md)。
+浏览器上传文件会暂存于 Monitor 生成的临时目录，默认 30 分钟后清理；HTTP action 不接受浏览器直接传入的服务器本地路径。日志导出和打开服务器目录仍属于桌面专属功能，页面会给出明确提示。设备 Wi-Fi 配置也可参阅 [`linux-wifi-config.md`](linux-wifi-config.md)。
+
+插件市场地址可在“设置 → 插件市场”中修改，Linux 配置文件对应 `market.url`。市场下载地址必须与该配置同源，单个市场 ZIP 最大 20 MB。
 
 ## 默认配置
 
@@ -30,6 +34,13 @@ http:
   host: 0.0.0.0
   port: 9876
   auth: "omni-watch-123456789"
+```
+
+插件市场配置位于同一文件的 `market` 节点：
+
+```yaml
+market:
+  url: "https://omni.mzlblog.com"
 ```
 
 各配置项含义：

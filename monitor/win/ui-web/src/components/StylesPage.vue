@@ -1,7 +1,7 @@
 <script setup>
-import { onMounted, reactive } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { invoke } from '../bridge'
+import { invoke, isHttpBridge, uploadFile } from '../bridge'
 
 const props = defineProps({
   styles: { type: Array, required: true },
@@ -38,6 +38,7 @@ const styleDetailSources = Object.fromEntries(
   }),
 )
 const styleDetail = reactive({ visible: false, title: '', content: '' })
+const styleFileInput = ref(null)
 
 /**
  * 为独立详情页注入与主界面一致的滚动条主题。
@@ -136,24 +137,53 @@ function applyActiveDeviceStyle(activeStyle, catalog) {
  * 选择并上传自定义屏幕样式。
  */
 async function uploadStyle() {
+  if (isHttpBridge()) {
+    styleFileInput.value?.click()
+    return
+  }
   const existingNames = remoteStyles.items.map((item) => item.name)
+  await uploadStylePayload({ existingNames })
+}
+
+/**
+ * 使用指定参数提交样式上传，并在重复时复用同一次上传内容确认覆盖。
+ */
+async function uploadStylePayload(payload) {
   try {
-    const result = await invoke('style.upload', { existingNames })
+    const result = await invoke('style.upload', payload)
     if (!result.cancelled) {
       ElMessage.success('自定义样式上传成功')
       await loadRemoteStyles()
     }
   } catch (error) {
-    if (/已存在/.test(error.message || '')) {
+    if (/已存在/.test(error?.message || '')) {
       try {
         await ElMessageBox.confirm(`${error.message}。是否覆盖？`, '覆盖样式', { type: 'warning' })
-        await invoke('style.upload', { existingNames, overwrite: true })
+        await invoke('style.upload', { ...payload, overwrite: true })
         await loadRemoteStyles()
       } catch (nestedError) {
         if (nestedError !== 'cancel') ElMessage.error(nestedError?.message || String(nestedError))
       }
       return
     }
+    ElMessage.error(error?.message || String(error))
+  }
+}
+
+/**
+ * 接收浏览器选择的样式文件并交给统一的样式 action 处理。
+ */
+async function handleBrowserStyleFile(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  try {
+    const upload = await uploadFile('style', [file])
+    await uploadStylePayload({
+      uploadId: upload.uploadId,
+      existingNames: remoteStyles.items.map((item) => item.name),
+    })
+  } catch (error) {
     ElMessage.error(error?.message || String(error))
   }
 }
@@ -211,6 +241,14 @@ onMounted(loadRemoteStyles)
     <el-button type="primary" title="支持单个 py 文件或包含 plugin.json 的 zip 样式包" @click="uploadStyle">
       上传 PY / ZIP 样式
     </el-button>
+    <input
+      v-if="isHttpBridge()"
+      ref="styleFileInput"
+      type="file"
+      accept=".py,.zip"
+      hidden
+      @change="handleBrowserStyleFile"
+    />
   </div>
   <div class="style-grid">
     <article

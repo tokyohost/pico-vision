@@ -11,16 +11,19 @@ class BuiltinFont:
 
     height = 16
 
-    def __init__(self, name, kind):
+    def __init__(self, name, kind, height=16):
         """保存公开字体名称和固件字体编号。"""
         self.name = name
         self.kind = kind
+        self.height = height
 
-    @staticmethod
-    def _require_native_canvas():
+    def _require_native_canvas(self):
         """返回固件模块，不支持内置字体时抛出明确错误。"""
         if _native_canvas is None or not hasattr(_native_canvas, "font_glyph"):
             raise RuntimeError("当前 MicroPython 固件未编译 fn_canvas 双语字体")
+        if self.kind == 5 and (not hasattr(_native_canvas, "api_version")
+                               or _native_canvas.api_version() < 10):
+            raise RuntimeError("Z工坊字体需要 fn_canvas API 10，请更新固件")
         return _native_canvas
 
     def glyph(self, character):
@@ -37,9 +40,11 @@ class BuiltinFont:
         return self.glyph(character)
 
     def advance(self, character):
-        """返回半角八像素或全角十六像素的水平步进。"""
+        """返回当前字体的半角或全角水平步进。"""
         return self._require_native_canvas().text_width(self.kind, character, 1)
 
 
 WQY_8X16 = BuiltinFont("wqy_8x16", 3)
 FUSION_PIXEL_8X16 = BuiltinFont("fusion_pixel_8x16", 4)
+
+ZLABS_PIXEL_12PX = BuiltinFont("zlabs_pixel_12px", 5, 12)

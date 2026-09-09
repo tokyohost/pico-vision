@@ -73,11 +73,12 @@ class Canvas:
             "screen_2inch": FONT_SCREEN_2INCH,
             "screen_2inch_compact": FONT_SCREEN_2INCH_COMPACT,
         }
-        if normalized_name in ("wqy_8x16", "fusion_pixel_8x16"):
-            from font_builtin import FUSION_PIXEL_8X16, WQY_8X16
+        if normalized_name in ("wqy_8x16", "fusion_pixel_8x16", "zlabs_pixel_12px"):
+            from font_builtin import FUSION_PIXEL_8X16, WQY_8X16, ZLABS_PIXEL_12PX
             fonts.update({
                 "wqy_8x16": WQY_8X16,
                 "fusion_pixel_8x16": FUSION_PIXEL_8X16,
+                "zlabs_pixel_12px": ZLABS_PIXEL_12PX,
             })
         if normalized_name not in fonts:
             raise ValueError("未知点阵字体：{}".format(normalized_name))

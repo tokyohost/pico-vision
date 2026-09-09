@@ -21,6 +21,18 @@ function installHttpBridge() {
   let sequence = 0
 
   /**
+   * 允许带有 uploadId 的 action 复用浏览器上传临时文件。
+   */
+  const uploadActions = new Set([
+    'data.import',
+    'data.importDirectory',
+    'style.upload',
+    'device.firmware.select',
+    'device.firmware.updateLocal',
+    'device.sdk.select',
+  ])
+
+  /**
    * 请求用户输入鉴权密钥并保存到当前浏览器。
    */
   function requireAuth() {
@@ -106,7 +118,9 @@ function installHttpBridge() {
    */
   async function invoke(action, payload = {}) {
     const unsupported = unsupportedActions.get(action)
-    if (unsupported) return { ok: false, message: unsupported }
+    if (unsupported && !(uploadActions.has(action) && payload?.uploadId)) {
+      return { ok: false, message: unsupported }
+    }
     const client = await ensureConnected()
     const id = `${Date.now()}-${++sequence}`
     return new Promise((resolve, reject) => {
@@ -119,6 +133,39 @@ function installHttpBridge() {
     })
   }
 
+  /**
+   * 将一个或多个 File 对象上传到受鉴权保护的临时目录。
+   */
+  async function upload(kind, fileList) {
+    const files = Array.from(fileList || [])
+    if (!files.length) throw new Error('未选择文件')
+    const form = new FormData()
+    for (const file of files) {
+      const name = file.webkitRelativePath || file.name
+      form.append('files', file, name)
+    }
+    const response = await window.fetch(
+      `/api/uploads/${encodeURIComponent(kind)}`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${requireAuth()}` },
+        body: form,
+      },
+    )
+    let result
+    try {
+      result = await response.json()
+    } catch {
+      result = { ok: false, message: '服务器返回了无效上传响应' }
+    }
+    if (!response.ok || !result?.ok) {
+      if (response.status === 401) window.localStorage.removeItem(authStorageKey)
+      throw new Error(result?.message || `文件上传失败（${response.status}）`)
+    }
+    return result.data ?? result
+  }
+
+  window.__omniwatchHttpBridge = { upload }
   window.pywebview = { api: { invoke } }
   window.dispatchEvent(new Event('pywebviewready'))
 }
