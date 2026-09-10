@@ -60,6 +60,8 @@ class _UsbCdcWriteJob:
         self.label = label
         self.build_elapsed_ms = build_elapsed_ms
         self.timeout = timeout
+        self.deadline = time.monotonic() + timeout
+        self.cancelled = threading.Event()
         self.done = threading.Event()
         self.result = None
         self.error = None
@@ -150,14 +152,17 @@ class UsbCdcFramework:
         if self._stopping.is_set():
             raise UsbCdcFrameworkClosed("USB CDC 框架已关闭")
         self.raise_error_if_any()
-        job = _UsbCdcWriteJob(packet, label, build_elapsed_ms, max(0.1, float(timeout)))
+        job = _UsbCdcWriteJob(packet, label, build_elapsed_ms, max(0.0, float(timeout)))
         try:
             self._write_queue.put(job, timeout=job.timeout)
         except queue.Full as error:
             raise serial.SerialTimeoutException(
                 "{} 写入队列已满，USB CDC 仍在背压".format(label)
             ) from error
-        if not job.done.wait(job.timeout):
+        if not job.done.wait(max(0.0, job.deadline - time.monotonic())):
+            job.cancelled.set()
+            # 半帧写入超时后禁止继续复用连接，防止旧帧和下一事务交错。
+            self._record_error(serial.SerialTimeoutException("USB CDC 写入超时，连接需要重建"))
             raise serial.SerialTimeoutException(
                 "{} 写入等待超过 {:.1f} 秒".format(label, job.timeout)
             )
@@ -250,27 +255,31 @@ class UsbCdcFramework:
         packet = memoryview(job.packet)
         result = UsbCdcWriteResult(job.label, len(packet), job.build_elapsed_ms)
         result.send_started = time.monotonic()
-        deadline = result.send_started + job.timeout
+        deadline = job.deadline
         position = 0
         while position < len(packet):
-            if time.monotonic() >= deadline:
+            if job.cancelled.is_set() or self._stopping.is_set() or time.monotonic() >= deadline:
                 raise serial.SerialTimeoutException(
                     "{} 发送超过 {:.1f} 秒".format(job.label, job.timeout)
                 )
             chunk = packet[position:position + self.write_chunk_size]
             write_started = time.monotonic()
+            previous_timeout = getattr(self.device, "write_timeout", None)
+            if hasattr(self.device, "write_timeout"):
+                self.device.write_timeout = max(0.0, deadline - time.monotonic())
             try:
+                # 抛出超时时可能已有部分字节落线，不能盲目重发整个块。
                 written = self.device.write(chunk)
-            except serial.SerialTimeoutException:
-                time.sleep(CDC_WRITE_RETRY_SECONDS)
-                continue
+            finally:
+                if hasattr(self.device, "write_timeout"):
+                    self.device.write_timeout = previous_timeout
             chunk_elapsed_ms = (time.monotonic() - write_started) * 1000
             result.write_elapsed_ms += chunk_elapsed_ms
             result.slowest_write_ms = max(result.slowest_write_ms, chunk_elapsed_ms)
             result.chunk_count += 1
             if written is None:
-                written = len(chunk)
-            if written < 0:
+                written = 0
+            if written < 0 or written > len(chunk):
                 raise serial.SerialTimeoutException("{} 写入返回负数".format(job.label))
             if written == 0:
                 time.sleep(CDC_WRITE_RETRY_SECONDS)
@@ -283,6 +292,8 @@ class UsbCdcFramework:
         self.device.flush()
         result.flush_elapsed_ms = (time.monotonic() - flush_started) * 1000
         result.send_finished = time.monotonic()
+        if job.cancelled.is_set() or result.send_finished >= deadline:
+            raise serial.SerialTimeoutException("{} 写入完成时已超过预算".format(job.label))
         result.send_elapsed_ms = (result.send_finished - result.send_started) * 1000
         return result
 

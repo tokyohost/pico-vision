@@ -34,6 +34,22 @@ class WindowsReleaseUpdaterTest(unittest.TestCase):
                 updater.latest_release("https://updates.example/latest", include_notes=True),
             )
 
+    def test_preview_filter_and_developer_plan(self):
+        """验证默认隐藏预览版本，加入计划后可发现预发布并跳过草稿。"""
+        updater = WindowsReleaseUpdater("owner/repository", "1.0.0")
+        preview = {"tag_name": "v2.0.0-preview.1", "assets": [{"name": "固件"}], "body": "预览说明"}
+        with mock.patch.object(updater, "_request_json", return_value=preview):
+            self.assertEqual(("1.0.0", [], ""), updater.latest_release(include_notes=True))
+        updater.include_preview = True
+        with mock.patch.object(updater, "_request_json", return_value=[
+            {"tag_name": "v3.0.0-preview", "draft": True}, preview
+        ]) as request:
+            self.assertEqual(("2.0.0-preview.1", preview["assets"]), updater.latest_release())
+            request.assert_called_once_with("https://api.github.com/repos/owner/repository/releases")
+        updater.include_preview = False
+        with mock.patch.object(updater, "_request_json", return_value=[preview, {"tag_name": "v1.5.0"}]):
+            self.assertEqual(("1.5.0", []), updater.latest_release())
+
     def test_selects_matching_windows_and_pico_assets(self):
         """确认按进程位数和版本选择两个更新资源。"""
         assets = [

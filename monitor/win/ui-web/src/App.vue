@@ -214,7 +214,7 @@ onBeforeUnmount(() => {
         />
         <UpdatePage v-else-if="activePage === 'update'" :device="device" :application-version="metadata.version" />
         <LogsPage v-else-if="activePage === 'logs'" />
-        <AboutPage v-else :metadata="metadata" />
+        <AboutPage v-else :metadata="metadata" :settings="settings" />
       </el-main>
     </el-container>
   </el-container>

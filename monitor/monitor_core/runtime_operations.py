@@ -478,6 +478,22 @@ class RuntimeOperationsMixin:
         snapshot_store = getattr(self, "_snapshot_store", None)
         snapshot = snapshot_store.snapshot() if snapshot_store is not None else dict(self._latest_collected_snapshot)
         snapshot["display"] = self._display_configuration_snapshot()
+        manager = getattr(self, "custom_data_manager", None)
+        if manager is not None and isinstance(snapshot.get("ext"), dict):
+            # 只复制发送视图；非当前样式插件仍持续采集，切回时直接使用最新缓存。
+            ext = dict(snapshot["ext"])
+            active_style = snapshot["display"]["style"]
+            for definition in manager.list_definitions():
+                mode = getattr(definition, "data_mode", "auto")
+                if mode == "auto":
+                    mode = "active_style" if definition.bind_style else "always"
+                if mode == "active_style":
+                    filename = definition.style_filename
+                    style_name = filename[6:-3] if filename.startswith("style_") and filename.endswith(".py") else ""
+                    if not style_name or active_style != style_name:
+                        ext.pop(definition.key, None)
+            # 保留空对象，使增量事务明确删除设备上旧插件数据。
+            snapshot["ext"] = ext
         return snapshot
 
     def _display_configuration_snapshot(self):

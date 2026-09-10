@@ -117,6 +117,8 @@ def _build_crc16_byte_table():
 
 CRC16_BYTE_TABLE = _build_crc16_byte_table()
 JSONZ_GC_FREE_THRESHOLD = 72 * 1024
+# 限制未提交事务的序列化体积，防止网络缺片期间无限累积。
+SNAPSHOT_TRANSACTION_MAX_BYTES = 262144
 
 
 def _collect_jsonz_garbage_if_needed():
@@ -189,6 +191,10 @@ class JsonProtocol:
         self._command_registry = None
         self._command_services = {"upgrade_manager": self._upgrade_manager}
         self._last_message_ms = None
+        # 快照事务只在全部分片收齐后提交，避免设备显示半份数组。
+        self._snapshot_chunk_transaction = None
+        self._committed_snapshot = None
+        self._committed_batch = None
 
     def set_command_services(self, services):
         """合并应用层命令服务，供延迟创建的命令策略注册表使用。"""
@@ -344,6 +350,9 @@ class JsonProtocol:
                 continue
 
             if message_type == "PING":
+                # 新连接从完整快照重新建立基线，丢弃断线前未完成的事务。
+                self._snapshot_chunk_transaction = None
+                self._committed_batch = None
                 self._write_pong()
             elif message_type == "JSONZ":
                 snapshot = self._handle_jsonz_frame(
@@ -354,7 +363,8 @@ class JsonProtocol:
                     parse_elapsed_ms=parse_elapsed_ms,
                 )
                 if snapshot is not None:
-                    latest = self._merge_parsed_snapshots(latest, snapshot)
+                    # 事务返回的是完整状态，不能递归并回已删除的旧字段。
+                    latest = snapshot if snapshot is self._committed_snapshot else self._merge_parsed_snapshots(latest, snapshot)
             else:
                 self._write_frame("ERR", b"UNKNOWN_TYPE")
         return latest
@@ -372,6 +382,212 @@ class JsonProtocol:
             else:
                 merged[key] = value
         return merged
+
+    @staticmethod
+    def _clone_snapshot_value(value):
+        """递归复制 JSON 值，兼容未提供 copy.deepcopy 的 MicroPython。"""
+        if isinstance(value, dict):
+            return {key: JsonProtocol._clone_snapshot_value(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [JsonProtocol._clone_snapshot_value(item) for item in value]
+        return value
+
+    @classmethod
+    def _snapshot_path_parent(cls, root, path, create=False):
+        """定位操作路径的父容器，并按需创建字典或数组节点。"""
+        current = root
+        for index, part in enumerate(path[:-1]):
+            next_part = path[index + 1]
+            if isinstance(current, dict):
+                if part not in current or not isinstance(current[part], (dict, list)):
+                    if not create:
+                        return None, None
+                    current[part] = [] if isinstance(next_part, int) else {}
+                current = current[part]
+            elif isinstance(current, list) and isinstance(part, int):
+                while len(current) <= part:
+                    current.append(None)
+                if not isinstance(current[part], (dict, list)):
+                    if not create:
+                        return None, None
+                    current[part] = [] if isinstance(next_part, int) else {}
+                current = current[part]
+            else:
+                return None, None
+        return current, path[-1] if path else None
+
+    @classmethod
+    def _snapshot_set_path(cls, root, path, value):
+        """设置 JSON 路径并返回可能被根路径替换后的对象。"""
+        if not path:
+            return cls._clone_snapshot_value(value)
+        parent, key = cls._snapshot_path_parent(root, path, True)
+        value = cls._clone_snapshot_value(value)
+        if isinstance(parent, dict):
+            parent[key] = value
+        elif isinstance(parent, list) and isinstance(key, int):
+            while len(parent) <= key:
+                parent.append(None)
+            parent[key] = value
+        else:
+            raise ValueError("SNAPSHOT_PATH_INVALID")
+        return root
+
+    @classmethod
+    def _snapshot_get_path(cls, root, path):
+        """读取 JSON 路径，缺失时返回空值。"""
+        current = root
+        for part in path:
+            if isinstance(current, dict):
+                current = current.get(part)
+            elif isinstance(current, list) and isinstance(part, int) and part < len(current):
+                current = current[part]
+            else:
+                return None
+        return current
+
+    @classmethod
+    def _apply_snapshot_chunk_ops(cls, base, operations):
+        """将事务操作应用到暂存快照，支持数组偏移、扩容、移位和文本续传。"""
+        # 全量首操作覆盖根时，不复制即将丢弃的大型旧快照。
+        iterator = iter(operations)
+        first = next(iterator, None)
+        if first is None:
+            return cls._clone_snapshot_value(base) if isinstance(base, dict) else {}
+        full_reset = first.get("op") == "set" and first.get("path") == []
+        root = {} if full_reset else cls._clone_snapshot_value(base) if isinstance(base, dict) else {}
+
+        def pending_operations():
+            """以迭代方式消费分片，避免额外建立全事务操作列表。"""
+            yield first
+            for item in iterator:
+                yield item
+
+        operations = pending_operations()
+        for operation in operations:
+            path = operation.get("path") or []
+            if not isinstance(path, list):
+                raise ValueError("SNAPSHOT_PATH_INVALID")
+            op = operation.get("op")
+            if op == "set":
+                root = cls._snapshot_set_path(root, path, operation.get("value"))
+            elif op == "delete":
+                parent, key = cls._snapshot_path_parent(root, path)
+                if isinstance(parent, dict):
+                    parent.pop(key, None)
+                elif isinstance(parent, list) and isinstance(key, int) and key < len(parent):
+                    parent.pop(key)
+            elif op in ("resize", "items", "shift"):
+                values = cls._snapshot_get_path(root, path)
+                if not isinstance(values, list):
+                    values = []
+                    root = cls._snapshot_set_path(root, path, values)
+                if op == "resize":
+                    length = max(0, int(operation.get("length", 0)))
+                    if operation.get("reset"):
+                        values[:] = [None] * length
+                    else:
+                        del values[length:]
+                        while len(values) < length:
+                            values.append(None)
+                elif op == "items":
+                    start = max(0, int(operation.get("start", 0)))
+                    for offset, item in enumerate(operation.get("values") or []):
+                        while len(values) <= start + offset:
+                            values.append(None)
+                        values[start + offset] = cls._clone_snapshot_value(item)
+                else:
+                    start = max(0, int(operation.get("start", 0)))
+                    length = max(0, int(operation.get("length", len(values))))
+                    shifted = values[start:]
+                    del values[:]
+                    values.extend(shifted[:length])
+                    while len(values) < length:
+                        values.append(None)
+            elif op == "text":
+                current = cls._snapshot_get_path(root, path)
+                if not isinstance(current, str):
+                    current = ""
+                start = max(0, int(operation.get("start", 0)))
+                text = str(operation.get("value") or "")
+                total = max(start + len(text), int(operation.get("length", 0)))
+                current = current[:start] + text + current[start + len(text):]
+                current = current[:total]
+                root = cls._snapshot_set_path(root, path, current)
+            else:
+                raise ValueError("SNAPSHOT_OP_INVALID")
+        return root
+
+    def _handle_snapshot_chunk(self, message, payload_size=None):
+        """接收事务分片；收齐后一次应用并返回完整快照，否则返回空值。"""
+        batch = str(message.get("batch") or "")
+        base = message.get("base")
+        try:
+            sequence = int(message.get("seq"))
+            count = int(message.get("count"))
+        except (TypeError, ValueError):
+            raise ValueError("SNAPSHOT_CHUNK_HEADER_INVALID")
+        if not batch or sequence < 0 or count <= 0 or sequence >= count or count > 4096:
+            raise ValueError("SNAPSHOT_CHUNK_HEADER_INVALID")
+        operations = message.get("ops")
+        if not isinstance(operations, list):
+            raise ValueError("SNAPSHOT_CHUNK_OPS_INVALID")
+        full_reset = any(
+            isinstance(item, dict) and item.get("op") == "set" and item.get("path") == []
+            for item in operations
+        )
+        transaction = self._snapshot_chunk_transaction
+        now = self._ticks_ms()
+        if transaction is not None and self._elapsed_ms(now, transaction.get("started")) >= 10000:
+            transaction = None
+            self._snapshot_chunk_transaction = None
+        if transaction is None or transaction.get("batch") != batch:
+            # 发送端在断线、ACK 超时或基线不确定时会从根路径重发完整快照。
+            if base != self._committed_batch and not (base is None and full_reset):
+                raise ValueError("SNAPSHOT_CHUNK_BASE_MISMATCH")
+            transaction = {"batch": batch, "base": base, "count": count,
+                           "parts": {}, "started": now, "bytes": 0}
+            self._snapshot_chunk_transaction = transaction
+        elif transaction.get("count") != count or transaction.get("base") != base:
+            raise ValueError("SNAPSHOT_CHUNK_HEADER_MISMATCH")
+        previous = transaction["parts"].get(sequence)
+        if previous is None:
+            size = payload_size if payload_size is not None else len(json.dumps(message).encode("utf-8"))
+            total_bytes = transaction.get("bytes", 0) + size
+            if total_bytes > SNAPSHOT_TRANSACTION_MAX_BYTES:
+                self._snapshot_chunk_transaction = None
+                raise ValueError("SNAPSHOT_CHUNK_BYTES_EXCEEDED")
+            transaction["bytes"] = total_bytes
+        if previous is not None:
+            if previous != operations:
+                raise ValueError("SNAPSHOT_CHUNK_DUPLICATE_MISMATCH")
+        else:
+            transaction["parts"][sequence] = operations
+        if len(transaction["parts"]) != count:
+            return None
+        def ordered_operations():
+            """按序消费已收齐的分片，提交期间不额外复制操作引用。"""
+            for index in range(count):
+                for operation in transaction["parts"][index]:
+                    yield operation
+
+        all_operations = ordered_operations()
+        apply_started = self._ticks_ms()
+        try:
+            snapshot = self._apply_snapshot_chunk_ops(self._committed_snapshot, all_operations)
+            if not isinstance(snapshot, dict):
+                raise ValueError("SNAPSHOT_DATA_REQUIRED")
+        finally:
+            # 应用失败同样释放暂存操作，低内存设备不能继续保留整个失败批次。
+            self._snapshot_chunk_transaction = None
+        self._snapshot_commit_timing = "PARTS={}:BYTES={}:APPLY={}MS:TRANSACTION={}MS".format(
+            count, transaction.get("bytes", 0),
+            self._elapsed_ms(self._ticks_ms(), apply_started),
+            self._elapsed_ms(self._ticks_ms(), transaction["started"]),
+        )
+        self._committed_snapshot = snapshot
+        self._committed_batch = batch
+        return snapshot
 
     def _handle_jsonz_frame(
             self,
@@ -482,8 +698,10 @@ class JsonProtocol:
             json_elapsed_ms,
             gc_count,
         )
+        json_payload = None
+        text_payload = None
         try:
-            return self._handle_json_message(message, timing)
+            return self._handle_json_message(message, timing, payload_size=json_size)
         except MemoryError as error:
             self._write_frame("ERR", _json_error_payload("MEMORY_JSON_HANDLE", error))
             return None
@@ -494,7 +712,7 @@ class JsonProtocol:
             self._write_frame("ERR", _json_error_payload("JSON_HANDLE_UNKNOWN", error))
             return None
 
-    def _handle_json_message(self, message, timing=None):
+    def _handle_json_message(self, message, timing=None, payload_size=None):
         """按 JSON 信封模式分发快照或命令，并兼容旧裸快照。"""
         if not isinstance(message, dict):
             raise ValueError("JSON_OBJECT_REQUIRED")
@@ -502,6 +720,20 @@ class JsonProtocol:
         if mode == "command":
             self._dispatch_command(message)
             return None
+        if mode == "snapshot_chunk":
+            snapshot = self._handle_snapshot_chunk(message, payload_size=payload_size)
+            if snapshot is None:
+                # 事务未收齐，不发送 ACK，也不更新渲染快照。
+                return None
+            request_id = message.get("request_id")
+            self._write_frame(
+                "ACK",
+                ("JSON:{}".format(request_id) if request_id is not None else "JSON").encode("ascii", "replace"),
+            )
+            if (snapshot.get("display") or {}).get("dev"):
+                # ACK 先返回；开发模式下再报告板端提交开销，便于区分网络与 CPU 慢。
+                self._write_frame("EVENT", ("SNAPSHOT_TIMING:" + self._snapshot_commit_timing).encode("ascii"))
+            return snapshot
         if mode == "snapshot":
             snapshot = message.get("data")
             if not isinstance(snapshot, dict):
@@ -516,6 +748,7 @@ class JsonProtocol:
             self._write_frame("EVENT", timing.encode("ascii", "replace"))
         ack_payload = "JSON:{}".format(request_id) if request_id is not None else "JSON"
         self._write_frame("ACK", ack_payload.encode("ascii", "replace"))
+        self._committed_snapshot = self._merge_parsed_snapshots(self._committed_snapshot, snapshot)
         return snapshot
 
     def _dispatch_command(self, message):
@@ -587,6 +820,12 @@ class JsonProtocol:
                 "supported": sdk_update_supported(),
                 "requires_usb": True,
                 "image_format": "esp32s3-merged-bin",
+            },
+            "snapshot_chunks": {
+                "version": 1,
+                "max_payload": 4096,
+                "max_parts": 4096,
+                "max_bytes": SNAPSHOT_TRANSACTION_MAX_BYTES,
             },
             "device_name": DEVICE_NAME,
             "lcd_device_type": LCD_DEVICE_TYPE,

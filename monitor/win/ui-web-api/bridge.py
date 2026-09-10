@@ -79,6 +79,7 @@ class WebViewBridge(
         handlers = {
             "app.bootstrap": self._bootstrap,
             "settings.save": self._save_settings,
+            "settings.developerPlan": self._save_developer_plan,
             "settings.verifyQbittorrent": self._verify_qbittorrent,
             "update.check": self._check_update,
             "update.install": self._install_update,

@@ -47,7 +47,7 @@ class UpdateApiMixin:
             if not connection.get("connected"):
                 raise RuntimeError("设备未连接，无法检查设备固件版本")
             current_version = str(connection.get("firmware_version") or "未知")
-            updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, current_version)
+            updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, current_version, include_preview=bool(self._application.settings.get("developer_plan", False)))
             latest_version, assets, notes = updater.latest_release(
                 self._application.settings.get("update_url") or None,
                 include_notes=True,
@@ -86,7 +86,7 @@ class UpdateApiMixin:
                     "assetName": "",
                     "notes": "当前开发板不使用 ESP32-S3 MicroPython SDK 镜像。",
                 }
-            updater = WindowsReleaseUpdater(SDK_RELEASE_REPOSITORY, current_version)
+            updater = WindowsReleaseUpdater(SDK_RELEASE_REPOSITORY, current_version, include_preview=bool(self._application.settings.get("developer_plan", False)))
             latest_version, assets, notes = updater.latest_release(include_notes=True)
             asset_name = "micropython-ESP32_GENERIC_S3-N8R8-v{}.bin".format(
                 latest_version
@@ -105,7 +105,7 @@ class UpdateApiMixin:
                 "notes": notes,
             }
         if category == "application":
-            updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, MONITOR_VERSION)
+            updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, MONITOR_VERSION, include_preview=bool(self._application.settings.get("developer_plan", False)))
             latest_version, assets, notes = updater.latest_release(
                 self._application.settings.get("update_url") or None,
                 include_notes=True,
@@ -242,7 +242,7 @@ class UpdateApiMixin:
             if category == "firmware":
                 port = self._application._mpremote_repl_port(connection)
                 current_version = str(connection.get("firmware_version") or "未知")
-                updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, current_version)
+                updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, current_version, include_preview=bool(self._application.settings.get("developer_plan", False)))
                 latest_version, assets = updater.latest_release(
                     self._application.settings.get("update_url") or None
                 )
@@ -262,7 +262,7 @@ class UpdateApiMixin:
                 if not self._sdk_flash_allowed(connection):
                     raise RuntimeError("当前连接不支持 ESP32-S3 SDK 受控更新")
                 current_version = str(connection.get("sdk_version") or "未知")
-                updater = WindowsReleaseUpdater(SDK_RELEASE_REPOSITORY, current_version)
+                updater = WindowsReleaseUpdater(SDK_RELEASE_REPOSITORY, current_version, include_preview=bool(self._application.settings.get("developer_plan", False)))
                 latest_version, assets = updater.latest_release()
                 if current_version.lstrip("v") == latest_version.lstrip("v"):
                     raise RuntimeError("设备 SDK 已是最新版本")

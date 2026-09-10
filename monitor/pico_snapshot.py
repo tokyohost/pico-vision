@@ -58,8 +58,9 @@ def split_snapshot_payloads(snapshot, request_id=None):
             current = {key: value}
             continue
         current = candidate
-        if index == len(items) - 1:
-            payloads.append(snapshot_envelope_payload(current))
+    # 最后一项触发换包时也必须发送，不能因上面的 continue 丢失整个 ext。
+    if current:
+        payloads.append(snapshot_envelope_payload(current))
 
     if not payloads:
         payloads.append(snapshot_envelope_payload(snapshot))

@@ -64,6 +64,17 @@ class SettingsApiMixin:
             },
         }
 
+    def _save_developer_plan(self, payload):
+        """单独保存开发者计划，不重启监控或覆盖其他未保存设置。"""
+        enabled = payload.get("enabled")
+        if not isinstance(enabled, bool):
+            raise ValueError("开发者计划开关必须为布尔值")
+        updated = dict(self._application.settings)
+        updated["developer_plan"] = enabled
+        self._application.settings_store.save(updated)
+        self._application.settings = updated
+        return {"enabled": enabled}
+
     def _save_settings(self, payload):
         """校验并保存 Vue 表单提交的完整设置。"""
         incoming = payload.get("settings")

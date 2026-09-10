@@ -1,6 +1,9 @@
 """验证标准自定义数据插件的扫描、导入、执行和删除。"""
 
 import tempfile
+import io
+import importlib.util
+import types
 import unittest
 import zipfile
 import json
@@ -38,10 +41,63 @@ class CustomDataTaskTest(unittest.TestCase):
         """创建指向当前解释器的轻量测试环境，避免测试依赖系统 venv 包。"""
         executable = custom_data._environment_python(definition.environment_directory)
         executable.parent.mkdir(parents=True, exist_ok=True)
-        os.symlink(sys.executable, executable)
+        if os.name == "nt":
+            # Windows 普通账户通常没有符号链接权限，使用无需 pip 的本地测试环境。
+            import venv
+            venv.EnvBuilder(with_pip=False, symlinks=False).create(definition.environment_directory)
+        else:
+            os.symlink(sys.executable, executable)
         (definition.environment_directory / ".dependencies-ready").write_text(
             "无第三方依赖", encoding="utf-8", newline="\n"
         )
+
+    def test_plugin_data_mode_defaults_and_validation(self):
+        """绑定插件默认按样式发送，纯数据默认全发，非法模式明确拒绝。"""
+        from custom_data.support import _load_definition, CustomDataError
+        with tempfile.TemporaryDirectory() as directory:
+            plugin = self._create_plugin(directory)
+            manifest = plugin / "plugin.json"
+            values = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertEqual("always", _load_definition(plugin, Path(directory) / "envs").data_mode)
+            values.update(bind_style=True, style="style_demo.py")
+            (plugin / "style_demo.py").write_text("# 测试样式\n", encoding="utf-8")
+            manifest.write_text(json.dumps(values), encoding="utf-8")
+            self.assertEqual("active_style", _load_definition(plugin, Path(directory) / "envs").data_mode)
+            values["data_mode"] = "always"
+            manifest.write_text(json.dumps(values), encoding="utf-8")
+            self.assertEqual("always", _load_definition(plugin, Path(directory) / "envs").data_mode)
+            for mode, bound in (("invalid", True), ("active_style", False)):
+                values.update(data_mode=mode, bind_style=bound)
+                manifest.write_text(json.dumps(values), encoding="utf-8")
+                with self.assertRaises(CustomDataError):
+                    _load_definition(plugin, Path(directory) / "envs")
+
+    def test_worker_forwards_plugin_logs(self):
+        """插件中文日志进入应用日志，结束后关闭错误流。"""
+        from custom_data.runtime import CustomDataWorker
+        worker = CustomDataWorker(types.SimpleNamespace(name="stock_watch"))
+        stream = io.StringIO("[股票监控] 股票=sz.300750 来源=tencent\n")
+        with self.assertLogs("pico-monitor.custom-data", level="INFO") as logs:
+            worker._read_logs(types.SimpleNamespace(stderr=stream))
+        self.assertIn("stock_watch", logs.output[0])
+        self.assertIn("sz.300750", logs.output[0])
+        self.assertTrue(stream.closed)
+
+    def test_web_test_refreshes_saved_plugin_config(self):
+        """网页测试先同步已保存配置，避免继续使用默认股票。"""
+        path = Path(__file__).resolve().parents[1] / "win/ui-web-api/custom_data_api.py"
+        spec = importlib.util.spec_from_file_location("test_stock_config_api", path)
+        api = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(api)
+        saved = {"stock_watch": {"stock_codes": "600519,000001,300750,hk.09888"}}
+        manager = mock.Mock()
+        manager.test_plugin.return_value = "完成"
+        instance = types.SimpleNamespace(_application=types.SimpleNamespace(settings={"custom_data_configs": saved}))
+        with mock.patch.object(api.custom_data, "get_manager", return_value=manager):
+            result = api.CustomDataApiMixin._custom_data_test(instance, {"name": "stock_watch"})
+        self.assertEqual(manager.method_calls, [
+            mock.call.update_plugin_configs(saved), mock.call.test_plugin("stock_watch")])
+        self.assertEqual(result["output"], "完成")
 
     def test_data_root_prefers_explicit_environment(self):
         """确认 Linux systemd 服务可把用户数据写入显式状态目录。"""

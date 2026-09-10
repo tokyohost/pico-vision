@@ -93,6 +93,7 @@ class CustomDataDefinition:
     has_uninstall: bool
     bind_style: bool
     modified_time: float
+    data_mode: str = "auto"
     style_path: Path = None
     detail_path: Path = None
     preview_path: Path = None
@@ -645,6 +646,11 @@ def _load_definition(plugin_path, environment_root):
     bind_style = values.get("bind_style", False)
     if not isinstance(bind_style, bool):
         raise CustomDataError("plugin.json bind_style 必须是布尔值")
+    data_mode = values.get("data_mode", "active_style" if bind_style else "always")
+    if data_mode not in ("active_style", "always"):
+        raise CustomDataError("plugin.json data_mode 必须为 active_style 或 always")
+    if data_mode == "active_style" and not bind_style:
+        raise CustomDataError("active_style 数据模式需要绑定样式")
     style_path = None
     if bind_style:
         style = values.get("style")
@@ -686,6 +692,7 @@ def _load_definition(plugin_path, environment_root):
         actions=actions,
         has_uninstall=has_uninstall,
         bind_style=bind_style,
+        data_mode=data_mode,
         style_path=style_path,
         detail_path=detail_path,
         preview_path=preview_path,

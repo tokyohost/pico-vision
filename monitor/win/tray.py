@@ -205,7 +205,7 @@ class WindowsTrayApplication(
 
     def _prompt_and_perform_update(self, icon):
         """使用固定发布仓库地址执行在线更新。"""
-        updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, MONITOR_VERSION)
+        updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, MONITOR_VERSION, include_preview=bool(self.settings.get("developer_plan", False)))
         self._perform_update(icon, updater.default_update_url())
 
     def _ask_update_url(self):
@@ -214,7 +214,7 @@ class WindowsTrayApplication(
         import tkinter as tk
         from tkinter import messagebox
 
-        updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, MONITOR_VERSION)
+        updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, MONITOR_VERSION, include_preview=bool(self.settings.get("developer_plan", False)))
         initial_url = self.settings.get("update_url") or updater.default_update_url()
         root = tk.Tk()
         self._set_tk_window_icon(root)
@@ -262,7 +262,7 @@ class WindowsTrayApplication(
 
     def _perform_update(self, icon, update_url):
         """检查最新 Release，经用户确认后升级 Pico 并安装 Monitor。"""
-        updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, MONITOR_VERSION)
+        updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, MONITOR_VERSION, include_preview=bool(self.settings.get("developer_plan", False)))
         monitor_path = None
         pico_path = None
         try:

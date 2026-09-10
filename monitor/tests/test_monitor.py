@@ -291,6 +291,22 @@ class PicoClientTest(unittest.TestCase):
         self.assertTrue(client.serial.written.startswith(b"PV1:JSONZ:"))
         self.assertTrue(client.serial.written.endswith(b"\n"))
 
+    def test_send_uses_transaction_chunks_and_waits_for_final_ack(self):
+        """大快照使用事务分片，设备只需对整批提交返回一次 ACK。"""
+        client = PicoJsonClient()
+        client.serial = FakeSerial()
+        client.snapshot_chunk_info = {"version": 1, "max_payload": 4096}
+        client.serial.readline = lambda: build_frame("ACK", b"JSON:1")
+        client.send({"ext": {"stock_watch": {"stocks": [
+            {"code": "600519", "candles": [
+                {"time": str(index), "open": 1, "close": 2,
+                 "high": 3, "low": 0, "volume": 4}
+                for index in range(160)
+            ]}
+        ]}}}, wait_ack=True)
+        self.assertGreater(client.serial.write_calls, 1)
+        self.assertIsNotNone(client._snapshot_sender.baseline)
+
     def test_concurrent_serial_close_is_converted_to_disconnect_error(self):
         """确认 Windows 读取期间串口被关闭时不会泄漏 ctypes TypeError。"""
         client = PicoJsonClient()

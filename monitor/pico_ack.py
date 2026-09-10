@@ -126,7 +126,7 @@ class PicoJsonAckMixin:
         request_id = self._json_ack_request_id(frame)
         with self._json_ack_lock:
             if request_id is None:
-                events = list(self._json_ack_events.values())
+                events = [] if getattr(self, "snapshot_chunk_info", None) else list(self._json_ack_events.values())
             else:
                 event = self._json_ack_events.get(str(request_id))
                 events = [event] if event is not None else []
@@ -135,13 +135,21 @@ class PicoJsonAckMixin:
 
     def _wait_json_ack(self, request_id, event, timeout):
         """等待 Pico 确认指定 JSON 快照，期间持续转交 CDC 后台异常。"""
-        deadline = time.monotonic() + max(0.1, float(timeout))
+        deadline = time.monotonic() + max(0.0, float(timeout))
         while time.monotonic() < deadline:
             if self.transport is None:
-                frame = self._read_protocol_frame("JSONZ ACK")
-                if frame and frame[0] == "ACK":
+                device = self.serial
+                previous_timeout = getattr(device, "timeout", None)
+                if hasattr(device, "timeout"):
+                    device.timeout = min(previous_timeout if previous_timeout is not None else float("inf"), max(0.0, deadline - time.monotonic()))
+                try:
+                    frame = self._read_protocol_frame("JSONZ ACK")
+                finally:
+                    if hasattr(device, "timeout"):
+                        device.timeout = previous_timeout
+                if frame and frame[0] == "ACK" and (frame[1] == b"JSON" or frame[1].startswith(b"JSON:")):
                     ack_request_id = self._json_ack_request_id(frame)
-                    if ack_request_id is None or str(ack_request_id) == str(request_id):
+                    if (ack_request_id is None and not getattr(self, "snapshot_chunk_info", None)) or str(ack_request_id) == str(request_id):
                         return
                 if is_restarting_fatal(frame):
                     raise PicoRestartingError(frame[1].decode("utf-8", errors="replace"))

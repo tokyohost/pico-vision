@@ -43,10 +43,25 @@ class CustomDataWorker:
         self.process = subprocess.Popen(
             [str(python_path), str(_runner_path()), str(self.definition.path)],
             cwd=str(self.definition.plugin_directory), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", bufsize=1,
+            stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1,
             env=process_environment,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
+
+        # 独立排空错误流，防止日志填满管道阻塞插件的 JSON 响应。
+        threading.Thread(target=self._read_logs, args=(self.process,), daemon=True).start()
+
+    def _read_logs(self, process):
+        """把指定插件进程的错误流转发到应用日志，退出时关闭管道。"""
+        logger = logging.getLogger("pico-monitor.custom-data")
+        try:
+            with process.stderr as stream:
+                for line in stream:
+                    message = line.rstrip()
+                    if message:
+                        logger.info("自定义数据插件[%s] %s", self.definition.name, message)
+        except (OSError, ValueError):
+            logger.debug("插件日志管道已关闭：%s", self.definition.name)
 
     def _request(self, command, payload=None, timeout=DEFAULT_SCRIPT_TIMEOUT_SECONDS):
         """向常驻插件进程发送一条命令并等待匹配的结构化响应。"""

@@ -77,6 +77,7 @@ DEFAULT_SETTINGS = {
     "qbittorrent_interval": 2.0,
     "market_url": DEFAULT_MARKET_URL,
     "update_url": "",
+    "developer_plan": False,
     "http_enabled": False,
     "http_port": 9876,
     "http_auth": secrets.token_urlsafe(24),

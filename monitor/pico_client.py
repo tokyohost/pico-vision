@@ -46,9 +46,11 @@ from pico_snapshot import (
     split_snapshot_payloads,
     wire_snapshot,
 )
+from snapshot_transfer import SnapshotSender
 from usbCdcFramework import UsbCdcFramework
 
 
+SNAPSHOT_TRANSACTION_TIMEOUT = 0.4
 JSON_ACK_TIMEOUT = 8.0
 JSON_PROGRESS_GRACE_SECONDS = 2.0
 SERIAL_SLOW_SEND_WARNING_MS = 200.0
@@ -91,6 +93,7 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         self.firmware_version = None
         self.sdk_version = None
         self.sdk_update_info = None
+        self.snapshot_chunk_info = None
         self.screen_width = None
         self.screen_height = None
         self.styles = []
@@ -99,6 +102,9 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         self._json_ack_pending = ExpiringJsonAckTimingCache()
         self._json_ack_lock = threading.Lock()
         self._json_ack_events = {}
+        # 事务发送器只有在设备最终 ACK 后才推进基线，断线时会重置。
+        self._snapshot_sender = SnapshotSender()
+        self._snapshot_send_lock = threading.Lock()
         self.transport = None
         self.event_callback = None
 
@@ -121,6 +127,9 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
 
     def _serial_write_profile(self):
         """返回当前设备适用的主机写入块大小和块间让步时间。"""
+        if isinstance(self.serial, WebSocketDevice):
+            # 网络消息已有独立边界，无需模拟 USB 的 511 字节分块。
+            return 16 * 1024 + 64, 0.0
         if self._is_usb_esp32_s3():
             return (
                 ESP32_S3_SERIAL_WRITE_CHUNK_SIZE,
@@ -319,10 +328,12 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         self.firmware_version = winner.firmware_version
         self.sdk_version = winner.sdk_version
         self.sdk_update_info = winner.sdk_update_info
+        self.snapshot_chunk_info = winner.snapshot_chunk_info
         self.screen_width = winner.screen_width
         self.screen_height = winner.screen_height
         self.styles = winner.styles
         self.net_status = winner.net_status
+        self._snapshot_sender.reset()
         winner.close()
 
     def _start_cdc_framework(self):
@@ -372,6 +383,7 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
 
     def _handshake(self, device):
         """发送设备发现命令并验证 Pico 固件响应。"""
+        self._snapshot_sender.reset()
         self.board_model = None
         self.device_id = None
         self.lcd_device_type = None
@@ -379,6 +391,7 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         self.firmware_version = None
         self.sdk_version = None
         self.sdk_update_info = None
+        self.snapshot_chunk_info = None
         self.screen_width = None
         self.screen_height = None
         self.styles = []
@@ -447,6 +460,8 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         self.sdk_version = information.get("sdk_version") or None
         sdk_update = information.get("sdk_update")
         self.sdk_update_info = sdk_update if isinstance(sdk_update, dict) else None
+        snapshot_chunks = information.get("snapshot_chunks")
+        self.snapshot_chunk_info = snapshot_chunks if isinstance(snapshot_chunks, dict) else None
         self.screen_width = information.get("width") or None
         self.screen_height = information.get("height") or None
         styles = information.get("styles")
@@ -468,11 +483,13 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
             "screen_width": self.screen_width,
             "screen_height": self.screen_height,
         }
+        if isinstance(self.snapshot_chunk_info, dict):
+            information["snapshot_chunks"] = dict(self.snapshot_chunk_info)
         if isinstance(self.net_status, dict):
             information["net"] = dict(self.net_status)
         return information
 
-    def _write_packet(self, packet, label, build_elapsed_ms=0.0):
+    def _write_packet(self, packet, label, build_elapsed_ms=0.0, deadline=None):
         """按统一分块策略写入一条 PV1 帧，并输出串口写入耗时日志。"""
         if self.transport is not None:
             self.transport.raise_error_if_any()
@@ -489,7 +506,7 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
                 packet_bytes,
                 label,
                 build_elapsed_ms=build_elapsed_ms,
-                timeout=max(1.0, JSON_ACK_TIMEOUT),
+                timeout=max(0.0, deadline - time.monotonic()) if deadline is not None else max(1.0, JSON_ACK_TIMEOUT),
             )
             total_elapsed_ms = build_elapsed_ms + timing["send_elapsed_ms"]
             LOGGER.debug(
@@ -536,9 +553,19 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         slowest_write_ms = 0.0
         total_written = 0
         for position in range(0, len(packet), write_chunk_size):
+            if deadline is not None and time.monotonic() >= deadline:
+                raise JsonAckTimeoutError("快照整批传输超过 400ms")
             chunk = packet[position:position + write_chunk_size]
             write_started = time.monotonic()
-            written = self.serial.write(chunk)
+            device = self.serial
+            previous_timeout = getattr(device, "write_timeout", None)
+            if deadline is not None and hasattr(device, "write_timeout"):
+                device.write_timeout = max(0.0, deadline - time.monotonic())
+            try:
+                written = device.write(chunk)
+            finally:
+                if deadline is not None and hasattr(device, "write_timeout"):
+                    device.write_timeout = previous_timeout
             chunk_elapsed_ms = (time.monotonic() - write_started) * 1000
             write_elapsed_ms += chunk_elapsed_ms
             slowest_write_ms = max(slowest_write_ms, chunk_elapsed_ms)
@@ -696,15 +723,50 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         raise RuntimeError(default_error + "：等待 Pico 响应超时")
 
     def send(self, snapshot, wait_ack=False, ack_timeout=JSON_ACK_TIMEOUT):
+        """互斥发送快照，拒绝并发批次覆盖待确认基线或交错写入。"""
+        if not self._snapshot_send_lock.acquire(blocking=False):
+            raise RuntimeError("已有快照事务正在发送")
+        try:
+            return self._send_snapshot(snapshot, wait_ack, ack_timeout)
+        finally:
+            self._snapshot_send_lock.release()
+
+    def _send_snapshot(self, snapshot, wait_ack=False, ack_timeout=JSON_ACK_TIMEOUT):
         """发送带请求序号的 JSON 快照，并可等待 Pico 确认以形成背压。"""
         if not self.is_connected:
             raise RuntimeError("Pico 串口尚未连接")
         self._drain_json_responses()
         request_id = self._next_json_request_id()
-        ack_event = self._register_json_ack_waiter(request_id) if wait_ack else None
+        # 事务协议必须等待整批提交 ACK；否则下一批增量没有可靠基线。
+        transaction_enabled = bool(
+            isinstance(self.snapshot_chunk_info, dict)
+            and int(self.snapshot_chunk_info.get("version", 0) or 0) >= 1
+        )
+        transaction_wait = bool(wait_ack or transaction_enabled)
+        ack_event = self._register_json_ack_waiter(request_id) if transaction_wait else None
         build_started = time.monotonic()
+        deadline = build_started + SNAPSHOT_TRANSACTION_TIMEOUT if transaction_enabled else None
+
+        def remaining_budget():
+            """整批构帧、写入与确认共用 400ms 预算，超时后禁止推进基线。"""
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise JsonAckTimeoutError("快照整批传输超过 400ms")
+            return remaining
+
         try:
-            packets = self.build_snapshot_packets(snapshot, request_id=request_id)
+            if transaction_enabled:
+                info = self.snapshot_chunk_info
+                self._snapshot_sender.limit = min(4096, int(info.get("max_payload", 4096)))
+                self._snapshot_sender.max_parts = min(4096, int(info.get("max_parts", 4096)))
+                self._snapshot_sender.max_bytes = int(info.get("max_bytes", 1048576))
+                payloads = self._snapshot_sender.prepare(
+                    self._wire_snapshot(snapshot), request_id
+                )
+                packets = [build_jsonz_packet(payload) for payload in payloads]
+            else:
+                # 旧固件继续使用兼容格式；它不支持数组事务，超大快照应升级固件。
+                packets = self.build_snapshot_packets(snapshot, request_id=request_id)
             build_elapsed_ms = (time.monotonic() - build_started) * 1000
             for index, packet in enumerate(packets):
                 is_final_packet = index == len(packets) - 1
@@ -713,17 +775,32 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
                     label = "{}.{}/{}".format(label, index + 1, len(packets))
                 if is_final_packet:
                     self._begin_json_ack_timing(request_id, build_started, build_elapsed_ms)
-                write_timing = self._write_packet(packet, label, build_elapsed_ms)
+                if transaction_enabled:
+                    remaining_budget()
+                    write_timing = self._write_packet(packet, label, build_elapsed_ms, deadline=deadline)
+                    remaining_budget()
+                else:
+                    write_timing = self._write_packet(packet, label, build_elapsed_ms)
                 if is_final_packet:
                     self._complete_json_ack_timing(request_id, build_started, write_timing)
-            if wait_ack:
-                self._wait_json_ack(request_id, ack_event, ack_timeout)
+            if transaction_wait:
+                self._wait_json_ack(request_id, ack_event, min(ack_timeout, remaining_budget()) if transaction_enabled else ack_timeout)
+                if transaction_enabled:
+                    remaining_budget()
+                    self._snapshot_sender.confirm()
+        except Exception:
+            # 写入中断、设备拒收或 ACK 超时都会使本地基线失去确定性，
+            # 下一次发送必须回到完整快照，避免增量应用在错误基线上。
+            if transaction_enabled:
+                self._snapshot_sender.reset()
+            raise
         finally:
-            if wait_ack:
+            if transaction_wait:
                 self._remove_json_ack_waiter(request_id)
 
     def close(self):
         """安全关闭当前传输并恢复为未连接状态。"""
+        self._snapshot_sender.reset()
         transport, self.transport = self.transport, None
         if transport is not None:
             transport.close(wait=True)

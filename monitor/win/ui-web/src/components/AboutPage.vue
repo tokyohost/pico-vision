@@ -1,10 +1,30 @@
 <script setup>
+import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { invoke } from '../bridge'
 
-defineProps({
+const props = defineProps({
   metadata: { type: Object, required: true },
+  settings: { type: Object, required: true },
 })
+
+const savingPlan = ref(false)
+
+/**
+ * 保存开发者计划开关，成功后同步页面设置。
+ */
+async function saveDeveloperPlan(enabled) {
+  savingPlan.value = true
+  try {
+    const result = await invoke('settings.developerPlan', { enabled })
+    props.settings.developer_plan = result.enabled
+    ElMessage.success(result.enabled ? '已加入开发者计划' : '已退出开发者计划')
+  } catch (error) {
+    ElMessage.error(error?.message || String(error))
+  } finally {
+    savingPlan.value = false
+  }
+}
 
 /**
  * 打开应用日志和数据目录。
@@ -32,6 +52,12 @@ async function openDataDirectory() {
         <el-descriptions-item label="发布仓库">{{ metadata.about.repository || '--' }}</el-descriptions-item>
         <el-descriptions-item label="数据目录">{{ metadata.dataDirectory || '--' }}</el-descriptions-item>
       </el-descriptions>
+      <el-form label-position="top" class="section-gap">
+        <el-form-item label="加入开发者计划">
+          <el-switch :model-value="!!settings.developer_plan" :loading="savingPlan" :disabled="savingPlan" @change="saveDeveloperPlan" />
+        </el-form-item>
+        <el-alert title="加入后可更新 Preview 版本开发固件，但可能存在性能不稳定等问题。关闭后，检查更新将不显示标签含 -preview 的新版本。" type="warning" :closable="false" show-icon />
+      </el-form>
       <el-button type="primary" @click="openDataDirectory">打开日志和数据目录</el-button>
     </el-card>
     <el-card shadow="never" class="qr-card">

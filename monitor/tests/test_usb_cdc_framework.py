@@ -4,6 +4,8 @@ import json
 import queue
 import threading
 import unittest
+import time
+from unittest import mock
 from types import SimpleNamespace
 
 import serial
@@ -66,6 +68,46 @@ class JsonAckSerial(ThreadedSerial):
 
 class UsbCdcFrameworkTest(unittest.TestCase):
     """验证 CDC 框架的读写线程和响应分流行为。"""
+
+    def test_expired_queue_job_never_writes(self):
+        """排队时间计入预算，过期任务不得继续写入设备。"""
+        from usbCdcFramework import _UsbCdcWriteJob
+        device = ThreadedSerial()
+        framework = UsbCdcFramework(device, parse_frame)
+        job = _UsbCdcWriteJob(b"abc", "测试", 0, 0.01)
+        job.deadline = time.monotonic() - 1
+        with self.assertRaises(serial.SerialTimeoutException):
+            framework._perform_write(job)
+        self.assertEqual(b"", device.written)
+
+    def test_partial_write_and_timeout_do_not_duplicate_bytes(self):
+        """短写按实际偏移续传，超时异常不盲目重发可能已落线的字节。"""
+        from usbCdcFramework import _UsbCdcWriteJob
+        device = ThreadedSerial()
+        framework = UsbCdcFramework(device, parse_frame)
+        with mock.patch.object(device, "write", side_effect=[2, 1]) as writer:
+            result = framework._perform_write(_UsbCdcWriteJob(b"abc", "测试", 0, 0.2))
+            self.assertEqual(3, result.total_written)
+            self.assertEqual(b"c", bytes(writer.call_args_list[1].args[0]))
+        with mock.patch.object(device, "write", side_effect=serial.SerialTimeoutException("超时")) as writer:
+            with self.assertRaises(serial.SerialTimeoutException):
+                framework._perform_write(_UsbCdcWriteJob(b"abc", "测试", 0, 0.2))
+            self.assertEqual(1, writer.call_count)
+
+    def test_permanent_backpressure_stops_connection(self):
+        """持续零写入在统一预算内失败，后台任务被取消且连接失效。"""
+        device = ThreadedSerial(zero_writes=100000)
+        framework = UsbCdcFramework(device, parse_frame)
+        framework.start()
+        started = time.monotonic()
+        try:
+            with self.assertRaises(serial.SerialTimeoutException):
+                framework.write_packet(b"abc", "测试", timeout=0.04)
+            self.assertLess(time.monotonic() - started, 0.4)
+            self.assertFalse(framework.is_alive)
+            self.assertEqual(b"", device.written)
+        finally:
+            framework.close(wait=True)
 
     def test_reader_drains_json_ack_and_keeps_command_response(self):
         """确认 JSON ACK 被读线程消费，COMMAND 响应仍可由控制流程读取。"""

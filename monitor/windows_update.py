@@ -13,8 +13,9 @@ from pathlib import Path
 class WindowsReleaseUpdater:
     """管理 Windows Monitor 与 Pico 固件的联合在线更新。"""
 
-    def __init__(self, repository, current_version):
+    def __init__(self, repository, current_version, include_preview=False):
         """保存默认发布仓库和当前 Monitor 版本。"""
+        self.include_preview = bool(include_preview)
         self.repository = str(repository or "").strip()
         self.current_version = str(current_version or "").strip()
 
@@ -29,7 +30,17 @@ class WindowsReleaseUpdater:
         url = str(update_url or self.default_update_url()).strip()
         if not url:
             raise RuntimeError("未配置更新地址")
+        # GitHub 的 latest 接口不返回预发布，加入计划后改用发布列表。
+        if self.include_preview and url == self.default_update_url():
+            url = url.removesuffix('/latest')
         release = self._request_json(url)
+        releases = release if isinstance(release, list) else [release]
+        release = next((item for item in releases if not item.get("draft") and (
+            self.include_preview or "-preview" not in str(item.get("tag_name") or "").lower()
+        )), None)
+        if release is None:
+            # 隐藏受限版本的版本号、资源和说明，所有更新入口均视为无更新。
+            return (self.current_version, [], "") if include_notes else (self.current_version, [])
         version = str(release.get("tag_name") or "").lstrip("v")
         if not version:
             raise RuntimeError("更新元数据缺少版本标签")

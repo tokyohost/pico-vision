@@ -174,7 +174,11 @@ class CustomDataApiMixin:
 
     def _custom_data_test(self, payload):
         """测试执行指定自定义数据插件。"""
-        result = custom_data.get_manager().test_plugin(
+        manager = custom_data.get_manager()
+        manager.update_plugin_configs(
+            self._application.settings.get("custom_data_configs") or {}
+        )
+        result = manager.test_plugin(
             str(payload.get("name") or "")
         )
         return {"output": result}

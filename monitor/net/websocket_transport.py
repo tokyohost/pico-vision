@@ -8,6 +8,10 @@ import uuid
 import serial
 
 
+MAX_PV1_LINE_BYTES = 16 * 1024 + 64
+MAX_RECEIVE_BUFFER_BYTES = 4 * MAX_PV1_LINE_BYTES
+
+
 class WebSocketDevice:
     """提供串口兼容接口的 WebSocket 客户端传输策略。"""
 
@@ -56,6 +60,7 @@ class WebSocketDevice:
         self._read_buffer = bytearray()
         self._write_buffer = bytearray()
         self._send_lock = threading.Lock()
+        self.write_timeout = max(0.05, float(read_timeout))
         self._closed = False
 
     @property
@@ -94,6 +99,9 @@ class WebSocketDevice:
         """接收 WebSocket 消息并按换行边界返回一条 PV1 帧。"""
         while self.is_open:
             newline = self._read_buffer.find(b"\n")
+            if newline >= MAX_PV1_LINE_BYTES or (newline < 0 and len(self._read_buffer) > MAX_PV1_LINE_BYTES):
+                self.close()
+                raise serial.SerialException("WebSocket PV1 接收行超过上限")
             if newline >= 0:
                 line = bytes(self._read_buffer[:newline + 1])
                 del self._read_buffer[:newline + 1]
@@ -111,6 +119,9 @@ class WebSocketDevice:
                 raise serial.SerialException("WebSocket 对端已关闭连接")
             if isinstance(message, str):
                 message = message.encode("utf-8")
+            if len(self._read_buffer) + len(message) > MAX_RECEIVE_BUFFER_BYTES:
+                self.close()
+                raise serial.SerialException("WebSocket 接收缓冲超过上限")
             self._read_buffer.extend(message)
         raise serial.SerialException("WebSocket 连接已断开")
 
@@ -126,6 +137,9 @@ class WebSocketDevice:
         """把发送缓冲内的完整 PV1 行逐条作为二进制消息发出。"""
         while True:
             newline = self._write_buffer.find(b"\n")
+            if newline >= MAX_PV1_LINE_BYTES or (newline < 0 and len(self._write_buffer) > MAX_PV1_LINE_BYTES):
+                self.close()
+                raise serial.SerialException("WebSocket PV1 发送行超过上限")
             if newline < 0:
                 return
             packet = bytes(self._write_buffer[:newline + 1])
@@ -134,13 +148,22 @@ class WebSocketDevice:
 
     def _send_binary(self, packet):
         """线程安全地发送一个 WebSocket 二进制消息。"""
-        with self._send_lock:
+        started = time.monotonic()
+        if not self._send_lock.acquire(timeout=max(0.0, self.write_timeout)):
+            raise serial.SerialTimeoutException("WebSocket 等待发送锁超时")
+        try:
             self._raise_if_closed()
             try:
                 self._socket.send_binary(packet)
             except self._websocket_module.WebSocketException as error:
+                # TCP 可能已发送部分消息，断开后重新握手，禁止原连接盲重试。
                 self.close()
                 raise serial.SerialException("WebSocket 发送失败：{}".format(error)) from error
+            if time.monotonic() - started >= self.write_timeout:
+                self.close()
+                raise serial.SerialTimeoutException("WebSocket 发送超过剩余事务预算")
+        finally:
+            self._send_lock.release()
 
     def flush(self):
         """发送尚未以换行结尾的剩余数据。"""
@@ -156,7 +179,14 @@ class WebSocketDevice:
         if self._closed:
             return
         self._closed = True
+        self._read_buffer.clear()
+        self._write_buffer.clear()
         try:
-            self._socket.close()
+            # 异常链路立即释放 socket，不等待默认最长 3 秒的关闭握手。
+            shutdown = getattr(self._socket, "shutdown", None)
+            if callable(shutdown):
+                shutdown()
+            else:
+                self._socket.close()
         except Exception:
             pass

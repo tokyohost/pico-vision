@@ -1,0 +1,45 @@
+{
+  "environment": "Windows CPython，非 ESP32 实机；7 次构帧中位数；固定随机种子 17",
+  "results": [
+    {
+      "rows": 450,
+      "snapshot_bytes": 40950,
+      "before": {
+        "parts": 20,
+        "ops": 453,
+        "payload_bytes": 77139,
+        "wire_bytes": 18816,
+        "median_build_ms": 47.988,
+        "max_build_ms": 51.668
+      },
+      "after": {
+        "parts": 12,
+        "ops": 14,
+        "payload_bytes": 43344,
+        "wire_bytes": 13440,
+        "median_build_ms": 20.096,
+        "max_build_ms": 22.556
+      }
+    },
+    {
+      "rows": 1800,
+      "snapshot_bytes": 164808,
+      "before": {
+        "parts": 79,
+        "ops": 1803,
+        "payload_bytes": 312046,
+        "wire_bytes": 75200,
+        "median_build_ms": 192.836,
+        "max_build_ms": 203.145
+      },
+      "after": {
+        "parts": 44,
+        "ops": 46,
+        "payload_bytes": 173569,
+        "wire_bytes": 52864,
+        "median_build_ms": 88.116,
+        "max_build_ms": 99.513
+      }
+    }
+  ]
+}

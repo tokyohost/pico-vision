@@ -58,10 +58,10 @@ class SnapshotCache:
             TIME_CALIBRATION_TOLERANCE_SECONDS,
         )
 
-    def update(self, snapshot):
+    def update(self, snapshot, replace=False):
         """合并最新快照并递增版本号。"""
         self.snapshot = self._time_increase.receive(
-            _merge_snapshot(self.snapshot, snapshot)
+            _merge_snapshot(None if replace else self.snapshot, snapshot)
         )
         self.version += 1
         self._last_update_ms = _monotonic_ms()
@@ -100,7 +100,11 @@ class DataReceiver:
         snapshot = self._protocol.poll()
         if snapshot is None:
             return False
-        self._cache.update(snapshot)
+        # 完整事务必须替换缓存；旧协议片段继续使用兼容合并语义。
+        if snapshot is getattr(self._protocol, "_committed_snapshot", None) and getattr(self._protocol, "_committed_batch", None) is not None:
+            self._cache.update(snapshot, replace=True)
+        else:
+            self._cache.update(snapshot)
         self._led.notify_data()
         return True
 

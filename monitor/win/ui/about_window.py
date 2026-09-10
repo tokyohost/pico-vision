@@ -78,6 +78,25 @@ class AboutWindowMixin:
         tk.Label(frame, text="版本号：{}".format(MONITOR_VERSION)).pack(anchor="w", pady=2)
         tk.Label(frame, text="作者：tokyohost").pack(anchor="w", pady=2)
         tk.Label(frame, text="微信号：hi2024FL").pack(anchor="w", pady=2)
+        developer_plan = tk.BooleanVar(master=root, value=bool(self.settings.get("developer_plan", False)))
+
+        def save_developer_plan():
+            """保存开发者计划，失败时还原开关并显示原因。"""
+            from tkinter import messagebox
+
+            updated = dict(self.settings)
+            updated["developer_plan"] = developer_plan.get()
+            try:
+                self.settings_store.save(updated)
+                self.settings = updated
+            except Exception as error:
+                developer_plan.set(bool(self.settings.get("developer_plan", False)))
+                messagebox.showerror("开发者计划", str(error), parent=root)
+
+        tk.Checkbutton(frame, text="加入开发者计划", variable=developer_plan,
+                       command=save_developer_plan).pack(anchor="w", pady=(10, 2))
+        tk.Label(frame, text="可更新 Preview 版本开发固件，但可能性能不稳定。\n关闭后不显示标签含 -preview 的新版本。",
+                 justify="left", wraplength=340).pack(anchor="w")
         tk.Label(frame, text="咸鱼店铺二维码：").pack(anchor="w", pady=(10, 4))
         image_path = self._resource_path("assert", "fishQr.png")
         with Image.open(image_path) as source:

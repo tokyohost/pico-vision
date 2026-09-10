@@ -607,7 +607,7 @@ class DeviceWindowMixin:
         def check_firmware():
             """读取最新 Release，并比较设备当前固件版本。"""
             try:
-                updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, "")
+                updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, firmware_state["current_version"], include_preview=bool(self.settings.get("developer_plan", False)))
                 latest_version, assets, release_notes = updater.latest_release(
                     include_notes=True
                 )
