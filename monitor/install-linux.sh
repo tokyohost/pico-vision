@@ -58,6 +58,7 @@ install_application() {
     install -m 0644 "$script_directory/pico_commands.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/pico_protocol.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/pico_snapshot.py" "$INSTALL_ROOT/"
+    install -m 0644 "$script_directory/snapshot_transfer.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/pico_upgrade.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/monitor_update.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/qbittorrent_monitor.py" "$INSTALL_ROOT/"
