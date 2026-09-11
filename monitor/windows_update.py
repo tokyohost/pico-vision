@@ -95,8 +95,8 @@ class WindowsReleaseUpdater:
             name = "OmniWatch-pico-full-v{}.zip".format(version)
         return cls._required_asset(assets, name)
 
-    def download(self, asset, suffix):
-        """下载发布资源，并校验服务端提供的 SHA-256 摘要。"""
+    def download(self, asset, suffix, progress_callback=None):
+        """下载发布资源，持续报告字节进度，并校验服务端提供的 SHA-256 摘要。"""
         url = asset.get("browser_download_url")
         if not url:
             raise RuntimeError("Release 资源缺少下载地址：{}".format(asset.get("name")))
@@ -105,12 +105,19 @@ class WindowsReleaseUpdater:
         digest = hashlib.sha256()
         try:
             with urllib.request.urlopen(self._request(url), timeout=120) as response, open(path, "wb") as output:
+                total_bytes = self._response_content_length(response)
+                downloaded_bytes = 0
+                if progress_callback is not None:
+                    progress_callback(downloaded_bytes, total_bytes)
                 while True:
                     chunk = response.read(64 * 1024)
                     if not chunk:
                         break
                     output.write(chunk)
                     digest.update(chunk)
+                    downloaded_bytes += len(chunk)
+                    if progress_callback is not None:
+                        progress_callback(downloaded_bytes, total_bytes)
             expected = str(asset.get("digest") or "")
             if expected.startswith("sha256:") and digest.hexdigest().lower() != expected[7:].lower():
                 raise RuntimeError("下载文件 SHA-256 校验失败：{}".format(asset.get("name")))
@@ -118,6 +125,15 @@ class WindowsReleaseUpdater:
         except Exception:
             self.remove_file(path)
             raise
+
+    @staticmethod
+    def _response_content_length(response):
+        """读取响应声明的文件大小；服务端未提供有效值时返回空值。"""
+        try:
+            value = response.headers.get("Content-Length")
+            return max(0, int(value)) if value is not None else None
+        except (AttributeError, TypeError, ValueError):
+            return None
 
     @staticmethod
     def _required_asset(assets, name):

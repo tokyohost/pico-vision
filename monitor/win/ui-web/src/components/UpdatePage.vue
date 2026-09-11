@@ -114,7 +114,7 @@ async function installUpdate(category) {
   try {
     await invoke('update.install', { category })
     await refreshUpdateStatus()
-    ElMessage.success(category === 'application' ? '已打开应用更新流程' : '更新任务已启动')
+    ElMessage.success(category === 'application' ? '应用更新下载已启动' : '更新任务已启动')
   } catch (error) {
     ElMessage.error(error?.message || String(error))
   } finally {

@@ -9,6 +9,7 @@ import os
 import queue
 import secrets
 import shutil
+import subprocess
 import threading
 import tempfile
 import time
@@ -1055,12 +1056,40 @@ class LinuxInvokeBridge:
         if category:
             if category not in self._update_states:
                 raise ValueError("不支持的更新状态类别：{}".format(category))
-            return dict(self._update_states[category])
-        return {name: dict(state) for name, state in self._update_states.items()}
+            return self._update_state_snapshot(self._update_states[category])
+        return {
+            name: self._update_state_snapshot(state)
+            for name, state in self._update_states.items()
+        }
+
+    @staticmethod
+    def _update_state_snapshot(state):
+        """复制 Linux 更新状态，并把内部日志列表转换为页面需要的文本。"""
+        snapshot = dict(state)
+        logs = snapshot.get("logs") or []
+        snapshot["logs"] = "\n".join(logs) if isinstance(logs, list) else str(logs)
+        return snapshot
+
+    def _set_update_state(
+        self, category, status, progress, message, reset_logs=False
+    ):
+        """更新 Linux HTTP 页任务状态，并将每个进度阶段追加到实时日志。"""
+        state = self._update_states[category]
+        if reset_logs:
+            state["logs"] = []
+        state["busy"] = status == "running"
+        state["status"] = status
+        if progress is not None:
+            state["progress"] = max(0, min(100, int(progress)))
+        state["message"] = str(message)
+        if message:
+            state["logs"].append(str(message))
+            del state["logs"][:-1000]
 
     def _update_check(self, payload):
         """检查 Linux Monitor 应用 Release，设备更新继续使用专用上传入口。"""
         from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
+        from monitor_update import LinuxDebUpdater
 
         category = str(payload.get("category") or "").strip()
         if category != "application":
@@ -1092,19 +1121,25 @@ class LinuxInvokeBridge:
         with urllib.request.urlopen(request, timeout=30) as response:
             release = json.loads(response.read().decode("utf-8"))
         latest = str(release.get("tag_name") or "").lstrip("v")
+        assets = release.get("assets") or []
+        try:
+            architecture = LinuxDebUpdater._architecture()
+            asset = LinuxDebUpdater._find_package_asset(assets, architecture)
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            asset = None
         return {
             "category": category,
             "currentVersion": MONITOR_VERSION,
             "latestVersion": latest,
             "updateAvailable": bool(latest and latest != MONITOR_VERSION),
             "applicable": True,
-            "assetAvailable": True,
-            "assetName": "",
+            "assetAvailable": asset is not None,
+            "assetName": asset.get("name") if asset else "",
             "notes": str(release.get("body") or ""),
         }
 
     def _update_install(self, payload):
-        """在 Linux 后台启动应用 DEB 更新；设备包由上传入口处理。"""
+        """启动由 HTTP 更新页跟踪的 Linux DEB 更新；设备包仍走上传入口。"""
         from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
         from monitor_update import LinuxDebUpdater
 
@@ -1114,15 +1149,36 @@ class LinuxInvokeBridge:
         state = self._update_states[category]
         if state["busy"]:
             raise RuntimeError("已有更新任务正在执行，请稍候")
-        state.update({"busy": True, "status": "running", "progress": 5, "message": "正在安装最新 Linux DEB", "logs": []})
+        self._set_update_state(
+            category, "running", 1, "Linux 应用更新已启动，正在准备", True
+        )
 
         def install():
-            """执行 Linux DEB 更新并把结果写入 HTTP 状态。"""
+            """执行 Linux DEB 更新，并把下载及安装进度持续同步到 HTTP 页面。"""
+            def report_progress(message, progress):
+                """接收更新器阶段回调并写入页面进度与实时日志。"""
+                self._set_update_state(
+                    category, "running", progress, message
+                )
+
             try:
-                updated = LinuxDebUpdater(GITHUB_REPOSITORY, MONITOR_VERSION).update()
-                state.update({"busy": False, "status": "success", "progress": 100, "message": "Linux DEB 更新流程已完成：{}".format(updated)})
+                updated = LinuxDebUpdater(
+                    GITHUB_REPOSITORY, MONITOR_VERSION
+                ).update(progress_callback=report_progress)
+                message = (
+                    "Linux DEB 更新已完成"
+                    if updated else "OmniWatch Linux 应用已是最新版本"
+                )
+                self._set_update_state(
+                    category, "success", 100, message
+                )
             except Exception as error:
-                state.update({"busy": False, "status": "error", "message": str(error)})
+                self._set_update_state(
+                    category,
+                    "error",
+                    None,
+                    "Linux 应用更新失败：{}".format(error),
+                )
                 LOGGER.exception("Linux HTTP 应用更新失败")
 
         threading.Thread(target=install, name="Linux HTTP 应用更新", daemon=True).start()

@@ -36,9 +36,10 @@ class LinuxDebUpdater:
         self.repository = str(repository or "").strip()
         self.current_version = str(current_version or "").strip()
 
-    def update(self):
-        """检查运行环境、下载最新 DEB、校验摘要并调用 APT 安装。"""
+    def update(self, progress_callback=None):
+        """检查、下载并安装最新 DEB，同时向调用方持续报告可见进度。"""
         self._validate_environment()
+        self._report_progress(progress_callback, "正在检查最新 Linux Release", 2)
         release = self._request_json(
             "https://api.github.com/repos/{}/releases/latest".format(
                 self.repository
@@ -49,6 +50,11 @@ class LinuxDebUpdater:
             raise RuntimeError("GitHub 最新 Release 缺少版本标签")
         if latest_version == self.current_version:
             LOGGER.info("当前已是最新版本：%s", self.current_version)
+            self._report_progress(
+                progress_callback,
+                "当前已是最新版本：{}".format(self.current_version),
+                100,
+            )
             return False
 
         architecture = self._architecture()
@@ -61,8 +67,51 @@ class LinuxDebUpdater:
             latest_version,
             architecture,
         )
-        package_path = self._download(package_asset)
+        self._report_progress(
+            progress_callback,
+            "发现新版本 {}，准备下载 {}".format(
+                latest_version, package_asset["name"]
+            ),
+            5,
+        )
+        last_percent = [-1]
+        last_unknown_megabyte = [-1]
+
+        def report_package_download(downloaded_bytes, total_bytes):
+            """把 DEB 下载字节数转换为页面百分比和中文日志。"""
+            if total_bytes:
+                percent = min(100, int(downloaded_bytes * 100 / total_bytes))
+                if percent == last_percent[0]:
+                    return
+                last_percent[0] = percent
+                message = "正在下载 Linux DEB：{}%（{} / {}）".format(
+                    percent,
+                    self._format_size(downloaded_bytes),
+                    self._format_size(total_bytes),
+                )
+                self._report_progress(
+                    progress_callback, message, 5 + int(percent * 0.70)
+                )
+                return
+            downloaded_megabyte = downloaded_bytes // (1024 * 1024)
+            if downloaded_megabyte == last_unknown_megabyte[0]:
+                return
+            last_unknown_megabyte[0] = downloaded_megabyte
+            self._report_progress(
+                progress_callback,
+                "正在下载 Linux DEB：已下载 {}".format(
+                    self._format_size(downloaded_bytes)
+                ),
+                None,
+            )
+
+        package_path = self._download(
+            package_asset, progress_callback=report_package_download
+        )
         try:
+            self._report_progress(
+                progress_callback, "Linux DEB 下载完成，正在校验", 78
+            )
             if checksum_asset is not None:
                 checksum_path = self._download(checksum_asset)
                 try:
@@ -71,16 +120,29 @@ class LinuxDebUpdater:
                         package_asset["name"],
                         checksum_path,
                     )
+                    self._report_progress(
+                        progress_callback, "Linux DEB SHA-256 校验通过", 85
+                    )
                 finally:
                     self._remove_file(checksum_path)
             else:
                 LOGGER.warning("Release 未提供 %s，跳过独立摘要校验", CHECKSUM_ASSET_NAME)
             LOGGER.info("正在通过 APT 安装 %s", package_asset["name"])
+            self._report_progress(
+                progress_callback,
+                "正在通过 APT 安装 {}".format(package_asset["name"]),
+                90,
+            )
             subprocess.run(
                 ["apt-get", "install", "--yes", package_path],
                 check=True,
             )
             LOGGER.info("Monitor 已更新到 %s", latest_version)
+            self._report_progress(
+                progress_callback,
+                "OmniWatch Linux 应用已更新到 {}".format(latest_version),
+                100,
+            )
             return True
         finally:
             self._remove_file(package_path)
@@ -144,8 +206,8 @@ class LinuxDebUpdater:
             return json.loads(response.read().decode("utf-8"))
 
     @classmethod
-    def _download(cls, asset):
-        """把 Release 资源下载到系统临时目录。"""
+    def _download(cls, asset, progress_callback=None):
+        """把 Release 资源下载到系统临时目录，并按数据块报告字节进度。"""
         name = str(asset.get("name") or "release-asset")
         url = asset.get("browser_download_url")
         if not url:
@@ -155,15 +217,48 @@ class LinuxDebUpdater:
         LOGGER.info("正在下载 %s", name)
         try:
             with urllib.request.urlopen(cls._request(url), timeout=120) as response, open(path, "wb") as output:
+                total_bytes = cls._response_content_length(response)
+                downloaded_bytes = 0
+                if progress_callback is not None:
+                    progress_callback(downloaded_bytes, total_bytes)
                 while True:
                     chunk = response.read(64 * 1024)
                     if not chunk:
                         break
                     output.write(chunk)
+                    downloaded_bytes += len(chunk)
+                    if progress_callback is not None:
+                        progress_callback(downloaded_bytes, total_bytes)
             return path
         except Exception:
             cls._remove_file(path)
             raise
+
+    @staticmethod
+    def _response_content_length(response):
+        """读取 HTTP 响应声明的文件大小，无有效响应头时返回空值。"""
+        try:
+            value = response.headers.get("Content-Length")
+            return max(0, int(value)) if value is not None else None
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _format_size(byte_count):
+        """把字节数格式化为便于页面日志阅读的容量文本。"""
+        value = float(max(0, int(byte_count or 0)))
+        units = ("B", "KB", "MB", "GB")
+        for unit in units:
+            if value < 1024 or unit == units[-1]:
+                return "{:.1f} {}".format(value, unit)
+            value /= 1024
+
+    @staticmethod
+    def _report_progress(progress_callback, message, progress):
+        """同时写入服务日志，并把阶段消息转发给 HTTP 更新状态。"""
+        LOGGER.info("%s", message)
+        if progress_callback is not None:
+            progress_callback(message, progress)
 
     @staticmethod
     def _verify_checksum(package_path, package_name, checksum_path):

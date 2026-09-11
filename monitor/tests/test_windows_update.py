@@ -1,5 +1,6 @@
 """验证 Windows GitHub Release 更新资源选择行为。"""
 
+import io
 import unittest
 from unittest import mock
 
@@ -92,6 +93,25 @@ class WindowsReleaseUpdaterTest(unittest.TestCase):
         self.assertTrue(WindowsReleaseUpdater.firmware_update_available("1.2.3", "1.3.0"))
         self.assertFalse(WindowsReleaseUpdater.firmware_update_available("1.3.0", "1.2.3"))
         self.assertFalse(WindowsReleaseUpdater.firmware_update_available("1.3", "1.3.0"))
+
+    def test_download_reports_byte_progress(self):
+        """确认安装包下载会从零开始持续报告已下载字节和总大小。"""
+        updater = WindowsReleaseUpdater("owner/repository", "1.0.0")
+        response = io.BytesIO(b"installer")
+        response.headers = {"Content-Length": "9"}
+        progress = []
+        with mock.patch("windows_update.urllib.request.urlopen", return_value=response):
+            path = updater.download(
+                {"name": "setup.exe", "browser_download_url": "https://example/setup"},
+                ".exe",
+                progress_callback=lambda downloaded, total: progress.append(
+                    (downloaded, total)
+                ),
+            )
+        try:
+            self.assertEqual([(0, 9), (9, 9)], progress)
+        finally:
+            updater.remove_file(path)
 
 
 if __name__ == "__main__":

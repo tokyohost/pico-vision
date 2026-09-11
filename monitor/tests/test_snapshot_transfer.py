@@ -276,7 +276,7 @@ class SnapshotExtremeTest(unittest.TestCase):
                         mock.patch.object(client, "_write_packet", side_effect=write), \
                         mock.patch.object(client, "_complete_json_ack_timing"), \
                         mock.patch.object(client, "_wait_json_ack", side_effect=wait_ack):
-                    if scenario == "正常":
+                    if scenario != "丢片":
                         client.send(snapshot)
                     else:
                         with self.assertRaises(JsonAckTimeoutError):
@@ -425,8 +425,8 @@ class SnapshotExtremeTest(unittest.TestCase):
         service._display_configuration_snapshot.return_value = {"style": "stocks"}
         self.assertEqual(3, service._snapshot_for_sending()["ext"]["stock"]["price"])
 
-    def test_whole_transaction_deadline_and_ack_failure(self):
-        """构帧、各片写入及 ACK 共用预算，超时不确认且强制全量恢复。"""
+    def test_slow_transaction_and_ack_failure(self):
+        """慢速构帧和写入不限制整批时长，ACK 失败仍清理基线。"""
         from pico_client import PicoJsonClient, JsonAckTimeoutError
         for fail_stage in ("build", "write", "ack", "success"):
             client = PicoJsonClient()
@@ -438,18 +438,21 @@ class SnapshotExtremeTest(unittest.TestCase):
             def prepare(snapshot, request_id):
                 """模拟构帧耗时。"""
                 result = original(snapshot, request_id)
-                clock[0] += 0.401 if fail_stage == "build" else 0.05
+                clock[0] += 20.0 if fail_stage == "build" else 0.05
                 return result
 
             def write(*args, **kwargs):
                 """模拟驱动写入耗时。"""
-                clock[0] += 0.401 if fail_stage == "write" else 0.1
+                self.assertIsNone(kwargs.get("deadline"))
+                clock[0] += 20.0 if fail_stage == "write" else 0.1
                 return {}
 
             def ack(request_id, event, timeout):
-                """检查剩余预算并模拟及时或迟到的最终确认。"""
-                self.assertLessEqual(timeout, 0.251)
-                clock[0] += 0.3 if fail_stage == "ack" else 0.05
+                """确认 ACK 具有独立等待窗口，并模拟无响应。"""
+                self.assertEqual(timeout, 8.0)
+                if fail_stage == "ack":
+                    raise JsonAckTimeoutError("模拟设备无响应")
+                clock[0] += 0.05
 
             with mock.patch("pico_client.time.monotonic", side_effect=lambda: clock[0]), \
                     mock.patch.object(client, "_drain_json_responses"), \
@@ -457,7 +460,7 @@ class SnapshotExtremeTest(unittest.TestCase):
                     mock.patch.object(client, "_write_packet", side_effect=write), \
                     mock.patch.object(client, "_complete_json_ack_timing"), \
                     mock.patch.object(client, "_wait_json_ack", side_effect=ack):
-                if fail_stage == "success":
+                if fail_stage != "ack":
                     client.send({"value": 1})
                     self.assertEqual({"value": 1}, client._snapshot_sender.baseline)
                 else:

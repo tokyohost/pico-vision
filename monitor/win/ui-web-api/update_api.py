@@ -224,22 +224,115 @@ class UpdateApiMixin:
             if not delegated:
                 self._application.update_lock.release()
 
+    @staticmethod
+    def _format_download_size(byte_count):
+        """把下载字节数格式化为适合实时日志展示的短文本。"""
+        size = max(0, int(byte_count or 0))
+        units = ("B", "KB", "MB", "GB")
+        value = float(size)
+        for unit in units:
+            if value < 1024 or unit == units[-1]:
+                return "{:.1f} {}".format(value, unit)
+            value /= 1024
+
+    def _run_application_release_update(self, updater):
+        """在 Web 更新页内下载应用安装包，完整呈现下载进度后启动安装器。"""
+        monitor_path = None
+        try:
+            self._set_update_state(
+                "application", "running", 2, "正在确认应用更新资源", True
+            )
+            latest_version, assets = updater.latest_release(
+                self._application.settings.get("update_url") or None
+            )
+            if not updater.update_available(latest_version):
+                raise RuntimeError("OmniWatch 应用已是最新版本")
+            asset = updater.select_monitor_asset(assets, latest_version)
+            self._set_update_state(
+                "application",
+                "running",
+                5,
+                "准备下载安装包：{}".format(asset.get("name") or latest_version),
+            )
+            last_percent = [-1]
+            last_unknown_megabyte = [-1]
+
+            def report_download_progress(downloaded_bytes, total_bytes):
+                """将安装包字节进度换算为页面进度，并避免重复写入相同日志。"""
+                if total_bytes:
+                    percent = min(100, int(downloaded_bytes * 100 / total_bytes))
+                    if percent == last_percent[0]:
+                        return
+                    last_percent[0] = percent
+                    message = "正在下载安装包：{}%（{} / {}）".format(
+                        percent,
+                        self._format_download_size(downloaded_bytes),
+                        self._format_download_size(total_bytes),
+                    )
+                    self._set_update_state(
+                        "application", "running", 5 + int(percent * 0.85), message
+                    )
+                    return
+                downloaded_megabyte = downloaded_bytes // (1024 * 1024)
+                if downloaded_megabyte == last_unknown_megabyte[0]:
+                    return
+                last_unknown_megabyte[0] = downloaded_megabyte
+                self._set_update_state(
+                    "application",
+                    "running",
+                    None,
+                    "正在下载安装包：已下载 {}".format(
+                        self._format_download_size(downloaded_bytes)
+                    ),
+                )
+
+            monitor_path = updater.download(
+                asset, ".exe", progress_callback=report_download_progress
+            )
+            self._set_update_state(
+                "application", "running", 95, "安装包下载完成，正在启动安装程序"
+            )
+            self._application._schedule_monitor_installer(monitor_path)
+            monitor_path = None
+            self._set_update_state(
+                "application", "success", 100, "安装程序已启动，OmniWatch 即将退出"
+            )
+            LOGGER.info("OmniWatch 应用安装包已下载，准备更新至 %s", latest_version)
+            self._application.stopping.set()
+            self._application.icon.stop()
+        except Exception as error:
+            self._set_update_state(
+                "application", "error", None, "应用立即更新失败：{}".format(error)
+            )
+            LOGGER.exception("应用立即更新失败：%s", error)
+        finally:
+            if monitor_path is not None:
+                updater.remove_file(monitor_path)
+            self._application.update_lock.release()
+
     def _install_update(self, payload):
         """按更新类别立即启动应用、设备固件或 SDK 更新。"""
         category = str(payload.get("category") or "").strip()
-        if category == "application":
-            self._set_update_state("application", "running", 10, "正在打开应用更新流程", True)
-            self._application._check_for_updates(self._application.icon)
-            self._set_update_state("application", "success", 100, "应用更新流程已打开")
-            return {"category": category, "started": True}
-
-        connection = self._application._get_device_connection()
-        if not connection.get("connected"):
-            raise RuntimeError("设备未连接，无法立即更新")
         if not self._application.update_lock.acquire(blocking=False):
             raise RuntimeError("已有更新任务正在执行，请稍候")
         try:
-            if category == "firmware":
+            if category == "application":
+                updater = WindowsReleaseUpdater(
+                    GITHUB_REPOSITORY,
+                    MONITOR_VERSION,
+                    include_preview=bool(
+                        self._application.settings.get("developer_plan", False)
+                    ),
+                )
+                target = self._run_application_release_update
+                arguments = (updater,)
+            else:
+                connection = self._application._get_device_connection()
+                if not connection.get("connected"):
+                    raise RuntimeError("设备未连接，无法立即更新")
+            if category == "application":
+                pass
+            elif category == "firmware":
                 port = self._application._mpremote_repl_port(connection)
                 current_version = str(connection.get("firmware_version") or "未知")
                 updater = WindowsReleaseUpdater(GITHUB_REPOSITORY, current_version, include_preview=bool(self._application.settings.get("developer_plan", False)))

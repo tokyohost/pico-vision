@@ -50,7 +50,6 @@ from snapshot_transfer import SnapshotSender
 from usbCdcFramework import UsbCdcFramework
 
 
-SNAPSHOT_TRANSACTION_TIMEOUT = 0.4
 JSON_ACK_TIMEOUT = 8.0
 JSON_PROGRESS_GRACE_SECONDS = 2.0
 SERIAL_SLOW_SEND_WARNING_MS = 200.0
@@ -554,7 +553,7 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         total_written = 0
         for position in range(0, len(packet), write_chunk_size):
             if deadline is not None and time.monotonic() >= deadline:
-                raise JsonAckTimeoutError("快照整批传输超过 400ms")
+                raise JsonAckTimeoutError("快照整批传输超过通信等待预算")
             chunk = packet[position:position + write_chunk_size]
             write_started = time.monotonic()
             device = self.serial
@@ -745,15 +744,6 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         transaction_wait = bool(wait_ack or transaction_enabled)
         ack_event = self._register_json_ack_waiter(request_id) if transaction_wait else None
         build_started = time.monotonic()
-        deadline = build_started + SNAPSHOT_TRANSACTION_TIMEOUT if transaction_enabled else None
-
-        def remaining_budget():
-            """整批构帧、写入与确认共用 400ms 预算，超时后禁止推进基线。"""
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise JsonAckTimeoutError("快照整批传输超过 400ms")
-            return remaining
-
         try:
             if transaction_enabled:
                 info = self.snapshot_chunk_info
@@ -775,18 +765,14 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
                     label = "{}.{}/{}".format(label, index + 1, len(packets))
                 if is_final_packet:
                     self._begin_json_ack_timing(request_id, build_started, build_elapsed_ms)
-                if transaction_enabled:
-                    remaining_budget()
-                    write_timing = self._write_packet(packet, label, build_elapsed_ms, deadline=deadline)
-                    remaining_budget()
-                else:
-                    write_timing = self._write_packet(packet, label, build_elapsed_ms)
+                # 每片完成后继续发送下一片，不以整批累计耗时判定连接失效。
+                # 写入和最终 ACK 各自保留无响应保护，慢速传输不挤占确认窗口。
+                write_timing = self._write_packet(packet, label, build_elapsed_ms)
                 if is_final_packet:
                     self._complete_json_ack_timing(request_id, build_started, write_timing)
             if transaction_wait:
-                self._wait_json_ack(request_id, ack_event, min(ack_timeout, remaining_budget()) if transaction_enabled else ack_timeout)
+                self._wait_json_ack(request_id, ack_event, ack_timeout)
                 if transaction_enabled:
-                    remaining_budget()
                     self._snapshot_sender.confirm()
         except Exception:
             # 写入中断、设备拒收或 ACK 超时都会使本地基线失去确定性，

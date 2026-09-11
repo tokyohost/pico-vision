@@ -39,3 +39,9 @@ Windows CPython、固定随机种子 17、每组构帧（包含压缩）7 次，
 本轮相关用例合计 158 项通过：snapshot 17、WebSocket 10、CDC 10、Monitor 115、ESP32 历史缓存 6。snapshot 用例额外包含两种固件 160 轮随机数据往返及 5 类网络/CPU 场景。CRC 损坏线路帧不会提交，后续全量事务可恢复。
 
 在 Monitor 目录运行 `python -m unittest discover -s tests -p test_snapshot_transfer.py`、`test_websocket_transport.py`、`test_usb_cdc_framework.py` 和 `test_monitor.py`（分别替换 `-p` 参数）。ESP32 历史缓存用例位于 `../esp32-s3/tests/test_history_increase.py`。
+
+## 2026-09-12 连接稳定性修正
+
+取消 Monitor 整批快照的 400ms 硬截止时间。构帧和已完成分片不再消耗后续分片及最终 ACK 的等待窗口，按实际分片发送进度推进。单帧写入和最终 ACK 仍使用原有无响应保护；失败时清理基线，半帧失败仍重建连接。上文 400ms 成功判定仅记录旧版行为。
+
+回归覆盖：真实 CDC 读写线程首帧阻塞 550ms 后成功确认；可控时钟下慢速构帧、慢速发送不触发整批超时；网络抖动、CPU 停顿和慢提交可完成，缺片或 ACK 失败仍恢复全量发送。

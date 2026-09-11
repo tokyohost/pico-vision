@@ -70,6 +70,46 @@ class LinuxDebUpdaterTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "root 权限"):
                     updater._validate_environment()
 
+    def test_http_progress_callback_receives_download_and_install_stages(self):
+        """确认 Linux HTTP 调用方能取得 DEB 下载百分比和 APT 安装阶段。"""
+        package_name = "OmniWatch_1.2.4_amd64.deb"
+        assets = [
+            {"name": package_name, "browser_download_url": "https://example/deb"},
+        ]
+        progress = []
+        updater = LinuxDebUpdater("owner/repository", "1.2.3")
+
+        def download(asset, progress_callback=None):
+            """模拟下载资源，并主动回调一半和全部字节进度。"""
+            temporary = tempfile.NamedTemporaryFile(delete=False)
+            temporary.write(b"deb-package")
+            temporary.close()
+            if progress_callback is not None:
+                progress_callback(50, 100)
+                progress_callback(100, 100)
+            return temporary.name
+
+        with mock.patch.object(updater, "_validate_environment"):
+            with mock.patch.object(
+                updater,
+                "_request_json",
+                return_value={"tag_name": "v1.2.4", "assets": assets},
+            ):
+                with mock.patch.object(updater, "_architecture", return_value="amd64"):
+                    with mock.patch.object(updater, "_download", side_effect=download):
+                        with mock.patch("monitor_update.subprocess.run"):
+                            self.assertTrue(
+                                updater.update(
+                                    progress_callback=lambda message, percent: progress.append(
+                                        (message, percent)
+                                    )
+                                )
+                            )
+
+        self.assertIn(("正在下载 Linux DEB：50%（50.0 B / 100.0 B）", 40), progress)
+        self.assertTrue(any("正在通过 APT 安装" in item[0] for item in progress))
+        self.assertEqual(100, progress[-1][1])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -69,6 +69,37 @@ class JsonAckSerial(ThreadedSerial):
 class UsbCdcFrameworkTest(unittest.TestCase):
     """验证 CDC 框架的读写线程和响应分流行为。"""
 
+    def test_snapshot_survives_startup_backpressure(self):
+        """事务首帧背压超过旧的 400ms 限制后仍完整发送并确认基线。"""
+        device = JsonAckSerial()
+        client = PicoJsonClient()
+        client.serial = device
+        client.snapshot_chunk_info = {"version": 1}
+        framework = UsbCdcFramework(
+            device, parse_frame, response_callback=client._handle_cdc_response,
+            error_callback=client._handle_cdc_error,
+        )
+        client.transport = framework
+        original_write = device.write
+        delayed = [False]
+
+        def delayed_write(data):
+            """仅在第一次写入时模拟设备冷启动产生的短暂阻塞。"""
+            if not delayed[0]:
+                delayed[0] = True
+                time.sleep(0.55)
+            return original_write(data)
+
+        framework.start()
+        try:
+            with mock.patch.object(device, "write", side_effect=delayed_write):
+                client.send({"version": 1})
+            self.assertTrue(framework.is_alive)
+            self.assertEqual({"version": 1}, client._snapshot_sender.baseline)
+            self.assertEqual({}, client._json_ack_events)
+        finally:
+            framework.close()
+
     def test_expired_queue_job_never_writes(self):
         """排队时间计入预算，过期任务不得继续写入设备。"""
         from usbCdcFramework import _UsbCdcWriteJob
