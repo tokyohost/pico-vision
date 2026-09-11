@@ -91,6 +91,9 @@ jobs:
           [IO.File]::WriteAllText((Join-Path $PWD "build_info.py"), $content, [Text.UTF8Encoding]::new($false))
 
       - name: 执行单元测试
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
         shell: pwsh
         run: |
           # 各固件目录包含同名 main、config 等模块，必须隔离 Python 模块表。

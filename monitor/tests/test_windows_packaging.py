@@ -160,7 +160,13 @@ class WindowsPackagingTest(unittest.TestCase):
         self.assertIn("device.firmware.select", page)
         self.assertIn("device.firmware.ports", page)
         self.assertIn("v-model=\"firmware.force\"", page)
-        self.assertIn("packagePath: firmware.package.path", page)
+        # 浏览器上传使用一次性编号，桌面端继续传递本地包路径。
+        self.assertIn(
+            "if (firmware.package.uploadId) payload.uploadId = firmware.package.uploadId",
+            page,
+        )
+        self.assertIn("else payload.packagePath = firmware.package.path", page)
+        self.assertIn("invoke('device.firmware.updateLocal', payload)", page)
         self.assertIn('"device.firmware.select"', bridge)
         self.assertIn('"device.firmware.ports"', bridge)
 

@@ -34,6 +34,7 @@ class HttpAdminServerTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         """创建临时静态目录和空闲监听端口。"""
         self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
         self.static_directory = Path(self.temporary.name)
         (self.static_directory / "index.html").write_text(
             "<html lang=\"zh-CN\"></html>",
@@ -50,12 +51,9 @@ class HttpAdminServerTest(unittest.IsolatedAsyncioTestCase):
             port=self.port,
             auth="test-auth",
         )
+        self.addCleanup(self.server.stop)
         self.server.start()
-
-    def tearDown(self):
-        """停止测试服务并清理临时目录。"""
-        self.server.stop()
-        self.temporary.cleanup()
+        self.port = self.server.port
 
     async def test_health_and_index_are_available(self):
         """确认静态入口和健康检查无需鉴权即可访问。"""
@@ -117,51 +115,50 @@ class HttpAdminServerTest(unittest.IsolatedAsyncioTestCase):
     async def test_websocket_proxies_invoke_with_request_id(self):
         """确认合法连接可以按请求编号代理 invoke 并返回结果。"""
         async with ClientSession() as session:
-            socket_client = await session.ws_connect(
+            async with session.ws_connect(
                 "http://127.0.0.1:{}/ws?auth=test-auth".format(self.port)
-            )
-            await socket_client.send_json(
-                {
-                    "type": "invoke",
-                    "id": "request-1",
-                    "action": "device.status",
-                    "payload": {"fresh": True},
-                }
-            )
-            response = await asyncio.wait_for(
-                socket_client.receive_json(),
-                timeout=3,
-            )
-            self.assertEqual("request-1", response["id"])
-            self.assertTrue(response["result"]["ok"])
-            self.assertEqual(
-                ("device.status", {"fresh": True}),
-                self.bridge.last_call,
-            )
-            await socket_client.close()
+            ) as socket_client:
+                await socket_client.send_json(
+                    {
+                        "type": "invoke",
+                        "id": "request-1",
+                        "action": "device.status",
+                        "payload": {"fresh": True},
+                    }
+                )
+                response = await asyncio.wait_for(
+                    socket_client.receive_json(),
+                    timeout=3,
+                )
+                self.assertEqual("request-1", response["id"])
+                self.assertTrue(response["result"]["ok"])
+                self.assertEqual(
+                    ("device.status", {"fresh": True}),
+                    self.bridge.last_call,
+                )
 
     async def test_websocket_blocks_desktop_only_action(self):
         """确认桌面专属动作不会穿透到原业务桥接对象。"""
         async with ClientSession() as session:
-            socket_client = await session.ws_connect(
+            async with session.ws_connect(
                 "http://127.0.0.1:{}/ws?auth=test-auth".format(self.port)
-            )
-            await socket_client.send_json(
-                {
-                    "type": "invoke",
-                    "id": "request-2",
-                    "action": "system.openDataDirectory",
-                    "payload": {},
-                }
-            )
-            response = await socket_client.receive_json()
-            self.assertFalse(response["result"]["ok"])
-            self.assertIsNone(self.bridge.last_call)
-            await socket_client.close()
+            ) as socket_client:
+                await socket_client.send_json(
+                    {
+                        "type": "invoke",
+                        "id": "request-2",
+                        "action": "system.openDataDirectory",
+                        "payload": {},
+                    }
+                )
+                response = await asyncio.wait_for(socket_client.receive_json(), timeout=3)
+                self.assertFalse(response["result"]["ok"])
+                self.assertIsNone(self.bridge.last_call)
 
     async def test_browser_upload_resolves_to_server_owned_path(self):
         """确认浏览器上传可以驱动原有 action，且不会接受任意本地路径。"""
-        form = FormData()
+        # 模拟浏览器保留目录分隔符的 multipart 文件名，避免 aiohttp 将斜杠编码为 %2F。
+        form = FormData(quote_fields=False)
         form.add_field(
             "files",
             b'{"name":"demo"}',
@@ -215,6 +212,21 @@ class HttpAdminServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["ok"])
         self.assertIn("浏览器", result["message"])
         self.assertIsNone(self.bridge.last_call)
+
+    async def test_http_blocks_desktop_actions_even_with_upload_id(self):
+        """确认 HTTP 桌面动作不能通过伪造上传编号绕过拦截。"""
+        url = "http://127.0.0.1:{}/api/invoke".format(self.port)
+        async with ClientSession() as session:
+            for action in ("system.openDataDirectory", "log.export"):
+                with self.subTest(action=action):
+                    async with session.post(
+                        url,
+                        json={"action": action, "payload": {"uploadId": "fake"}},
+                        headers={"Authorization": "Bearer test-auth"},
+                    ) as response:
+                        self.assertEqual(200, response.status)
+                        self.assertFalse((await response.json())["ok"])
+                    self.assertIsNone(self.bridge.last_call)
 
     async def test_server_automatically_uses_next_available_port(self):
         """确认配置端口被占用时服务会自动监听后续可用端口。"""

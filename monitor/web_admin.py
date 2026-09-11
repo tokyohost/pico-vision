@@ -1466,12 +1466,9 @@ class HttpAdminServer:
         expected_kind = HTTP_UPLOAD_ACTION_KINDS.get(action)
         upload_id = str(payload.get("uploadId") or "").strip()
         if expected_kind is None:
-            return dict(payload), None, None
+            return dict(payload), HTTP_UNSUPPORTED_ACTIONS.get(action), None
         if not upload_id:
-            return None, HTTP_UNSUPPORTED_ACTIONS.get(
-                action,
-                "请先使用浏览器选择文件",
-            ), None
+            return None, "请先使用浏览器选择文件", None
         with self._upload_lock:
             record = self._uploads.get(upload_id)
         if record is None or record["expires"] <= time.monotonic():
