@@ -201,6 +201,8 @@ class ProtocolBackendTest(unittest.TestCase):
         """确认同一次轮询内的多个 JSON 分片都会进入最终快照。"""
         instance = protocol.JsonProtocol.__new__(protocol.JsonProtocol)
         instance._buffer = bytearray(b"PV1:first\nPV1:second\n")
+        # 绕过构造方法创建测试对象时，同步初始化事务快照状态。
+        instance._committed_snapshot = None
         instance._last_byte_ms = 1
         instance._frame_started_ms = 1
         instance._frame_read_calls = 2
