@@ -9,6 +9,10 @@ from test_builtin_font_assets import _array_bytes, _supported_characters
 from test_fusion_pixel_style import RecordingCanvas
 
 ROOT = Path(__file__).resolve().parents[2]
+ZLABS_BITMAP_SOURCE = (
+    ROOT.parent / "micropython" / "ports" / "rp2" / "modules"
+    / "fn_canvas" / "font_zlabs_pixel_data.c"
+)
 sys.path.insert(0, str(ROOT / "picoRP2040"))
 import canvas
 import canvasC
@@ -19,11 +23,17 @@ from styles.style_plugins import create_style
 class ZLabsPixelFontTest(unittest.TestCase):
     """检查十二像素资源和两条画布渲染路径的接入行为。"""
 
+    @unittest.skipUnless(
+        ZLABS_BITMAP_SOURCE.is_file(),
+        "当前检出内容不包含 MicroPython 的 Z 工坊字体点阵资源",
+    )
     def test_bitmap_matches_original_font(self):
         """点阵应保持原字体像素，不发生缩放或基线裁剪。"""
         from PIL import Image, ImageDraw, ImageFont
-        source = ROOT.parent / "micropython/ports/rp2/modules/fn_canvas/font_zlabs_pixel_data.c"
-        data = _array_bytes(source.read_text(encoding="utf-8"), "fn_builtin_font_zlabs_bitmap")
+        data = _array_bytes(
+            ZLABS_BITMAP_SOURCE.read_text(encoding="utf-8"),
+            "fn_builtin_font_zlabs_bitmap",
+        )
         characters = _supported_characters()
         self.assertEqual(len(characters) * 24, len(data))
         font = ImageFont.truetype(str(ROOT / "assets/fonts/zlabs_pixel_12px/ZLabsPixel_12px_M_CN.ttf"), 12)
