@@ -17,6 +17,11 @@ try:
 except ImportError:
     import socket
 
+try:
+    import fn_websocket as _native_websocket
+except ImportError:
+    _native_websocket = None
+
 from net.base import TransportStrategy
 from net.websocket_clients import WebSocketClientRegistry
 
@@ -34,6 +39,7 @@ class WebSocketTransport(TransportStrategy):
     _HANDSHAKE_TIMEOUT_MS = 2000
     _SEND_RETRY_TIMEOUT_MS = 250
     _WOULD_BLOCK_ERRNOS = (11, 35, 10035)
+    _NATIVE_API_VERSION = 1
 
     def __init__(self, wifi_manager, port=8765, path="/pv1", heartbeat_ms=10000, timeout_ms=30000,
                  client_registry=None):
@@ -59,6 +65,68 @@ class WebSocketTransport(TransportStrategy):
         self._last_receive_ms = None
         self._last_ping_ms = None
         self._accepted_ms = None
+        self._native_attached = False
+        self._native_receive_activity = 0
+
+    @classmethod
+    def _native_supported(cls):
+        """返回固件是否包含兼容的 WebSocket 原生数据面。"""
+        if _native_websocket is None:
+            return False
+        try:
+            return (
+                _native_websocket.api_version() == cls._NATIVE_API_VERSION
+                and callable(getattr(_native_websocket, "attach", None))
+                and callable(getattr(_native_websocket, "detach", None))
+                and callable(getattr(_native_websocket, "frames_available", None))
+                and callable(getattr(_native_websocket, "receive_activity", None))
+                and callable(getattr(_native_websocket, "read_frame", None))
+                and callable(getattr(_native_websocket, "read_error", None))
+                and callable(getattr(_native_websocket, "send", None))
+            )
+        except Exception:
+            return False
+
+    def _attach_native(self):
+        """把已完成 Upgrade 的 socket 交给 C 任务独占接收。"""
+        self._native_attached = False
+        if not self._native_supported() or self._client is None:
+            return False
+        fileno = getattr(self._client, "fileno", None)
+        if not callable(fileno):
+            return False
+        try:
+            _native_websocket.attach(fileno())
+            self._native_attached = True
+            self._native_receive_activity = int(
+                _native_websocket.receive_activity()
+            )
+        except Exception:
+            try:
+                _native_websocket.detach()
+            except Exception:
+                pass
+            self._native_attached = False
+        return self._native_attached
+
+    def _refresh_native_receive_activity(self):
+        """把 C 任务观察到的网络活动同步到 Python 会话超时状态。"""
+        if not self._native_attached:
+            return
+        activity = int(_native_websocket.receive_activity())
+        if activity != self._native_receive_activity:
+            self._native_receive_activity = activity
+            self._last_receive_ms = self._ticks_ms()
+
+    def _detach_native(self):
+        """停止 C 任务访问当前 socket，随后才允许 Python 关闭连接。"""
+        if not self._native_attached:
+            return
+        self._native_attached = False
+        try:
+            _native_websocket.detach()
+        except Exception:
+            pass
 
     @staticmethod
     def _ticks_ms():
@@ -107,6 +175,7 @@ class WebSocketTransport(TransportStrategy):
 
     def _close_client(self):
         """关闭当前 WebSocket 客户端并清理全部会话缓冲。"""
+        self._detach_native()
         client, self._client = self._client, None
         if client is not None:
             try:
@@ -374,6 +443,7 @@ class WebSocketTransport(TransportStrategy):
                 self._close_client()
             return
         if pending:
+            self._detach_native()
             old_client, self._client = self._client, client
             try:
                 old_client.close()
@@ -393,6 +463,7 @@ class WebSocketTransport(TransportStrategy):
         self._last_receive_ms = now
         self._last_ping_ms = now
         self._accepted_ms = None
+        self._attach_native()
 
     def _parse_frames(self):
         """增量解析客户端发送的掩码 WebSocket 帧。"""
@@ -484,7 +555,11 @@ class WebSocketTransport(TransportStrategy):
         try:
             self._open_server()
             self._accept()
-            self._read_socket()
+            # 原生数据面接管后 Python 不再读取活动 socket，避免同方向并发 recv。
+            if not self._native_attached:
+                self._read_socket()
+            else:
+                self._refresh_native_receive_activity()
             self._read_pending_socket()
             now = self._ticks_ms()
             self._expire_handshakes(now)
@@ -494,8 +569,17 @@ class WebSocketTransport(TransportStrategy):
                 self._close_client()
                 return
             if self._elapsed(now, self._last_ping_ms) >= self._heartbeat_ms:
-                if self._send_frame(0x9, b"pv1"):
+                if self._native_attached:
+                    try:
+                        ping_sent = _native_websocket.send(b"pv1", 0x9) == 3
+                    except Exception:
+                        ping_sent = False
+                else:
+                    ping_sent = self._send_frame(0x9, b"pv1")
+                if ping_sent:
                     self._last_ping_ms = now
+                else:
+                    self._close_client()
         except MemoryError:
             # 内存不足必须交给设备顶层硬复位，避免在碎片化堆上反复重建服务。
             raise
@@ -510,7 +594,37 @@ class WebSocketTransport(TransportStrategy):
 
     def available(self):
         """返回已解帧且可交给 PV1 协议层的字节数。"""
+        if self._native_attached:
+            try:
+                return int(_native_websocket.frames_available())
+            except Exception:
+                self._close_client()
+                return 0
         return len(self._receive_buffer)
+
+    def uses_complete_frame_queue(self):
+        """返回是否由 C 任务直接提供完整 WebSocket 消息。"""
+        return self._native_attached
+
+    def read_frame(self):
+        """从 C 层 WebSocket 完整消息队列取出一帧 PV1 数据。"""
+        if not self._native_attached:
+            return None
+        try:
+            return _native_websocket.read_frame()
+        except Exception:
+            self._close_client()
+            return None
+
+    def read_receive_error(self):
+        """取出 C 层异步接收错误，供协议层结束当前在途请求。"""
+        if not self._native_attached:
+            return None
+        try:
+            return _native_websocket.read_error()
+        except Exception:
+            self._close_client()
+            return b"WEBSOCKET_NATIVE_ERROR"
 
     def readinto(self, buffer):
         """从 WebSocket 接收缓冲复制数据到目标缓冲区。"""
@@ -525,7 +639,16 @@ class WebSocketTransport(TransportStrategy):
     def write(self, data):
         """把一段 PV1 数据作为二进制 WebSocket 消息发送。"""
         data = bytes(data)
-        written = len(data) if self._send_frame(0x2, data) else 0
+        if self._native_attached:
+            try:
+                written = int(_native_websocket.send(data, 0x2))
+            except Exception:
+                written = 0
+            if written != len(data):
+                self._close_client()
+                return 0
+        else:
+            written = len(data) if self._send_frame(0x2, data) else 0
         if self._disconnect_after_write:
             self._disconnect_after_write = False
             self._close_client()
@@ -541,6 +664,7 @@ class WebSocketTransport(TransportStrategy):
         details.update({
             "mode": self.name,
             "connected": self.is_connected(),
+            "websocket_backend": "native" if self._native_attached else "python",
             "websocket_port": self._port,
             "websocket_path": self._path,
             "peer": self._peer[0] if self._peer else None,
