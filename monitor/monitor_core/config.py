@@ -21,6 +21,7 @@ CONFIG_ENV_MAP = {
     "PICO_MONITOR_WIFI_ANNOUNCEMENT_TIMEOUT": ("network", "announcement_timeout"),
     "PICO_MONITOR_PING_TARGET": ("network", "ping_target"),
     "PICO_MONITOR_INTERVAL": ("monitor", "interval"),
+    "PICO_MONITOR_JSON_CHUNK_SIZE": ("monitor", "json_chunk_size"),
     "PICO_MONITOR_ADAPTIVE_TRANSMIT": ("monitor", "adaptive_transmit"),
     "PICO_MONITOR_COLLECTION_TASK_INTERVALS": ("collection_tasks", "intervals"),
     "PICO_MONITOR_CUSTOM_DATA_CONFIGS": ("custom_data", "configs"),

@@ -66,15 +66,38 @@ class JsonAckSerial(ThreadedSerial):
         return written
 
 
+class BlockingWriteSerial(ThreadedSerial):
+    """模拟 Windows OVERLAPPED 写入等待底层句柄关闭后才返回。"""
+
+    def __init__(self):
+        """初始化写入开始通知和关闭解除事件。"""
+        super().__init__()
+        self.write_started = threading.Event()
+        self.write_released = threading.Event()
+
+    def write(self, data):
+        """阻塞写入，直到 close() 模拟释放 Windows 串口句柄。"""
+        self.write_started.set()
+        self.write_released.wait(2.0)
+        if not self.is_open:
+            raise serial.SerialException("串口句柄已关闭")
+        return super().write(data)
+
+    def close(self):
+        """关闭串口并解除阻塞写入。"""
+        super().close()
+        self.write_released.set()
+
+
 class UsbCdcFrameworkTest(unittest.TestCase):
     """验证 CDC 框架的读写线程和响应分流行为。"""
 
     def test_snapshot_survives_startup_backpressure(self):
-        """事务首帧背压超过旧的 400ms 限制后仍完整发送并确认基线。"""
+        """JSONB 首片背压超过旧的 400ms 限制后仍可完整发送。"""
         device = JsonAckSerial()
         client = PicoJsonClient()
         client.serial = device
-        client.snapshot_chunk_info = {"version": 1}
+        client.snapshot_chunk_info = {"version": 3, "encoding": "jsonb", "mode": "binary"}
         framework = UsbCdcFramework(
             device, parse_frame, response_callback=client._handle_cdc_response,
             error_callback=client._handle_cdc_error,
@@ -95,10 +118,59 @@ class UsbCdcFrameworkTest(unittest.TestCase):
             with mock.patch.object(device, "write", side_effect=delayed_write):
                 client.send({"version": 1})
             self.assertTrue(framework.is_alive)
-            self.assertEqual({"version": 1}, client._snapshot_sender.baseline)
+            self.assertIn(b"PV1:JSONB:", bytes(device.written))
             self.assertEqual({}, client._json_ack_events)
         finally:
             framework.close()
+
+    def test_snapshot_write_uses_ack_window_and_usb_chunk_cap(self):
+        """确认 USB 二进制片不超过 4 KiB，且写入等待沿用 ACK 窗口。"""
+        class CapturingTransport:
+            """记录协议写入预算的最小传输桩。"""
+
+            def __init__(self):
+                """初始化最近一次写入等待时长。"""
+                self.timeout = None
+                self.maximum_packet_size = 0
+
+            def raise_error_if_any(self):
+                """模拟后台读写线程没有待转交异常。"""
+                return None
+
+            def read_frame(self, label, timeout=0.0):
+                """模拟没有待消费的异步响应。"""
+                del label, timeout
+                return None
+
+            def write_packet(self, packet, label, build_elapsed_ms=0.0, timeout=1.0):
+                """记录单帧预算并返回完整写入耗时结构。"""
+                del label
+                self.timeout = timeout
+                self.maximum_packet_size = max(self.maximum_packet_size, len(packet))
+                now = time.monotonic()
+                return {
+                    "build_elapsed_ms": build_elapsed_ms,
+                    "send_started": now,
+                    "send_finished": now,
+                    "send_elapsed_ms": 0.0,
+                    "write_elapsed_ms": 0.0,
+                    "slowest_write_ms": 0.0,
+                    "flush_elapsed_ms": 0.0,
+                    "total_written": len(packet),
+                    "chunk_count": 1,
+                }
+
+        client = PicoJsonClient()
+        client.serial = ThreadedSerial()
+        client.json_chunk_size = 16384
+        client.snapshot_chunk_info = {"version": 3, "encoding": "jsonb", "mode": "binary", "max_payload": 16384}
+        transport = CapturingTransport()
+        client.transport = transport
+        with mock.patch.object(client, "_wait_json_ack"):
+            client.send({"version": 1}, ack_timeout=15.0)
+
+        self.assertLessEqual(transport.maximum_packet_size, 4096 + 64)
+        self.assertEqual(15.0, transport.timeout)
 
     def test_expired_queue_job_never_writes(self):
         """排队时间计入预算，过期任务不得继续写入设备。"""
@@ -140,6 +212,31 @@ class UsbCdcFrameworkTest(unittest.TestCase):
         finally:
             framework.close(wait=True)
 
+    def test_close_releases_blocking_write_before_joining_writer(self):
+        """关闭框架时应先释放底层句柄，避免阻塞写线程遗留占用 COM 口。"""
+        device = BlockingWriteSerial()
+        framework = UsbCdcFramework(device, parse_frame)
+        framework.start()
+        write_result = []
+
+        def write_packet():
+            """在后台提交一条长等待写入。"""
+            try:
+                framework.write_packet(b"abc", "测试", timeout=5.0)
+            except Exception as error:
+                write_result.append(error)
+
+        writer = threading.Thread(target=write_packet)
+        writer.start()
+        self.assertTrue(device.write_started.wait(1.0))
+        started = time.monotonic()
+        framework.close(wait=True)
+        writer.join(1.0)
+
+        self.assertLess(time.monotonic() - started, 0.8)
+        self.assertFalse(writer.is_alive())
+        self.assertTrue(write_result)
+
     def test_reader_drains_json_ack_and_keeps_command_response(self):
         """确认 JSON ACK 被读线程消费，COMMAND 响应仍可由控制流程读取。"""
         serial_port = ThreadedSerial([
@@ -174,6 +271,27 @@ class UsbCdcFrameworkTest(unittest.TestCase):
         self.assertEqual(b"1234567890", bytes(serial_port.written))
         self.assertEqual(10, result["total_written"])
         self.assertGreaterEqual(result["chunk_count"], 2)
+
+    def test_framed_write_does_not_wait_on_unbounded_serial_flush(self):
+        """完整 PV1 帧不应因 Windows 串口 flush 等待设备消费而卡死。"""
+        device = ThreadedSerial()
+
+        def blocking_flush():
+            """模拟设备端背压导致 pyserial.flush 长时间等待。"""
+            time.sleep(0.5)
+
+        device.flush = blocking_flush
+        framework = UsbCdcFramework(device, parse_frame)
+        framework.start()
+        started = time.monotonic()
+        try:
+            result = framework.write_packet(b"PV1:JSONZ:test\n", "JSONZ#test", timeout=0.1)
+            elapsed = time.monotonic() - started
+        finally:
+            framework.close(wait=True)
+
+        self.assertLess(elapsed, 0.3)
+        self.assertEqual(0.0, result["flush_elapsed_ms"])
 
     def test_reader_reports_bad_frame_as_transport_error(self):
         """确认坏帧会被转为后台通信异常，供主循环触发重连。"""

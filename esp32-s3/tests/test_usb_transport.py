@@ -109,6 +109,9 @@ class UsbTransportTest(unittest.TestCase):
         cdc_header = (
             repository_root / "micropython/shared/tinyusb/mp_usbd_cdc.h"
         ).read_text(encoding="utf-8")
+        cdc_source = (
+            repository_root / "micropython/shared/tinyusb/mp_usbd_cdc.c"
+        ).read_text(encoding="utf-8")
         cdc_binding = (
             repository_root
             / "micropython/ports/esp32/usermod/fn_usb_cdc/mod_usb_cdc_data.c"
@@ -130,6 +133,14 @@ class UsbTransportTest(unittest.TestCase):
         self.assertIn("mp_usbd_cdc_data_tx_write", cdc_header)
         self.assertIn("mp_usbd_cdc_data_connected", cdc_header)
         self.assertIn("mp_usbd_cdc_data_tx_flush", cdc_header)
+        self.assertIn("mp_usbd_cdc_data_reset_session", cdc_source)
+        self.assertIn("USBD_CDC_DATA_EP_OUT", cdc_source)
+        self.assertIn("usbd_edpt_clear_stall", cdc_source)
+        self.assertIn("MICROPY_GC_HOOK_LOOP", board_header)
+        self.assertIn("mp_usbd_gc_collect_hook", board_header)
+        self.assertIn("mp_usbd_gc_collect_hook", (
+            repository_root / "micropython/shared/tinyusb/mp_usbd.c"
+        ).read_text(encoding="utf-8"))
         self.assertIn('#include "shared/tinyusb/mp_usbd_cdc.h"', cdc_binding)
         self.assertIn("--undefined=tud_descriptor_device_cb", esp32_cmake)
         self.assertIn("--undefined=tud_descriptor_configuration_cb", esp32_cmake)

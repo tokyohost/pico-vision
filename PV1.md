@@ -34,8 +34,8 @@ PV1 的 CRC 只用于偶然错误检测，不提供身份认证、机密性或�
 PV1 分为三层：
 
 1. USB CDC 字节流层：不保留应用消息边界。
-2. PV1 帧层：提供魔数、类型、长度、CRC、填充和换行边界。
-3. 消息层：定义 `PING`、`PONG`、`JSONZ`、`ACK`、`ERR`、`EVENT`、`COMMAND` 和 `STATUS`。
+2. PV1 帧层：提供魔数、类型、长度、CRC、填充和物理块边界。
+3. 消息层：定义 `PING`、`PONG`、`JSONZ`、`JSONB`、`ACK`、`ERR`、`EVENT`、`COMMAND` 和 `STATUS`。
 
 ## 4. 基本编码规则
 
@@ -45,7 +45,7 @@ PV1 分为三层：
 - 类型名称区分大小写，规范类型全部使用大写 ASCII。
 - 一条物理帧以单个 LF 字节 `0x0A` 结束。
 - 接收方可以接受 LF 前的传输填充空格，但不得把填充计入载荷。
-- 载荷不得直接包含 LF。二进制内容必须先转换为 Base64 等行安全编码。
+- `JSONB` 载荷允许包含任意字节（包括 LF），接收方必须按 `LENGTH` 定界；其他文本类型继续按 LF 兼容定界。
 
 ## 5. 帧格式
 
@@ -181,10 +181,12 @@ read_size = 64 - (buffer_length mod 64)
 
 批量模式显著减少 MicroPython 轮询次数。例如约 4.4 KiB 的帧从约 4400 次单字节读取降为约 73 次读取。
 
-### 7.3 行完成与多帧
+### 7.3 帧完成与多帧
 
-- 缓存出现 LF 后，接收方提取 LF 之前的完整行。
-- 消费当前行后，剩余字节保留给下一帧。
+- 接收方先解析第四个冒号之前的帧头，再用 `LENGTH` 计算载荷末端和下一个 64 字节边界。
+- `JSONB` 只有在计算出的物理边界末字节为 LF 时才算完整，载荷内部 LF 不参与定界。
+- 文本类型继续接受 LF 定界，以兼容旧的无填充诊断帧。
+- 消费当前帧后，剩余字节保留给下一帧。
 - 一次轮询可以接收一个帧的一部分、一个完整帧或多个连续帧。
 - 应用层只能处理通过全部结构检查和 CRC 检查的帧。
 
@@ -288,7 +290,7 @@ SHA-256 后取前 128 位，并设置 UUID v8 版本位和 RFC 变体位。Monit
 
 方向：Monitor → Pico
 
-用于发送系统快照。编码流水线必须为：
+用于兼容旧的非事务快照和 JSON 命令。新固件的大快照不得使用 JSONZ 事务分片。
 
 ```text
 应用快照
@@ -326,7 +328,26 @@ SHA-256 后取前 128 位，并设置 UUID v8 版本位和 RFC 变体位。Monit
 固件从 `picoRP2040/command` 自动发现公开 `COMMAND_STRATEGY` 的模块。自定义策略
 必须继承 `CommandStrategy`、声明唯一 `name`，并实现带中文规范注释的 `execute` 方法。
 
-### 9.4 `ACK`
+### 9.4 `JSONB`
+
+方向：Monitor → Pico
+
+用于高效传输完整大快照。Monitor 对整份紧凑 JSON 只执行一次 zlib 压缩，再直接切割压缩字节；不生成差异操作、不维护事务基线，也不执行事务提交。每片载荷由 13 字节大端序二进制头和数据组成：
+
+| 偏移 | 长度 | 字段 | 含义 |
+|---|---:|---|---|
+| 0 | 1 | version | JSONB 子协议版本，当前为 1 |
+| 1 | 4 | request_id | 无符号请求编号 |
+| 5 | 2 | sequence | 从 0 开始的片序号 |
+| 7 | 2 | count | 总片数 |
+| 9 | 4 | total_size | 全部 zlib 压缩字节总长度 |
+| 13 | 可变 | data | 当前片的原始压缩字节 |
+
+设备仅接受严格顺序分片。收到乱序、缺片后的后续片、头冲突或长度越界时，必须立即清空当前重组缓冲并返回 `ERR`；下一次传输从第 0 片重新开始。全部分片收齐后，设备一次解压、解析并替换完整快照，再返回对应 ACK。
+
+PONG 中的 `snapshot_chunks.version=3`、`encoding=jsonb`、`mode=binary` 表示支持该模式。版本 1/2 的 JSONZ 事务能力已经废弃，Monitor 不得回退使用。
+
+### 9.5 `ACK`
 
 方向：Pico → Monitor
 
@@ -340,7 +361,7 @@ PAYLOAD = JSON:<request_id>
 旧版无请求序号快照仍返回 `ACK/JSON`。Monitor 的周期发送不等待 ACK；已经到达的
 ACK 由后续循环非阻塞消费，请求序号用于关联日志与错误诊断，不参与发送流控。
 
-### 9.5 `ERR`
+### 9.6 `ERR`
 
 方向：双向均可，当前主要由 Pico 返回
 
@@ -356,6 +377,11 @@ ACK 由后续循环非阻塞消费，请求序号用于关联日志与错误诊�
 | `FRAME_TIMEOUT` | 半包空闲超过 1000ms |
 | `FRAME_TOO_LARGE` | 接收缓存超过上限 |
 | `BAD_JSON` | Base64、zlib、UTF-8 或 JSON 处理失败，或发生内存不足 |
+| `BAD_JSONB_HEADER` | JSONB 二进制子头无效或版本不支持 |
+| `BAD_JSONB_SEQUENCE` | JSONB 分片乱序、缺片或批次冲突 |
+| `BAD_JSONB_LENGTH` | JSONB 重组长度与声明不一致 |
+| `BAD_JSONB_LIMIT` | JSONB 分片数量或总长度超过设备上限 |
+| `JSONB_TIMEOUT` | JSONB 分片超过 10 秒仍未收齐，重组缓冲已释放 |
 | `UPGRADE_UNAVAILABLE` | 固件未启用升级管理器 |
 | `UNKNOWN_TYPE` | 消息类型不受支持 |
 
@@ -369,7 +395,7 @@ BAD_FRAME_LENGTH:DECLARED=1772:REMAINDER=1771:SHORTAGE=1:MAX=16384:LINE_BYTES=17
 `SHORTAGE` 是不足字节数；超出上限时额外提供 `OVER_LIMIT`。`READS` 是固件接收该行的
 累计读取次数，`BACKEND` 表示本次使用的帧解析后端。
 
-### 9.6 `EVENT`
+### 9.7 `EVENT`
 
 方向：Pico → Monitor
 
@@ -392,7 +418,7 @@ FATAL:<ExceptionType>:<message>
 
 `EVENT` 不构成对请求的确认，Monitor 必须继续等待对应 `ACK`、`PONG` 或 `STATUS`。
 
-### 9.7 `COMMAND`
+### 9.8 `COMMAND`
 
 方向：Pico → Monitor
 
@@ -413,7 +439,7 @@ abort
 
 升级文件数据在 `data` 动作内使用 Base64。每个升级命令仍由 JSONZ 压缩信封、PV1 长度和 CRC 保护。
 
-### 9.8 `STATUS`
+### 9.9 `STATUS`
 
 方向：Pico → Monitor
 
@@ -427,7 +453,7 @@ ACK:UPGRADE:COMPLETE:<version>
 ERR:UPGRADE:<reason>
 ```
 
-## 10. JSONZ 压缩规范
+## 10. 压缩与二进制分片规范
 
 ### 10.1 JSON 预处理
 
@@ -458,20 +484,20 @@ compressor = zlib.compressobj(level=6, wbits=9)
 compressed = compressor.compress(json_bytes) + compressor.flush()
 ```
 
-### 10.3 Base64
+### 10.3 JSONB 二进制分片
 
-zlib 结果是任意二进制，可能包含 LF。由于 PV1 使用 LF 作为物理边界，压缩结果必须再做标准 Base64 编码。
+快照的 zlib 结果直接进入 JSONB `data`，不执行 Base64。接收状态机按 PV1 `LENGTH` 和 64 字节物理块定位帧尾，因此压缩结果中的 LF 不会截断帧。
 
-不得把原始 zlib 二进制直接放入当前 PV1 行帧，否则压缩数据中的 `0x0A` 会被误判为帧结束。
+JSONZ 仅为旧非事务快照和命令保留 Base64 编码；JSONB 快照链路不得回退 JSONZ 事务。
 
 ### 10.4 Pico 解压
 
 Pico 的解码顺序为：
 
 1. 校验 PV1 CRC；
-2. Base64 解码；
-3. 使用 zlib 容器和 9 位窗口解压；
-4. 检查解压后大小不超过 16 KiB；
+2. 解析 JSONB 子头并严格按序追加压缩字节；
+3. 收齐后使用 zlib 容器和 9 位窗口解压；
+4. 检查压缩总长和解压后大小不超过设备声明的 `max_bytes`；
 5. UTF-8 解码；
 6. JSON 解析；
 7. 更新最新快照缓存；
@@ -486,7 +512,7 @@ deflate.DeflateIO(io.BytesIO(data), deflate.ZLIB, 9)
 ### 10.5 内存约束
 
 - zlib 窗口固定为 512 字节。
-- Base64 解码会产生一份压缩数据。
+- JSONB 不产生 Base64 文本及其解码副本。
 - 解压会产生一份 JSON 字节串。
 - JSON 解析会产生字典、列表和字符串对象。
 - `MemoryError` 必须被捕获并转换为 `ERR/BAD_JSON`，不得让协议主循环进入 FATAL 状态。
@@ -504,7 +530,8 @@ Pico → Monitor: PONG(device JSON)
 ### 11.2 快照
 
 ```text
-Monitor → Pico: JSONZ(Base64(zlib(JSON)))
+Monitor → Pico: JSONB#0(binary-header + zlib(JSON)[0:n])
+Monitor → Pico: JSONB#1(binary-header + zlib(JSON)[n:m])
 Pico → Monitor: EVENT(PROTOCOL_TIMING...)
 Pico → Monitor: ACK(JSON)
 ```
@@ -512,8 +539,8 @@ Pico → Monitor: ACK(JSON)
 处理失败时：
 
 ```text
-Monitor → Pico: JSONZ(...)
-Pico → Monitor: ERR(BAD_FRAME_CRC | BAD_JSON | ...)
+Monitor → Pico: JSONB(...)
+Pico → Monitor: ERR(BAD_FRAME_CRC | BAD_JSONB_SEQUENCE | BAD_JSON | ...)
 ```
 
 ### 11.3 升级
@@ -543,17 +570,17 @@ Monitor 记录：
 - ACK 等待耗时；
 - 构帧到 ACK 的总耗时。
 
-Pico 在处理 `JSONZ` 后发送 `PROTOCOL_TIMING` 事件：
+Pico 在处理 `JSONB` 后发送 `PROTOCOL_TIMING` 事件：
 
 ```text
 PROTOCOL_TIMING:
-TYPE=JSONZ:
+TYPE=JSONB:
 BYTES=<PV1 line bytes>:
 JSON_BYTES=<decompressed bytes>:
 READS=<read calls>:
 RX=<receive ms>MS:
 FRAME_PARSE=<header+CRC ms>MS:
-DECOMPRESS=<base64+zlib ms>MS:
+DECOMPRESS=<zlib ms>MS:
 JSON=<json parse ms>MS
 ```
 
@@ -563,7 +590,8 @@ JSON=<json parse ms>MS
 
 - 坏头、坏长度、坏尾部或坏 CRC：不得处理载荷，返回对应 `ERR`。
 - 未知类型：返回 `ERR/UNKNOWN_TYPE`。
-- JSONZ 解码、解压、UTF-8 或 JSON 失败：返回 `ERR/BAD_JSON`。
+- JSONB 头、顺序或重组长度错误：清空重组缓冲并返回对应 `BAD_JSONB_*` 错误。
+- JSONZ/Base64 或 JSONB/zlib 解码、UTF-8、JSON 处理失败：返回 `ERR/BAD_JSON`。
 - 解压内存不足：捕获 `MemoryError`，返回 `ERR/BAD_JSON`，保持主循环运行。
 - 半包超时：清空缓存并返回 `ERR/FRAME_TIMEOUT`。
 - 缓存超限：清空缓存并返回 `ERR/FRAME_TOO_LARGE`。
@@ -583,7 +611,7 @@ JSON=<json parse ms>MS
 6. 魔数前存在 `AT` 等无换行垃圾时能重新同步。
 7. 普通短垃圾不会触发 64 字节阻塞读取。
 8. 半包空闲 1000ms 后被丢弃。
-9. JSONZ 中 zlib 数据包含 LF 时，Base64 后仍能完整传输。
+9. JSONB 的 zlib 数据包含 LF 时仍按长度完整传输，不提前截帧。
 10. zlib 头声明 9 位窗口，即 512 字节。
 11. 解压后 JSON 超过 16 KiB 被拒绝。
 12. 解压 `MemoryError` 不终止固件主循环。

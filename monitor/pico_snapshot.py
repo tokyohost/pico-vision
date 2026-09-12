@@ -33,7 +33,7 @@ def build_json_payload(snapshot):
 
 
 def snapshot_envelope_payload(snapshot, request_id=None):
-    """把快照对象封装为 JSONZ 压缩前的信封字节。"""
+    """把快照对象封装为压缩前的 JSON 信封字节。"""
     envelope = {"mode": "snapshot", "data": snapshot}
     if request_id is not None:
         envelope["request_id"] = request_id

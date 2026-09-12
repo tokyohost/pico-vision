@@ -291,11 +291,11 @@ class PicoClientTest(unittest.TestCase):
         self.assertTrue(client.serial.written.startswith(b"PV1:JSONZ:"))
         self.assertTrue(client.serial.written.endswith(b"\n"))
 
-    def test_send_uses_transaction_chunks_and_waits_for_final_ack(self):
-        """大快照使用事务分片，设备只需对整批提交返回一次 ACK。"""
+    def test_send_uses_binary_chunks_and_waits_for_final_ack(self):
+        """大快照只压缩一次并使用 JSONB 分片，设备收齐后返回一次 ACK。"""
         client = PicoJsonClient()
         client.serial = FakeSerial()
-        client.snapshot_chunk_info = {"version": 1, "max_payload": 4096}
+        client.snapshot_chunk_info = {"version": 3, "encoding": "jsonb", "mode": "binary", "max_payload": 4096}
         client.serial.readline = lambda: build_frame("ACK", b"JSON:1")
         client.send({"ext": {"stock_watch": {"stocks": [
             {"code": "600519", "candles": [
@@ -305,7 +305,7 @@ class PicoClientTest(unittest.TestCase):
             ]}
         ]}}}, wait_ack=True)
         self.assertGreater(client.serial.write_calls, 1)
-        self.assertIsNotNone(client._snapshot_sender.baseline)
+        self.assertTrue(client.serial.written.startswith(b"PV1:JSONB:"))
 
     def test_concurrent_serial_close_is_converted_to_disconnect_error(self):
         """确认 Windows 读取期间串口被关闭时不会泄漏 ctypes TypeError。"""
@@ -602,7 +602,8 @@ class PicoClientTest(unittest.TestCase):
         text = "\n".join(logs.output)
         self.assertIn("[Pico -> Monitor][TEST][JSONZ 异步响应 响应]", text)
         self.assertIn("request_id=1", text)
-        self.assertIn("发送到收到ACK耗时=70.0 ms", text)
+        # 完整 PV1 帧不再额外调用无界串口 flush，发送到 ACK 的计时点相应减少。
+        self.assertIn("发送到收到ACK耗时=40.0 ms", text)
 
     @mock.patch("pico_client.time.monotonic")
     def test_json_ack_timing_is_recorded_before_write_finishes(self, monotonic):
@@ -1596,16 +1597,17 @@ class PicoClientTest(unittest.TestCase):
 
         service.client = mock.Mock()
         service.client.is_connected = True
+        service.client.port_name = "COM11"
         service.client.available_ports.return_value = frozenset({"COM11"})
         service.client.send.side_effect = RuntimeError("等待 Pico JSON 接收确认超时")
         service._collect_snapshot = mock.Mock(return_value={"version": 1})
 
-        def stop_while_waiting_for_usb(_ports):
-            """模拟等待 USB 重新枚举期间收到停止请求。"""
+        def stop_while_waiting_for_usb(*_args, **_kwargs):
+            """模拟指数退避等待期间收到停止请求。"""
             service.stopping.is_set.return_value = True
-            return False
+            return None
 
-        service._wait_for_usb_addition = mock.Mock(
+        service._wait_for_usb_reconnect = mock.Mock(
             side_effect=stop_while_waiting_for_usb
         )
         service.custom_style_catalog_requested = mock.Mock()
@@ -1626,8 +1628,10 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertEqual(service.run(), 0)
 
-        service._wait_for_usb_addition.assert_called_once_with(
-            frozenset({"COM11"})
+        service._wait_for_usb_reconnect.assert_called_once_with(
+            frozenset({"COM11"}),
+            preferred_port="COM11",
+            retry_delay=3.0,
         )
 
     def test_transmit_worker_drops_snapshot_when_previous_send_is_busy(self):
@@ -1682,7 +1686,7 @@ class PicoClientTest(unittest.TestCase):
         service._stop_transmit_worker(wait=True)
 
     def test_usb_removal_does_not_trigger_probe(self):
-        """拔出串口只更新基线，直到后续插入新端口才返回。"""
+        """串口拔出后仍等待新端口或重试周期到期。"""
         service = MonitorService.__new__(MonitorService)
         service.stopping = mock.Mock()
         service.stopping.is_set.side_effect = [False, False, False]
@@ -1697,6 +1701,24 @@ class PicoClientTest(unittest.TestCase):
 
         self.assertTrue(service._wait_for_usb_addition({"COM1", "COM4"}))
         self.assertEqual(service.stopping.wait.call_count, 2)
+
+    def test_usb_recovery_retries_existing_port_after_interval(self):
+        """设备仍占用原 COM 号时，重试周期到期也应允许重新握手。"""
+        service = MonitorService.__new__(MonitorService)
+        service.arguments = SimpleNamespace(reconnect_interval=0.01)
+        service.stopping = threading.Event()
+        service.runtime_reconnect_requested = threading.Event()
+        service.client = mock.Mock()
+        service.client.available_ports.return_value = frozenset({"COM40"})
+
+        self.assertEqual(
+            "preferred_port",
+            service._wait_for_usb_reconnect(
+                {"COM40"},
+                preferred_port="COM40",
+                retry_delay=0.01,
+            ),
+        )
 
     def test_ping_and_network_unit_arguments(self):
         """确认 Ping 默认地址和网络速率单位可以独立配置。"""

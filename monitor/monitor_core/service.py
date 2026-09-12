@@ -35,6 +35,8 @@ WINDOWS_WEBSOCKET_FAST_SCAN_WORKERS = 32
 LINUX_WEBSOCKET_NETWORK_SCAN_INTERVAL = 30.0
 LINUX_WEBSOCKET_FAST_PROBE_TIMEOUT = 0.15
 LINUX_WEBSOCKET_FAST_SCAN_WORKERS = 16
+USB_RECONNECT_BACKOFF_MAX_SECONDS = 60.0
+USB_RECONNECT_POLL_SECONDS = 0.5
 
 
 class MonitorService(
@@ -107,6 +109,7 @@ class MonitorService(
             websocket_client_name=getattr(arguments, "websocket_client_name", None),
             websocket_client_id=getattr(arguments, "websocket_client_id", None),
         )
+        self.client.json_chunk_size = getattr(arguments, "json_chunk_size", 4096)
         self.client.event_callback = self._handle_device_event
         self.stopping = threading.Event()
         self.runtime_reconnect_requested = threading.Event()
@@ -226,9 +229,15 @@ class MonitorService(
         ):
             raise ValueError("采集任务频率必须是大于零的对象")
 
+        json_chunk_size = payload.get("json_chunk_size", getattr(self.arguments, "json_chunk_size", 4096))
+        if json_chunk_size not in (512, 1024, 2048, 4096, 8192, 16384):
+            raise ValueError("JSON 分片大小必须为 512、1024、2048、4096、8192 或 16384 字节")
+
         connection_before = self._runtime_connection_signature(self.arguments)
         for name, value in updated.items():
             setattr(self.arguments, name, value)
+        self.arguments.json_chunk_size = json_chunk_size
+        self.client.json_chunk_size = json_chunk_size
         self.arguments.adaptive_transmit = bool(
             payload.get("adaptive_transmit", self.arguments.adaptive_transmit)
         )
@@ -823,19 +832,48 @@ class MonitorService(
             self.stopping.wait(min(remaining, 0.1))
         return True
 
-    def _wait_for_usb_addition(self, previous_ports):
-        """等待串口拔出后重新插入，期间不打开端口或发送探测命令。"""
+    def _wait_for_usb_reconnect(
+            self,
+            previous_ports,
+            preferred_port=None,
+            retry_delay=None,
+    ):
+        """等待物理插入事件或最近 COM 口的下一次指数退避重试。"""
         baseline = frozenset(previous_ports)
+        retry_deadline = None
+        if preferred_port and retry_delay is not None:
+            retry_deadline = time.monotonic() + max(0.1, float(retry_delay))
         while not self.stopping.is_set():
             if self.runtime_reconnect_requested.is_set():
-                return False
+                return None
             current_ports = self.client.available_ports()
+            # 端口集合发生变化表示物理拔插或重新枚举，必须恢复完整扫描，
+            # 不能因为旧端口名称相同就跳过其它候选端口的握手探测。
             if current_ports - baseline:
-                return True
-            # 拔出只更新基线；设备使用相同 COM 号重新枚举时，相对空基线仍是新增。
+                return "new_port"
+            # 端点背压或 USB 句柄异常时，设备通常仍保持原 COM 号；
+            # 只有该端口仍存在且达到退避时间，才只重试它。
+            if (
+                preferred_port
+                and preferred_port in current_ports
+                and retry_deadline is not None
+                and time.monotonic() >= retry_deadline
+            ):
+                return "preferred_port"
             baseline = current_ports
-            self.stopping.wait(0.5)
-        return False
+            if retry_deadline is None:
+                wait_seconds = USB_RECONNECT_POLL_SECONDS
+            else:
+                wait_seconds = min(
+                    USB_RECONNECT_POLL_SECONDS,
+                    max(0.0, retry_deadline - time.monotonic()),
+                )
+            self.stopping.wait(wait_seconds)
+        return None
+
+    def _wait_for_usb_addition(self, previous_ports):
+        """兼容旧调用方，仅等待新串口出现，不触发已有端口扫描。"""
+        return self._wait_for_usb_reconnect(previous_ports) == "new_port"
 
     def _apply_pending_runtime_reconnect(self):
         """由监控主线程关闭旧连接，使串口与 WebSocket 配置安全切换。"""
@@ -895,9 +933,14 @@ class MonitorService(
         )
         self._start_thread_diagnostics()
         self._start_collection_worker()
+        last_usb_port = None
+        preferred_usb_port = None
+        usb_reconnect_delay = max(
+            0.1,
+            float(getattr(self.arguments, "reconnect_interval", 3.0)),
+        )
         while not self.stopping.is_set():
             self._apply_pending_runtime_reconnect()
-            probing = not self.client.is_connected
             ports_before_probe = self.client.available_ports()
             try:
                 if not self.client.is_connected:
@@ -913,7 +956,14 @@ class MonitorService(
                         self._connect_for_active_probe()
                     else:
                         try:
-                            self.client.connect()
+                            if preferred_usb_port:
+                                LOGGER.info(
+                                    "正在重试最近 USB CDC 端口：%s",
+                                    preferred_usb_port,
+                                )
+                                self.client.connect(preferred_port=preferred_usb_port)
+                            else:
+                                self.client.connect()
                         except (OSError, RuntimeError, serial.SerialException):
                             if self.arguments.dev:
                                 self.client.close()
@@ -924,6 +974,15 @@ class MonitorService(
                             if not self._maybe_discover_linux_websocket():
                                 raise
                     LOGGER.info("Pico LCD 已连接：%s", self.client.port_name)
+                    if not getattr(self.client, "websocket_url", None):
+                        connected_port = self.client.port_name
+                        if isinstance(connected_port, str):
+                            last_usb_port = connected_port
+                        preferred_usb_port = None
+                        usb_reconnect_delay = max(
+                            0.1,
+                            float(getattr(self.arguments, "reconnect_interval", 3.0)),
+                        )
                     self._synchronize_style_catalog()
                     self._start_transmit_worker()
                 if self.arguments.upgrade_pico:
@@ -970,6 +1029,14 @@ class MonitorService(
                 LOGGER.warning("监控通信异常：%s；准备重新连接", error)
                 self._stop_transmit_worker(wait=True)
                 websocket_url = getattr(self.client, "websocket_url", None)
+                connected_usb_port = self.client.port_name
+                if not isinstance(connected_usb_port, str):
+                    connected_usb_port = None
+                failed_usb_port = (
+                    preferred_usb_port
+                    or connected_usb_port
+                    or last_usb_port
+                )
                 self.client.close()
                 if (
                     platform.system() == "Windows"
@@ -984,21 +1051,46 @@ class MonitorService(
                         self.arguments.reconnect_interval
                     )
                     continue
-                # USB CDC 只在端口拔出并重新枚举后再次握手，避免断线期间
-                # 每隔数秒打开系统全部 COM 口并重复发送 PING。
-                if not probing:
+                # USB CDC 优先等待物理插入事件；原 COM 仍存在时只对最近
+                # 成功端口做指数退避重试，避免频繁打开系统其它 COM 口。
+                if failed_usb_port:
                     LOGGER.info(
-                        "串口连接已断开，正在等待 USB CDC 端口重新枚举",
+                        "串口连接已断开，端口=%s，%.1f 秒后仅重试该端口",
+                        failed_usb_port,
+                        usb_reconnect_delay,
                     )
-                if not self._wait_for_usb_addition(ports_before_probe):
+                else:
+                    LOGGER.info("串口连接已断开，等待 USB CDC 端口重新枚举")
+                reconnect_result = self._wait_for_usb_reconnect(
+                    ports_before_probe,
+                    preferred_port=failed_usb_port,
+                    retry_delay=usb_reconnect_delay if failed_usb_port else None,
+                )
+                if reconnect_result is None:
                     continue
-                LOGGER.info(
-                    "检测到 USB CDC 端口新增，%.1f 秒后探测 Pico LCD",
-                    self.arguments.reconnect_interval,
-                )
-                self._wait_for_runtime_interrupt(
-                    self.arguments.reconnect_interval
-                )
+                if reconnect_result == "preferred_port":
+                    preferred_usb_port = failed_usb_port
+                    usb_reconnect_delay = min(
+                        USB_RECONNECT_BACKOFF_MAX_SECONDS,
+                        max(
+                            usb_reconnect_delay * 2.0,
+                            float(getattr(self.arguments, "reconnect_interval", 3.0)),
+                        ),
+                    )
+                    LOGGER.info(
+                        "USB CDC 端口仍存在，下一次仅重试 %s，退避 %.1f 秒",
+                        preferred_usb_port,
+                        usb_reconnect_delay,
+                    )
+                else:
+                    # 物理拔插/重新枚举必须恢复全量端口扫描；成功后重新
+                    # 记录实际握手成功的端口，并将指数退避恢复到基础周期。
+                    preferred_usb_port = None
+                    usb_reconnect_delay = max(
+                        0.1,
+                        float(getattr(self.arguments, "reconnect_interval", 3.0)),
+                    )
+                    LOGGER.info("检测到 USB CDC 端口新增，执行全量端口扫描握手")
                 continue
         # 设备控制命令必须独占协议流，先等待发送线程完全退出再发送最终命令。
         self._stop_transmit_worker(wait=True)

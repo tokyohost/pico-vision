@@ -172,6 +172,17 @@ function isActionRunning(panel, item) {
           <el-form-item label="客户端名称"><el-input v-model="settings.websocket_client_name" /></el-form-item>
           <el-form-item label="Ping 目标"><el-input v-model="settings.ping_target" /></el-form-item>
           <el-form-item label="JSON 发送间隔（秒）"><el-input-number v-model="settings.interval" :min="0.3" :step="0.1" /></el-form-item>
+          <el-form-item label="JSON 分片大小（字节）">
+            <el-select v-model="settings.json_chunk_size">
+              <el-option :value="512" label="512 字节" />
+              <el-option :value="1024" label="1024 字节（1 KB）" />
+              <el-option :value="2048" label="2048 字节（2 KB）" />
+              <el-option :value="4096" label="4096 字节（4 KB，默认）" />
+              <el-option :value="8192" label="8192 字节（8 KB）" />
+              <el-option :value="16384" label="16384 字节（16 KB）" />
+            </el-select>
+            <div class="form-tip">保存后生效，实际分片不超过设备上限；需设备支持 PV1 JSONB 二进制分片。</div>
+          </el-form-item>
           <el-form-item label="重连间隔（秒）"><el-input-number v-model="settings.reconnect_interval" :min="0.1" :step="0.5" /></el-form-item>
           <el-form-item label="串口探测间隔（秒）"><el-input-number v-model="settings.serial_probe_interval" :min="0.1" :step="0.5" /></el-form-item>
           <el-form-item label="Wi-Fi 设备发现">

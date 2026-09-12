@@ -13,6 +13,9 @@ CDC_WRITE_CHUNK_SIZE = 511
 CDC_READ_IDLE_SECONDS = 0.05
 CDC_WRITE_RETRY_SECONDS = 0.002
 CDC_WRITE_CHUNK_PAUSE_SECONDS = 0.0
+# PV1 每个数据包都以换行结束；完整帧交给串口驱动后已经按顺序排队，
+# 不应再调用 Windows pyserial.flush() 等待硬件队列清空。
+CDC_FLUSH_UNFRAMED_ONLY = True
 
 
 class UsbCdcFrameworkClosed(RuntimeError):
@@ -65,6 +68,8 @@ class _UsbCdcWriteJob:
         self.done = threading.Event()
         self.result = None
         self.error = None
+        self.stage = "queued"
+        self.position = 0
 
     def finish(self, result=None, error=None):
         """记录任务完成状态并唤醒等待线程。"""
@@ -125,9 +130,33 @@ class UsbCdcFramework:
         self._writer_thread.start()
 
     def close(self, wait=True):
-        """请求读写线程退出，必要时等待线程结束。"""
+        """请求读写线程退出并先关闭底层句柄，必要时等待线程结束。"""
         self._stopping.set()
         self._fail_pending_writes(UsbCdcFrameworkClosed("USB CDC 框架已关闭"))
+        # Windows pyserial 的 Serial.write 可能阻塞在 OVERLAPPED
+        # GetOverlappedResult(..., True)。仅设置停止事件无法打断该系统调用，
+        # 必须先释放句柄，才能让阻塞的写线程返回，避免重连时旧 COM 口仍被占用。
+        device = self.device
+        if device is not None:
+            for attribute in ("dtr", "rts"):
+                if hasattr(device, attribute):
+                    try:
+                        setattr(device, attribute, False)
+                    except (OSError, serial.SerialException):
+                        LOGGER.debug(
+                            "[串口关闭] 清除 %s 控制线失败：%s",
+                            attribute,
+                            self.port_name,
+                            exc_info=True,
+                        )
+            try:
+                device.close()
+            except (OSError, serial.SerialException):
+                LOGGER.debug(
+                    "[串口关闭] 提前释放 %s 失败",
+                    self.port_name,
+                    exc_info=True,
+                )
         if wait:
             for thread in (self._writer_thread, self._reader_thread):
                 if thread is not None and thread.is_alive():
@@ -161,10 +190,14 @@ class UsbCdcFramework:
             ) from error
         if not job.done.wait(max(0.0, job.deadline - time.monotonic())):
             job.cancelled.set()
-            # 半帧写入超时后禁止继续复用连接，防止旧帧和下一事务交错。
-            self._record_error(serial.SerialTimeoutException("USB CDC 写入超时，连接需要重建"))
+            # 半帧写入超时后禁止继续复用连接，防止旧片和下一分片流交错。
+            detail = (
+                "{} 写入等待超过 {:.1f} 秒，阶段={}，已写入={}/{} 字节"
+                .format(job.label, job.timeout, job.stage, job.position, len(job.packet))
+            )
+            self._record_error(serial.SerialTimeoutException(detail))
             raise serial.SerialTimeoutException(
-                "{} 写入等待超过 {:.1f} 秒".format(label, job.timeout)
+                detail
             )
         if job.error is not None:
             raise job.error
@@ -264,6 +297,8 @@ class UsbCdcFramework:
                 )
             chunk = packet[position:position + self.write_chunk_size]
             write_started = time.monotonic()
+            job.stage = "write"
+            job.position = position
             previous_timeout = getattr(self.device, "write_timeout", None)
             if hasattr(self.device, "write_timeout"):
                 self.device.write_timeout = max(0.0, deadline - time.monotonic())
@@ -286,11 +321,24 @@ class UsbCdcFramework:
                 continue
             position += written
             result.total_written += written
+            job.position = position
             if self.write_chunk_pause_seconds and position < len(packet):
                 time.sleep(self.write_chunk_pause_seconds)
-        flush_started = time.monotonic()
-        self.device.flush()
-        result.flush_elapsed_ms = (time.monotonic() - flush_started) * 1000
+        # PV1 帧已经包含换行，串口驱动会保证同一句柄上的写入顺序。
+        # Windows pyserial.flush() 会轮询 out_waiting 直到设备消费完数据，
+        # 该等待没有可用的截止时间；ESP32-S3 正在解析或刷新 LCD 时会把
+        # 主机卡在这里，最终表现为与 4 KiB 无关的 8 秒“写入超时”。
+        if (
+            not CDC_FLUSH_UNFRAMED_ONLY
+            or not packet
+            or packet[-1] != 0x0A
+        ):
+            job.stage = "flush"
+            flush_started = time.monotonic()
+            self.device.flush()
+            result.flush_elapsed_ms = (time.monotonic() - flush_started) * 1000
+        else:
+            job.stage = "queued"
         result.send_finished = time.monotonic()
         if job.cancelled.is_set() or result.send_finished >= deadline:
             raise serial.SerialTimeoutException("{} 写入完成时已超过预算".format(job.label))

@@ -42,8 +42,11 @@ RENDER_INTERVAL_MS = 1000
 STYLE_FRAME_WARNING_MS = 200
 # 本地时间显示的固定刷新周期，独立于监控数据采集周期。
 CLOCK_REFRESH_INTERVAL_MS = 1000
-# 主动垃圾回收的最小间隔，避免每帧回收造成周期性停顿。
+# 垃圾回收检查的最小间隔；有充足空闲内存时只检查水位，不扫描全堆。
 GC_MIN_INTERVAL_MS = 5000
+# Monitor 活跃期间仅在空闲内存低于此水位时回收，避免 8 MiB PSRAM
+# 全堆扫描周期性阻塞协议解析和 JSON ACK。
+GC_MIN_FREE_BYTES = 512 * 1024
 # 距离下一次时钟刷新小于该窗口时延后主动垃圾回收。
 GC_CLOCK_GUARD_MS = 100
 # 每轮最多刷新的区域数，防止单次主循环长期占用通信处理。
@@ -62,8 +65,9 @@ RENDER_CONTROL_QUEUE_CAPACITY = 8
 RENDER_SERVICE_START_TIMEOUT_MS = 5000
 RENDER_CONTROL_TIMEOUT_MS = 15000
 LCD_STYLE = "disk"
-# 利用 ESP32-S3 的 PSRAM 设置较大的累计分配阈值，降低自动 GC 频率。
-GC_ALLOCATION_THRESHOLD = 256 * 1024
+# 禁止按累计分配量自动触发不可预测的全堆 GC；应用按内存水位选择安全时机，
+# 分配失败时 MicroPython 仍会执行一次兜底回收。
+GC_ALLOCATION_THRESHOLD = -1
 # 在系统启动页阶段预编译大型内置样式，避免连接后在碎片化堆上首次导入。
 LCD_BOOT_PRELOAD_STYLES = ("horizontal_disk4x_qb",)
 

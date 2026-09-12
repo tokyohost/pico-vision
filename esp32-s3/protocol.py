@@ -116,6 +116,9 @@ def _build_crc16_byte_table():
 
 
 CRC16_BYTE_TABLE = _build_crc16_byte_table()
+TRANSPORT_BLOCK_SIZE = 64
+JSONB_CHUNK_HEADER_SIZE = 13
+JSONB_CHUNK_VERSION = 1
 JSONZ_GC_FREE_THRESHOLD = 72 * 1024
 # 限制未提交事务的序列化体积，防止网络缺片期间无限累积。
 SNAPSHOT_TRANSACTION_MAX_BYTES = 262144
@@ -166,7 +169,7 @@ def _json_error_payload(stage, error=None, detail=None):
 
 
 class JsonProtocol:
-    """增量接收 ASCII 行，避免二进制控制字节触发 MicroPython 中断。"""
+    """增量接收 PV1 文本帧与 JSONB 二进制分片。"""
 
     def __init__(self, upgrade_manager=None, stream=None):
         """初始化标准输入输出、轮询器和行缓冲区。"""
@@ -193,6 +196,7 @@ class JsonProtocol:
         self._last_message_ms = None
         # 快照事务只在全部分片收齐后提交，避免设备显示半份数组。
         self._snapshot_chunk_transaction = None
+        self._jsonb_transfer = None
         self._committed_snapshot = None
         self._committed_batch = None
 
@@ -301,16 +305,51 @@ class JsonProtocol:
             return bool(available())
         return bool(self._poller.poll(0))
 
+    def _next_frame_end(self):
+        """按 PV1 头部长度返回完整帧末端，允许 JSONB 载荷包含换行字节。"""
+        if not self._buffer.startswith(b"PV1:"):
+            newline = self._buffer.find(b"\n")
+            return newline + 1 if newline >= 0 else None
+        separators = []
+        search_start = 0
+        for _ in range(4):
+            separator = self._buffer.find(b":", search_start)
+            if separator < 0:
+                newline = self._buffer.find(b"\n")
+                return newline + 1 if newline >= 0 else None
+            separators.append(separator)
+            search_start = separator + 1
+        message_type = bytes(self._buffer[separators[0] + 1:separators[1]])
+        try:
+            payload_size = int(bytes(self._buffer[separators[1] + 1:separators[2]]))
+        except (TypeError, ValueError):
+            newline = self._buffer.find(b"\n")
+            return newline + 1 if newline >= 0 else None
+        payload_end = separators[3] + 1 + max(0, payload_size)
+        # JSONZ 等文本帧继续兼容无填充行；JSONB 的换行属于合法载荷，
+        # 必须严格根据长度和 64 字节物理边界定位帧尾。
+        if message_type != b"JSONB":
+            newline = self._buffer.find(b"\n")
+            if newline >= 0:
+                return newline + 1
+        frame_end = ((payload_end + TRANSPORT_BLOCK_SIZE) // TRANSPORT_BLOCK_SIZE) * TRANSPORT_BLOCK_SIZE
+        if len(self._buffer) < frame_end:
+            return None
+        if self._buffer[frame_end - 1] != 0x0A:
+            newline = self._buffer.find(b"\n", payload_end)
+            return newline + 1 if newline >= 0 else None
+        return frame_end
+
     def _parse_lines(self):
-        """依次解析完整协议行，并合并同一次轮询收到的全部 JSON 快照。"""
+        """依次解析完整 PV1 帧，并合并同一次轮询收到的全部 JSON 快照。"""
         latest = None
         while True:
-            newline = self._buffer.find(b"\n")
-            if newline < 0:
+            frame_end = self._next_frame_end()
+            if frame_end is None:
                 break
 
             # memoryview 避免 bytearray 切片先复制一次整包数据，降低解析峰值内存。
-            line_view = memoryview(self._buffer)[:newline]
+            line_view = memoryview(self._buffer)[:frame_end - 1]
             line = bytes(line_view)
             del line_view
 
@@ -320,7 +359,7 @@ class JsonProtocol:
                 self._frame_started_ms,
             )
             frame_read_calls = self._frame_read_calls
-            self._consume(newline + 1)
+            self._consume(frame_end)
 
             # 串口可能先被 ModemManager 等程序写入无换行的探测字节；扫描魔数，
             # 从同一行中的首个 PV1 帧重新同步，而不是连合法帧一起丢弃。
@@ -352,6 +391,7 @@ class JsonProtocol:
             if message_type == "PING":
                 # 新连接从完整快照重新建立基线，丢弃断线前未完成的事务。
                 self._snapshot_chunk_transaction = None
+                self._jsonb_transfer = None
                 self._committed_batch = None
                 self._write_pong()
             elif message_type == "JSONZ":
@@ -364,6 +404,16 @@ class JsonProtocol:
                 )
                 if snapshot is not None:
                     # 事务返回的是完整状态，不能递归并回已删除的旧字段。
+                    latest = snapshot if snapshot is self._committed_snapshot else self._merge_parsed_snapshots(latest, snapshot)
+            elif message_type == "JSONB":
+                snapshot = self._handle_jsonb_frame(
+                    payload=payload,
+                    line=line,
+                    frame_read_calls=frame_read_calls,
+                    receive_elapsed_ms=receive_elapsed_ms,
+                    parse_elapsed_ms=parse_elapsed_ms,
+                )
+                if snapshot is not None:
                     latest = snapshot if snapshot is self._committed_snapshot else self._merge_parsed_snapshots(latest, snapshot)
             else:
                 self._write_frame("ERR", b"UNKNOWN_TYPE")
@@ -598,18 +648,108 @@ class JsonProtocol:
             parse_elapsed_ms,
     ):
         """分阶段解析 JSONZ，并返回更具体的 BAD_JSON 错误。"""
+        return self._handle_compressed_json_frame(
+            payload, line, frame_read_calls, receive_elapsed_ms,
+            parse_elapsed_ms, "JSONZ", True,
+        )
+
+    def _handle_jsonb_frame(
+            self, payload, line, frame_read_calls,
+            receive_elapsed_ms, parse_elapsed_ms,
+    ):
+        """按顺序拼接 JSONB 压缩字节，收齐后一次解压完整快照。"""
+        if len(payload) < JSONB_CHUNK_HEADER_SIZE or payload[0] != JSONB_CHUNK_VERSION:
+            self._jsonb_transfer = None
+            self._write_frame("ERR", b"BAD_JSONB_HEADER")
+            return None
+        request_id = ((payload[1] << 24) | (payload[2] << 16) | (payload[3] << 8) | payload[4])
+        sequence = (payload[5] << 8) | payload[6]
+        count = (payload[7] << 8) | payload[8]
+        total_size = ((payload[9] << 24) | (payload[10] << 16) | (payload[11] << 8) | payload[12])
+        chunk = payload[JSONB_CHUNK_HEADER_SIZE:]
+        if count < 1 or sequence >= count or total_size > SNAPSHOT_TRANSACTION_MAX_BYTES:
+            self._jsonb_transfer = None
+            self._write_frame("ERR", b"BAD_JSONB_LIMIT")
+            return None
+
+        transfer = getattr(self, "_jsonb_transfer", None)
+        if sequence == 0:
+            try:
+                transfer = {
+                    "request": request_id,
+                    "count": count,
+                    "total": total_size,
+                    "next": 0,
+                    "offset": 0,
+                    # 预分配避免每片 extend 触发反复扩容、复制和堆碎片。
+                    "data": bytearray(total_size),
+                    "wire": 0,
+                    "updated": self._ticks_ms(),
+                }
+            except MemoryError as error:
+                self._jsonb_transfer = None
+                self._write_frame("ERR", _json_error_payload("MEMORY_JSONB", error))
+                return None
+            self._jsonb_transfer = transfer
+        if (
+                transfer is None
+                or transfer["request"] != request_id
+                or transfer["count"] != count
+                or transfer["total"] != total_size
+                or transfer["next"] != sequence
+        ):
+            self._jsonb_transfer = None
+            self._write_frame("ERR", b"BAD_JSONB_SEQUENCE")
+            return None
+        chunk_end = transfer["offset"] + len(chunk)
+        if chunk_end > total_size:
+            self._jsonb_transfer = None
+            self._write_frame("ERR", b"BAD_JSONB_LENGTH")
+            return None
+        transfer["data"][transfer["offset"]:chunk_end] = chunk
+        transfer["offset"] = chunk_end
+        transfer["next"] += 1
+        transfer["wire"] += len(line)
+        transfer["updated"] = self._ticks_ms()
+        if transfer["next"] < count:
+            return None
+        if transfer["offset"] != total_size:
+            self._jsonb_transfer = None
+            self._write_frame("ERR", b"BAD_JSONB_LENGTH")
+            return None
+        compressed_payload = transfer["data"]
+        wire_size = transfer["wire"]
+        self._jsonb_transfer = None
+        return self._handle_compressed_json_frame(
+            compressed_payload, b"", frame_read_calls, receive_elapsed_ms,
+            parse_elapsed_ms, "JSONB", False,
+            maximum_json_size=SNAPSHOT_TRANSACTION_MAX_BYTES,
+            replace_snapshot=True,
+            wire_size=wire_size,
+        )
+
+    def _handle_compressed_json_frame(
+            self, payload, line, frame_read_calls, receive_elapsed_ms,
+            parse_elapsed_ms, message_type, base64_encoded,
+            maximum_json_size=MAX_JSON_SIZE, replace_snapshot=False,
+            wire_size=None,
+    ):
+        """统一解析压缩 JSON 帧，并按编码类型执行必要的解码。"""
         decompress_started_ms = self._ticks_ms()
-        line_size = len(line)
+        line_size = len(line) if wire_size is None else wire_size
         gc_count = 0
 
-        try:
-            compressed_payload = binascii.a2b_base64(payload)
-        except MemoryError as error:
-            self._write_frame("ERR", _json_error_payload("MEMORY_BASE64", error))
-            return None
-        except Exception as error:
-            self._write_frame("ERR", _json_error_payload("BASE64", error))
-            return None
+        if base64_encoded:
+            try:
+                compressed_payload = binascii.a2b_base64(payload)
+            except MemoryError as error:
+                self._write_frame("ERR", _json_error_payload("MEMORY_BASE64", error))
+                return None
+            except Exception as error:
+                self._write_frame("ERR", _json_error_payload("BASE64", error))
+                return None
+        else:
+            compressed_payload = payload
 
         # Base64 解码完成后不再需要原始 ASCII 帧；仅在低内存时回收，
         # 正常帧避免承担每次垃圾回收的额外延迟。
@@ -643,14 +783,14 @@ class JsonProtocol:
         except Exception:
             json_size = -1
 
-        if json_size > MAX_JSON_SIZE:
+        if json_size > maximum_json_size:
             self._write_frame(
                 "ERR",
                 _json_error_payload(
                     "SIZE",
                     detail="JSON_TOO_LARGE:{}>{}".format(
                         json_size,
-                        MAX_JSON_SIZE,
+                        maximum_json_size,
                     ),
                 ),
             )
@@ -686,9 +826,10 @@ class JsonProtocol:
             return None
 
         timing = (
-            "PROTOCOL_TIMING:TYPE=JSONZ:BYTES={}:JSON_BYTES={}:READS={}:"
+            "PROTOCOL_TIMING:TYPE={}:BYTES={}:JSON_BYTES={}:READS={}:"
             "RX={}MS:FRAME_PARSE={}MS:DECOMPRESS={}MS:JSON={}MS:GC={}"
         ).format(
+            message_type,
             line_size,
             json_size,
             frame_read_calls,
@@ -701,7 +842,10 @@ class JsonProtocol:
         json_payload = None
         text_payload = None
         try:
-            return self._handle_json_message(message, timing, payload_size=json_size)
+            return self._handle_json_message(
+                message, timing, payload_size=json_size,
+                replace_snapshot=replace_snapshot,
+            )
         except MemoryError as error:
             self._write_frame("ERR", _json_error_payload("MEMORY_JSON_HANDLE", error))
             return None
@@ -712,7 +856,10 @@ class JsonProtocol:
             self._write_frame("ERR", _json_error_payload("JSON_HANDLE_UNKNOWN", error))
             return None
 
-    def _handle_json_message(self, message, timing=None, payload_size=None):
+    def _handle_json_message(
+            self, message, timing=None, payload_size=None,
+            replace_snapshot=False,
+    ):
         """按 JSON 信封模式分发快照或命令，并兼容旧裸快照。"""
         if not isinstance(message, dict):
             raise ValueError("JSON_OBJECT_REQUIRED")
@@ -748,7 +895,11 @@ class JsonProtocol:
             self._write_frame("EVENT", timing.encode("ascii", "replace"))
         ack_payload = "JSON:{}".format(request_id) if request_id is not None else "JSON"
         self._write_frame("ACK", ack_payload.encode("ascii", "replace"))
-        self._committed_snapshot = self._merge_parsed_snapshots(self._committed_snapshot, snapshot)
+        self._committed_snapshot = (
+            snapshot
+            if replace_snapshot
+            else self._merge_parsed_snapshots(self._committed_snapshot, snapshot)
+        )
         return snapshot
 
     def _dispatch_command(self, message):
@@ -822,7 +973,10 @@ class JsonProtocol:
                 "image_format": "esp32s3-merged-bin",
             },
             "snapshot_chunks": {
-                "version": 1,
+                "version": 3,
+                "encoding": "jsonb",
+                "mode": "binary",
+                # 单片沿用 PV1/CDC 的 4 KiB 安全预算；完整事务可以更大。
                 "max_payload": 4096,
                 "max_parts": 4096,
                 "max_bytes": SNAPSHOT_TRANSACTION_MAX_BYTES,
@@ -959,6 +1113,13 @@ class JsonProtocol:
 
     def _expire_partial_frame(self):
         """丢弃超过一秒没有新字节的半包，恢复协议同步。"""
+        transfer = getattr(self, "_jsonb_transfer", None)
+        if transfer is not None and self._elapsed_ms(
+                self._ticks_ms(), transfer.get("updated"),
+        ) >= 10000:
+            # 缺片连接即使仍能发送其它消息，也不能无限持有大块压缩缓冲。
+            self._jsonb_transfer = None
+            self._write_frame("ERR", b"JSONB_TIMEOUT")
         if not self._buffer or self._last_byte_ms is None:
             return
         now = self._ticks_ms()

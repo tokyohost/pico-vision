@@ -27,6 +27,7 @@ from config import (
     CLOCK_REFRESH_INTERVAL_MS,
     GC_ALLOCATION_THRESHOLD,
     GC_CLOCK_GUARD_MS,
+    GC_MIN_FREE_BYTES,
     GC_MIN_INTERVAL_MS,
     LCD_BOOT_PRELOAD_STYLES,
     LCD_STYLE,
@@ -61,7 +62,7 @@ def collect_memory_error_ram_status():
 
 
 def configure_garbage_collection():
-    """启用按累计分配量触发的主动垃圾回收，减缓堆碎片形成。"""
+    """关闭累计分配量触发的全堆回收，由应用按空闲内存水位调度。"""
     gc.collect()
     threshold = getattr(gc, "threshold", None)
     if callable(threshold):
@@ -148,6 +149,9 @@ class Application:
         self._cache = SnapshotCache()
         self._show_boot(84, "BOOT:CACHE_READY", "loading...", flush=True)
         self._receiver = DataReceiver(self._protocol, self._cache, self._led)
+        # 渲染控制等待期间也要持续消费 CDC 输入，防止主机在样式切换时
+        # 把下一笔 JSON 分片写满 USB OUT 端点后永久背压。
+        self._renderer.set_progress_callback(self._pump_protocol)
         self._show_boot(94, "BOOT:RECEIVER_READY", "loading...", flush=True)
         self._rendering_version = -1
         now = time.ticks_ms()
@@ -174,6 +178,14 @@ class Application:
         self._button_hint_until_ms = None
         self._button_hint_snapshot = None
         self._button_hint_label = None
+
+    def _pump_protocol(self):
+        """在渲染控制等待期间轮询协议并缓存已收齐的最新快照。"""
+        # 启动阶段的 _show_boot 可能早于 DataReceiver 创建；此时只推进渲染，
+        # 不能因为通信泵浦尚未就绪而打断启动流程。
+        receiver = getattr(self, "_receiver", None)
+        if receiver is not None and receiver.update():
+            self._idle_active = False
 
     def _preload_boot_styles(self):
         """在启动页阶段预加载大型样式，避免连接后首次编译造成内存峰值。"""
@@ -239,6 +251,10 @@ class Application:
         self._renderer.request_render(boot_snapshot, force=True)
         if flush:
             while self._renderer.is_rendering():
+                # flush 等待可能覆盖一次完整 LCD 刷新。即使只是等待渲染线程，
+                # 主线程也必须持续进入 DataReceiver -> mp_usbd_task，
+                # 否则 TinyUSB CDC OUT FIFO 会被填满并让主机 WriteFile 阻塞。
+                self._pump_protocol()
                 self._update_renderer_with_fallback(boot_snapshot)
 
     def show_application_error(self, error):
@@ -579,13 +595,23 @@ class Application:
         self._protocol.write(response.encode())
 
     def _collect_garbage_if_safe(self, now):
-        """在达到最小间隔且远离时钟边界时执行主动垃圾回收。"""
+        """仅在低内存或连接空闲时执行全堆垃圾回收。"""
         if time.ticks_diff(now, self._next_gc) < 0:
             return False
         if self._renderer.is_rendering():
             return False
         until_clock_ms = time.ticks_diff(self._next_clock_render, now)
         if until_clock_ms <= GC_CLOCK_GUARD_MS:
+            return False
+        # ESP32-S3 的 MicroPython 堆会扩展到 PSRAM。即使垃圾很少，全堆标记与
+        # 清扫仍可能持续数秒；数据流活跃且内存充足时不得按固定周期扫描全堆。
+        # 只推进下一次水位检查，不改变低内存时由 MicroPython 分配器兜底回收的
+        # 语义。断开 Monitor 后则允许主动整理，避免长期待机积累碎片。
+        if (
+            getattr(self, "_monitor_connected", False)
+            and gc.mem_free() >= GC_MIN_FREE_BYTES
+        ):
+            self._next_gc = time.ticks_add(now, GC_MIN_INTERVAL_MS)
             return False
         gc_started = time.ticks_us()
         gc.collect()

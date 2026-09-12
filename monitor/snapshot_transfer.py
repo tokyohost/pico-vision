@@ -14,7 +14,8 @@ class SnapshotSender:
 
     def __init__(self, limit=4096, max_parts=4096, max_bytes=1048576):
         """保存协商上限并初始化独立连接会话。"""
-        self.limit = min(4096, int(limit))
+        # 网络传输可以使用更大的单片上限；USB CDC 调用方会额外收窄到 4 KiB。
+        self.limit = min(16384, int(limit))
         self.max_parts = min(4096, int(max_parts))
         self.max_bytes = int(max_bytes)
         self.session = uuid.uuid4().hex[:16]

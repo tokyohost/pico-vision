@@ -263,6 +263,7 @@ class RenderService:
         self._completed_count = 0
         self._reported_count = 0
         self._active_frame_version = None
+        self._progress_callback = None
         self._last_completed_version = None
         self._last_render_ms = 0
         self._last_profile = (0, 0, 0)
@@ -452,12 +453,24 @@ class RenderService:
         self._control_queue.put(request, RENDER_CONTROL_TIMEOUT_MS)
         deadline = _ticks_add(_ticks_ms(), RENDER_CONTROL_TIMEOUT_MS)
         while not request.completed:
+            # 样式切换或 LCD 控制可能在渲染线程中耗时较久；通信主线程
+            # 等待控制结果时仍必须轮询 USB，否则 CDC OUT 端点会因 TinyUSB
+            # FIFO 未及时搬运而 NAK，主机最终阻塞在 WriteFile。
+            callback = self._progress_callback
+            if callback is not None:
+                callback()
+            if request.completed:
+                break
             if self._stopped or _ticks_diff(_ticks_ms(), deadline) >= 0:
                 raise RuntimeError("RENDER_CONTROL_EXECUTION_TIMEOUT")
             _sleep_ms(1)
         if request.error is not None:
             raise request.error
         return request.result
+
+    def set_progress_callback(self, callback):
+        """设置控制等待期间执行的轻量通信泵浦回调。"""
+        self._progress_callback = callback if callable(callback) else None
 
     def _refresh_metadata(self, renderer):
         """刷新样式、Canvas 和 LCD 状态等主线程只读缓存。"""

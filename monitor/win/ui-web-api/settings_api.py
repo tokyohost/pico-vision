@@ -91,6 +91,8 @@ class SettingsApiMixin:
             updated.get("websocket_client_name") or ""
         ).strip()[:64]
         updated["ping_target"] = str(updated.get("ping_target") or "").strip()
+        if updated.get("json_chunk_size") not in (512, 1024, 2048, 4096, 8192, 16384):
+            raise ValueError("JSON 分片大小必须为 512、1024、2048、4096、8192 或 16384 字节")
         updated["interval"] = float(updated["interval"])
         updated["reconnect_interval"] = float(updated["reconnect_interval"])
         updated["serial_probe_interval"] = float(updated["serial_probe_interval"])

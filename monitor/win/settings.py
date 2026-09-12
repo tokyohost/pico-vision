@@ -51,6 +51,7 @@ DEFAULT_SETTINGS = {
     "wifi_announcement_timeout": 3.0,
     "ping_target": "www.baidu.com",
     "interval": 0.5,
+    "json_chunk_size": 4096,
     "adaptive_transmit": True,
     "reconnect_interval": 3.0,
     "serial_probe_interval": 3.0,
@@ -93,6 +94,7 @@ ARGUMENT_NAMES = {
     "--wifi-announcement-timeout": "wifi_announcement_timeout",
     "--ping-target": "ping_target",
     "--interval": "interval",
+    "--json-chunk-size": "json_chunk_size",
     "--reconnect-interval": "reconnect_interval",
     "--serial-probe-interval": "serial_probe_interval",
     "--lan-probe-port": "lan_probe_port",
@@ -221,6 +223,8 @@ class TraySettingsStore:
             settings["lcd_brightness"] = DEFAULT_SETTINGS["lcd_brightness"]
         if not 1 <= settings["lcd_brightness"] <= 100:
             settings["lcd_brightness"] = DEFAULT_SETTINGS["lcd_brightness"]
+        if settings.get("json_chunk_size") not in (512, 1024, 2048, 4096, 8192, 16384):
+            settings["json_chunk_size"] = 4096
         settings["adaptive_transmit"] = bool(settings.get("adaptive_transmit", True))
         settings["force_usb_cdc"] = bool(settings.get("force_usb_cdc", False))
         discovery_strategy = str(
@@ -355,7 +359,7 @@ def settings_from_arguments(arguments, base=None):
         "lan_probe_port": int, "lan_probe_timeout": float, "lan_probe_max_workers": int,
         "wifi_announcement_port": int, "wifi_announcement_timeout": float,
         "screen_rotation": int, "lcd_brightness": int, "idle_timeout": int,
-        "qbittorrent_interval": float,
+        "qbittorrent_interval": float, "json_chunk_size": int,
         "collection_task_intervals": lambda value: normalize_collection_task_intervals(json.loads(value)),
         "custom_data_configs": lambda value: normalize_plugin_configs(json.loads(value)),
         "custom_data_enabled": lambda value: normalize_plugin_enabled(json.loads(value)),

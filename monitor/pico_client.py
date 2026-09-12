@@ -33,6 +33,7 @@ from pico_protocol import (
     PicoRestartingError,
     build_command_packet,
     build_frame,
+    build_jsonb_packets,
     build_jsonz_packet,
     crc16_ccitt,
     is_restarting_fatal,
@@ -46,7 +47,6 @@ from pico_snapshot import (
     split_snapshot_payloads,
     wire_snapshot,
 )
-from snapshot_transfer import SnapshotSender
 from usbCdcFramework import UsbCdcFramework
 
 
@@ -57,6 +57,9 @@ SERIAL_WRITE_CHUNK_SIZE = 511
 USB_ENDPOINT_SAFE_WRITE_SIZE = 63
 ESP32_S3_SERIAL_WRITE_CHUNK_SIZE = 511
 ESP32_S3_SERIAL_WRITE_CHUNK_PAUSE_SECONDS = 0.002
+# USB CDC 的 JSONB 单片按 4 KiB 控制，避免设备接收缓存和 CDC 背压
+# 同时达到 8/16 KiB 峰值；完整压缩数据由多片承载。
+SERIAL_SNAPSHOT_CHUNK_LIMIT = 4096
 LOGGER = logging.getLogger("pico-monitor.serial")
 
 
@@ -73,6 +76,7 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
     _split_snapshot_payloads = staticmethod(split_snapshot_payloads)
     build_snapshot_packets = staticmethod(build_snapshot_packets)
     _build_jsonz_packet = staticmethod(build_jsonz_packet)
+    _build_jsonb_packets = staticmethod(build_jsonb_packets)
     build_command_packet = staticmethod(build_command_packet)
 
     def __init__(self, configured_port=None, probe_interval=3.0, cancellation_event=None,
@@ -101,8 +105,6 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         self._json_ack_pending = ExpiringJsonAckTimingCache()
         self._json_ack_lock = threading.Lock()
         self._json_ack_events = {}
-        # 事务发送器只有在设备最终 ACK 后才推进基线，断线时会重置。
-        self._snapshot_sender = SnapshotSender()
         self._snapshot_send_lock = threading.Lock()
         self.transport = None
         self.event_callback = None
@@ -177,19 +179,23 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
             and any(not PicoJsonClient._is_probable_repl_port(port) for port in espressif_ports)
         )
 
-    def connect(self):
-        """优先连接指定 WebSocket，否则枚举串口并通过协议握手识别设备。"""
+    def connect(self, preferred_port=None):
+        """连接设备；提供优先串口时只探测该端口，否则执行正常枚举。"""
         if self.websocket_url:
             self._connect_websocket()
             return
-        if self.configured_port:
+        preferred_port = str(preferred_port or "").strip() or None
+        if preferred_port:
+            # 断线恢复阶段只访问最近成功的 CDC 端口，避免频繁打开其它 COM。
+            candidates = [preferred_port]
+        elif self.configured_port:
             candidates = [self.configured_port]
         else:
             # 复合 USB 设备优先探测专用数据 CDC，避免先打开 REPL 控制台。
             ports = list(list_ports.comports())
             ports.sort(key=self._serial_port_priority)
             candidates = [item.device for item in ports]
-        if not self.configured_port and len(candidates) > 1:
+        if not self.configured_port and preferred_port is None and len(candidates) > 1:
             self._connect_parallel(candidates)
             return
         LOGGER.debug("[串口发现] 候选端口：%s", ", ".join(candidates) if candidates else "无")
@@ -332,7 +338,6 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         self.screen_height = winner.screen_height
         self.styles = winner.styles
         self.net_status = winner.net_status
-        self._snapshot_sender.reset()
         winner.close()
 
     def _start_cdc_framework(self):
@@ -382,7 +387,6 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
 
     def _handshake(self, device):
         """发送设备发现命令并验证 Pico 固件响应。"""
-        self._snapshot_sender.reset()
         self.board_model = None
         self.device_id = None
         self.lcd_device_type = None
@@ -488,7 +492,14 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
             information["net"] = dict(self.net_status)
         return information
 
-    def _write_packet(self, packet, label, build_elapsed_ms=0.0, deadline=None):
+    def _write_packet(
+            self,
+            packet,
+            label,
+            build_elapsed_ms=0.0,
+            deadline=None,
+            timeout=None,
+    ):
         """按统一分块策略写入一条 PV1 帧，并输出串口写入耗时日志。"""
         if self.transport is not None:
             self.transport.raise_error_if_any()
@@ -505,7 +516,13 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
                 packet_bytes,
                 label,
                 build_elapsed_ms=build_elapsed_ms,
-                timeout=max(0.0, deadline - time.monotonic()) if deadline is not None else max(1.0, JSON_ACK_TIMEOUT),
+                # 串口写入等待必须与当前分片流的 ACK 窗口一致。此前这里固定
+                # 使用 8 秒，ESP32-S3 在接收缓存背压或首次渲染时会被过早判定断线。
+                timeout=(
+                    max(0.0, deadline - time.monotonic())
+                    if deadline is not None
+                    else max(1.0, float(timeout if timeout is not None else JSON_ACK_TIMEOUT))
+                ),
             )
             total_elapsed_ms = build_elapsed_ms + timing["send_elapsed_ms"]
             LOGGER.debug(
@@ -595,9 +612,13 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
                 )
             if write_chunk_pause_seconds and position + len(chunk) < len(packet):
                 time.sleep(write_chunk_pause_seconds)
-        flush_started = time.monotonic()
-        self.serial.flush()
-        flush_elapsed_ms = (time.monotonic() - flush_started) * 1000
+        # PV1 完整帧已经以换行结束；对完整帧调用 Windows 串口 flush 会
+        # 无界等待 out_waiting 清零，和 USB CDC 写线程保持同一安全语义。
+        flush_elapsed_ms = 0.0
+        if not packet or packet[-1] != 0x0A:
+            flush_started = time.monotonic()
+            self.serial.flush()
+            flush_elapsed_ms = (time.monotonic() - flush_started) * 1000
         send_elapsed_ms = (time.monotonic() - send_started) * 1000
         total_elapsed_ms = build_elapsed_ms + send_elapsed_ms
         LOGGER.debug(
@@ -722,9 +743,9 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         raise RuntimeError(default_error + "：等待 Pico 响应超时")
 
     def send(self, snapshot, wait_ack=False, ack_timeout=JSON_ACK_TIMEOUT):
-        """互斥发送快照，拒绝并发批次覆盖待确认基线或交错写入。"""
+        """互斥发送快照，避免多个二进制分片流交错写入。"""
         if not self._snapshot_send_lock.acquire(blocking=False):
-            raise RuntimeError("已有快照事务正在发送")
+            raise RuntimeError("已有快照分片正在发送")
         try:
             return self._send_snapshot(snapshot, wait_ack, ack_timeout)
         finally:
@@ -736,67 +757,88 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
             raise RuntimeError("Pico 串口尚未连接")
         self._drain_json_responses()
         request_id = self._next_json_request_id()
-        # 事务协议必须等待整批提交 ACK；否则下一批增量没有可靠基线。
-        transaction_enabled = bool(
-            isinstance(self.snapshot_chunk_info, dict)
-            and int(self.snapshot_chunk_info.get("version", 0) or 0) >= 1
+        # v3 使用直接二进制分片；v1/v2 事务协议均已废弃，不能静默降级。
+        chunk_version = (
+            int(self.snapshot_chunk_info.get("version", 0) or 0)
+            if isinstance(self.snapshot_chunk_info, dict)
+            else 0
         )
-        transaction_wait = bool(wait_ack or transaction_enabled)
-        ack_event = self._register_json_ack_waiter(request_id) if transaction_wait else None
+        if chunk_version in (1, 2):
+            raise RuntimeError("设备仅支持已废弃的快照事务，请升级固件后重试")
+        binary_chunks_enabled = chunk_version >= 3
+        response_wait = bool(wait_ack or binary_chunks_enabled)
+        ack_event = self._register_json_ack_waiter(request_id) if response_wait else None
         build_started = time.monotonic()
         try:
-            if transaction_enabled:
+            if binary_chunks_enabled:
                 info = self.snapshot_chunk_info
-                self._snapshot_sender.limit = min(4096, int(info.get("max_payload", 4096)))
-                self._snapshot_sender.max_parts = min(4096, int(info.get("max_parts", 4096)))
-                self._snapshot_sender.max_bytes = int(info.get("max_bytes", 1048576))
-                payloads = self._snapshot_sender.prepare(
-                    self._wire_snapshot(snapshot), request_id
+                # 整份快照只序列化和压缩一次，再切割压缩字节，避免差异操作
+                # 构建、逐片 JSON 编码及逐片压缩造成的 CPU 和内存开销。
+                transport_limit = (
+                    16384
+                    if isinstance(self.serial, WebSocketDevice)
+                    else SERIAL_SNAPSHOT_CHUNK_LIMIT
                 )
-                packets = [build_jsonz_packet(payload) for payload in payloads]
+                chunk_limit = min(
+                    transport_limit,
+                    int(getattr(self, "json_chunk_size", SERIAL_SNAPSHOT_CHUNK_LIMIT)),
+                    int(info.get("max_payload", SERIAL_SNAPSHOT_CHUNK_LIMIT)),
+                )
+                payload = self._snapshot_envelope_payload(
+                    self._wire_snapshot(snapshot), request_id=request_id
+                )
+                maximum_bytes = int(info.get("max_bytes", 1048576))
+                if len(payload) > maximum_bytes:
+                    raise ValueError("快照大小 {} 超过设备上限 {}".format(len(payload), maximum_bytes))
+                packets = build_jsonb_packets(payload, request_id, chunk_limit)
             else:
-                # 旧固件继续使用兼容格式；它不支持数组事务，超大快照应升级固件。
+                # 没有分片能力的旧固件仅保留小快照 JSONZ 兼容，超大快照应升级固件。
                 packets = self.build_snapshot_packets(snapshot, request_id=request_id)
             build_elapsed_ms = (time.monotonic() - build_started) * 1000
             for index, packet in enumerate(packets):
                 is_final_packet = index == len(packets) - 1
-                label = "JSONZ#{}".format(request_id)
+                label = "{}#{}".format(
+                    "JSONB" if binary_chunks_enabled else "JSONZ",
+                    request_id,
+                )
                 if len(packets) > 1:
                     label = "{}.{}/{}".format(label, index + 1, len(packets))
                 if is_final_packet:
                     self._begin_json_ack_timing(request_id, build_started, build_elapsed_ms)
                 # 每片完成后继续发送下一片，不以整批累计耗时判定连接失效。
                 # 写入和最终 ACK 各自保留无响应保护，慢速传输不挤占确认窗口。
-                write_timing = self._write_packet(packet, label, build_elapsed_ms)
+                write_timing = self._write_packet(
+                    packet,
+                    label,
+                    build_elapsed_ms,
+                    timeout=ack_timeout,
+                )
                 if is_final_packet:
                     self._complete_json_ack_timing(request_id, build_started, write_timing)
-            if transaction_wait:
+            if response_wait:
                 self._wait_json_ack(request_id, ack_event, ack_timeout)
-                if transaction_enabled:
-                    self._snapshot_sender.confirm()
         except Exception:
-            # 写入中断、设备拒收或 ACK 超时都会使本地基线失去确定性，
-            # 下一次发送必须回到完整快照，避免增量应用在错误基线上。
-            if transaction_enabled:
-                self._snapshot_sender.reset()
             raise
         finally:
-            if transaction_wait:
+            if response_wait:
                 self._remove_json_ack_waiter(request_id)
 
     def close(self):
         """安全关闭当前传输并恢复为未连接状态。"""
-        self._snapshot_sender.reset()
-        transport, self.transport = self.transport, None
-        if transport is not None:
-            transport.close(wait=True)
         device, self.serial = self.serial, None
+        transport, self.transport = self.transport, None
         if device is not None:
             try:
                 LOGGER.info("[串口关闭] 正在关闭 %s", device.port)
-                device.close()
+                if transport is not None:
+                    # CDC 框架负责先关闭底层句柄，再回收阻塞中的读写线程。
+                    transport.close(wait=True)
+                else:
+                    device.close()
             except (OSError, serial.SerialException):
                 LOGGER.exception("[串口异常] 关闭 %s 失败", device.port)
+        elif transport is not None:
+            transport.close(wait=True)
 
 
 REBOOT_COMMAND = PicoJsonClient.build_command_packet("reboot", request_id="reboot")

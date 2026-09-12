@@ -161,7 +161,7 @@ class WebSocketDevice:
                 raise serial.SerialException("WebSocket 发送失败：{}".format(error)) from error
             if time.monotonic() - started >= self.write_timeout:
                 self.close()
-                raise serial.SerialTimeoutException("WebSocket 发送超过剩余事务预算")
+                raise serial.SerialTimeoutException("WebSocket 发送超过剩余分片流预算")
         finally:
             self._send_lock.release()
 

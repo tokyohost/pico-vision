@@ -152,6 +152,5 @@ class Esp32ClockRenderTest(unittest.TestCase):
         self.assertEqual(application._renderer.gc_us, [80])
         self.assertGreater(application._next_gc, 1200)
 
-
 if __name__ == "__main__":
     unittest.main()

@@ -4,6 +4,7 @@ import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 
 ESP32_ROOT = Path(__file__).resolve().parents[2] / "esp32-s3"
@@ -27,6 +28,31 @@ class ProtocolRecorder:
 
 class Esp32ApplicationDiagnosticsTest(unittest.TestCase):
     """覆盖 LCD 错误展示和 style 帧耗时告警。"""
+
+    def test_gc_is_deferred_while_streaming_with_enough_free_memory(self):
+        """确认活动数据流不会因固定五秒周期触发 PSRAM 全堆扫描。"""
+        application = Application.__new__(Application)
+        application._next_gc = 1000
+        application._next_clock_render = 3000
+        application._monitor_connected = True
+        application._renderer = SimpleNamespace(is_rendering=lambda: False)
+        with mock.patch(
+            "main.time.ticks_diff",
+            side_effect=lambda current, started: current - started,
+            create=True,
+        ), mock.patch(
+            "main.time.ticks_add",
+            side_effect=lambda value, delta: value + delta,
+            create=True,
+        ), mock.patch(
+            "main.gc.mem_free", return_value=7 * 1024 * 1024,
+            create=True,
+        ), mock.patch("main.gc.collect") as collect:
+            collected = application._collect_garbage_if_safe(1200)
+
+        self.assertFalse(collected)
+        collect.assert_not_called()
+        self.assertGreater(application._next_gc, 1200)
 
     def test_application_error_is_rendered_on_boot_style(self):
         """确认未处理异常会切换启动样式并同步提交错误信息。"""

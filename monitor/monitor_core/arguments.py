@@ -38,6 +38,7 @@ def create_argument_parser(config=None):
     parser.add_argument("--wifi-announcement-timeout", type=float, default=float(config_value(config, "PICO_MONITOR_WIFI_ANNOUNCEMENT_TIMEOUT", "3.0")), help="等待 ESP32 主动公告的最长秒数，超时后使用网段扫描兜底")
     parser.add_argument("--ping-target", default=config_value(config, "PICO_MONITOR_PING_TARGET", "www.baidu.com"), help="网络延迟检测目标")
     parser.add_argument("--interval", type=float, default=float(config_value(config, "PICO_MONITOR_INTERVAL", "0.5")), help="采集和发送间隔，单位为秒")
+    parser.add_argument("--json-chunk-size", type=int, choices=(512, 1024, 2048, 4096, 8192, 16384), default=int(config_value(config, "PICO_MONITOR_JSON_CHUNK_SIZE", 4096)), help="JSONB 二进制分片大小（字节），不超过设备上限")
     adaptive_group = parser.add_mutually_exclusive_group()
     adaptive_group.add_argument("--adaptive-transmit", dest="adaptive_transmit", action="store_true", help="根据 Pico JSON ACK 耗时调整发送间隔，并在拥塞时合并为最新快照")
     adaptive_group.add_argument("--no-adaptive-transmit", dest="adaptive_transmit", action="store_false", help="关闭发送间隔自适应并使用固定采集周期；仍保留 JSON ACK 背压")

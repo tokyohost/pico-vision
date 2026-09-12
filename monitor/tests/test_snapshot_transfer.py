@@ -62,6 +62,26 @@ class SnapshotTransferTest(unittest.TestCase):
         self.assertLessEqual(max(map(len, payloads)), 4096)
         self.assertTrue(all(b'"mode":"snapshot_chunk"' in item for item in payloads))
 
+    def test_large_chunk_sizes_round_trip_on_both_boards(self):
+        """8 KB 和 16 KB 分片在两种设备上完整还原，并遵守协商上限。"""
+        snapshot = {"ext": {"values": list(range(12000))}}
+        for board in ("esp32-s3", "picoRP2040"):
+            protocol = load_device_protocol(board)
+            for limit in (8192, 16384):
+                with self.subTest(board=board, limit=limit):
+                    sender = SnapshotSender(limit=limit)
+                    payloads = sender.prepare(snapshot, 1)
+                    self.assertGreater(max(map(len, payloads)), 4096)
+                    self.assertLessEqual(max(map(len, payloads)), limit)
+                    self.assertLessEqual(limit, protocol.MAX_JSON_SIZE)
+                    device = protocol.JsonProtocol.__new__(protocol.JsonProtocol)
+                    device._snapshot_chunk_transaction = None
+                    device._committed_snapshot = {}
+                    device._committed_batch = None
+                    for payload in payloads:
+                        result = device._handle_snapshot_chunk(json.loads(payload), len(payload))
+                    self.assertEqual(result, snapshot)
+
     def test_confirmed_baseline_sends_only_changed_values(self):
         """批次确认后，下一次只发送新增股票和变化的 K 线字段。"""
         first = {"ext": {"stock_watch": {"stocks": [
@@ -154,6 +174,46 @@ class SnapshotExtremeTest(unittest.TestCase):
         device._ticks_ms = lambda: 100
         return device
 
+    def test_jsonb_binary_chunks_ignore_embedded_newlines_and_replace_snapshot(self):
+        """JSONB 内嵌换行不截帧，连续完整快照会删除上一份遗留字段。"""
+        from pico_protocol import build_jsonb_packets, parse_frame
+        for board in ("esp32-s3", "picoRP2040"):
+            device = self.device(board)
+            device._buffer = bytearray()
+            device._frame_started_ms = 1
+            device._frame_read_calls = 1
+            device._write_frame = lambda *args: None
+            snapshots = (
+                {"keep": {"value": 1}, "removed": "旧字段", "blob": "A" * 9000},
+                {"keep": {"value": 2}, "blob": "B" * 9000},
+            )
+            for request_id, snapshot in enumerate(snapshots, 1):
+                packets = None
+                for salt in range(1024):
+                    candidate = dict(snapshot, salt=salt)
+                    envelope = json.dumps(
+                        {"mode": "snapshot", "request_id": request_id, "data": candidate},
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                    candidate_packets = build_jsonb_packets(envelope, request_id, maximum_payload=80)
+                    if any(b"\n" in parse_frame(packet)[1][13:] for packet in candidate_packets):
+                        snapshot = candidate
+                        packets = candidate_packets
+                        break
+                self.assertIsNotNone(packets, "测试数据应覆盖二进制载荷内嵌换行")
+                self.assertTrue(all(parse_frame(packet)[0] == "JSONB" for packet in packets))
+                # 用极小读取块覆盖二进制载荷中的换行和跨头部分片。
+                result = None
+                for packet in packets:
+                    for offset in range(0, len(packet), 17):
+                        device._buffer.extend(packet[offset:offset + 17])
+                        current = device._parse_lines()
+                        if current is not None:
+                            result = current
+                self.assertEqual(snapshot, result, board)
+            self.assertNotIn("removed", device._committed_snapshot)
+
     def test_randomized_roundtrip_and_type_changes(self):
         """随机嵌套数组、中文长文本、空值、删除和类型切换逐批完整还原。"""
         for board in ("esp32-s3", "picoRP2040"):
@@ -241,7 +301,7 @@ class SnapshotExtremeTest(unittest.TestCase):
             with self.subTest(scenario=scenario):
                 client = PicoJsonClient()
                 client.serial = SimpleNamespace(is_open=True)
-                client.snapshot_chunk_info = {"version": 1, "max_bytes": 262144}
+                client.snapshot_chunk_info = {"version": 3, "encoding": "jsonb", "mode": "binary", "max_bytes": 262144}
                 device = self.device("esp32-s3")
                 device._buffer = bytearray()
                 device._frame_started_ms = None
@@ -281,12 +341,10 @@ class SnapshotExtremeTest(unittest.TestCase):
                     else:
                         with self.assertRaises(JsonAckTimeoutError):
                             client.send(snapshot)
-                        self.assertIsNone(client._snapshot_sender.baseline)
                         if scenario != "提交过慢":
                             self.assertEqual({}, device._committed_snapshot)
                         recovering[0] = True
                         client.send(snapshot)
-                    self.assertEqual(snapshot, client._snapshot_sender.baseline)
                     self.assertEqual(snapshot, device._committed_snapshot)
 
     def test_coalesced_transactions_preserve_deletion_and_cache_replacement(self):
@@ -365,7 +423,7 @@ class SnapshotExtremeTest(unittest.TestCase):
         """迟到 ACK、无序号 ACK 和其他命令 ACK 均不能确认当前事务。"""
         from pico_client import PicoJsonClient
         client = PicoJsonClient()
-        client.snapshot_chunk_info = {"version": 1}
+        client.snapshot_chunk_info = {"version": 3, "encoding": "jsonb", "mode": "binary"}
         event = client._register_json_ack_waiter(2)
         for payload in (b"JSON:1", b"JSON", b"COMMAND:2"):
             client._notify_json_ack(("ACK", payload))
@@ -425,19 +483,19 @@ class SnapshotExtremeTest(unittest.TestCase):
         service._display_configuration_snapshot.return_value = {"style": "stocks"}
         self.assertEqual(3, service._snapshot_for_sending()["ext"]["stock"]["price"])
 
-    def test_slow_transaction_and_ack_failure(self):
-        """慢速构帧和写入不限制整批时长，ACK 失败仍清理基线。"""
-        from pico_client import PicoJsonClient, JsonAckTimeoutError
+    def test_slow_binary_chunks_and_ack_failure(self):
+        """慢速构帧和写入不挤占 ACK 窗口，失败后仍清理等待器。"""
+        from pico_client import PicoJsonClient, JsonAckTimeoutError, build_jsonb_packets
         for fail_stage in ("build", "write", "ack", "success"):
             client = PicoJsonClient()
             client.serial = SimpleNamespace(is_open=True)
-            client.snapshot_chunk_info = {"version": 1}
+            client.snapshot_chunk_info = {"version": 3, "encoding": "jsonb", "mode": "binary"}
             clock = [10.0]
-            original = client._snapshot_sender.prepare
+            original = build_jsonb_packets
 
-            def prepare(snapshot, request_id):
+            def build(payload, request_id, maximum_payload):
                 """模拟构帧耗时。"""
-                result = original(snapshot, request_id)
+                result = original(payload, request_id, maximum_payload)
                 clock[0] += 20.0 if fail_stage == "build" else 0.05
                 return result
 
@@ -456,17 +514,15 @@ class SnapshotExtremeTest(unittest.TestCase):
 
             with mock.patch("pico_client.time.monotonic", side_effect=lambda: clock[0]), \
                     mock.patch.object(client, "_drain_json_responses"), \
-                    mock.patch.object(client._snapshot_sender, "prepare", side_effect=prepare), \
+                    mock.patch("pico_client.build_jsonb_packets", side_effect=build), \
                     mock.patch.object(client, "_write_packet", side_effect=write), \
                     mock.patch.object(client, "_complete_json_ack_timing"), \
                     mock.patch.object(client, "_wait_json_ack", side_effect=ack):
                 if fail_stage != "ack":
                     client.send({"value": 1})
-                    self.assertEqual({"value": 1}, client._snapshot_sender.baseline)
                 else:
                     with self.assertRaises(JsonAckTimeoutError):
                         client.send({"value": 1})
-                    self.assertIsNone(client._snapshot_sender.baseline)
                 self.assertEqual({}, client._json_ack_events)
 
 
