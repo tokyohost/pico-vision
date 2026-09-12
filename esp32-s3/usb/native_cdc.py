@@ -16,15 +16,41 @@ class NativeCdcStream:
         initializer = getattr(backend, "init", None)
         if not callable(initializer):
             raise NativeCdcUnavailable("ESP32_S3_NATIVE_CDC_INIT_UNAVAILABLE")
-        initializer()
+        try:
+            initializer()
+        except (MemoryError, RuntimeError) as error:
+            # C 缓冲或 FreeRTOS 任务初始化失败时允许回退控制台，
+            # 不能在 LCD 初始化前终止整个应用。
+            raise NativeCdcUnavailable("ESP32_S3_NATIVE_CDC_INIT_FAILED") from error
         self._backend = backend
 
     def any(self):
-        """返回 C 环形缓冲区中当前可读取的字节数。"""
+        """返回 C 层当前可读的完整帧数，旧固件回退为原始字节数。"""
+        counter = getattr(self._backend, "frames_available", None)
+        if callable(counter):
+            return counter()
         return self._backend.any()
 
+    def uses_complete_frame_queue(self):
+        """返回固件是否已由独立 C 任务组装完整 PV1 帧。"""
+        return callable(getattr(self._backend, "read_frame", None))
+
+    def read_frame(self):
+        """从 C 层有界队列取出一个已组装的完整 PV1 帧。"""
+        reader = getattr(self._backend, "read_frame", None)
+        return reader() if callable(reader) else None
+
+    def read_receive_error(self):
+        """取出 C 接收任务上报的半帧超时等异步错误。"""
+        reader = getattr(self._backend, "read_error", None)
+        return reader() if callable(reader) else None
+
+    def supports_binary_frames(self):
+        """独立数据 CDC 不经过 REPL 控制字符处理，可承载原始 JSONB。"""
+        return True
+
     def readinto(self, buffer):
-        """从 C 环形缓冲区批量读取数据。"""
+        """从旧版 C 环形缓冲区批量读取数据。"""
         return self._backend.readinto(buffer)
 
     def write(self, data):

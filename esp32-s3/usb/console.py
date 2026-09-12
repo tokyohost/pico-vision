@@ -40,6 +40,10 @@ class Esp32S3ConsoleStream:
         """返回用于检查控制台可读事件的流对象。"""
         return self._input
 
+    def supports_binary_frames(self):
+        """REPL 控制台会处理控制字节，因此禁止承载原始 JSONB。"""
+        return False
+
     def _mark_activity(self):
         """记录最近一次控制台活动并锁定当前会话。"""
         self._connected = True
@@ -102,4 +106,3 @@ class Esp32S3ConsoleStream:
         """释放当前控制台会话状态但不关闭系统标准流。"""
         self._connected = False
         self._last_activity_ms = None
-

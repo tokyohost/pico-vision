@@ -12,7 +12,7 @@ from collections import deque
 import psutil
 
 from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
-from pico_client import JsonAckTimeoutError, PicoJsonClient
+from pico_client import JsonAckTimeoutError, JsonFrameRejectedError, PicoJsonClient
 from pico_upgrade import PicoFirmwareUpgrader, PicoUpgradeDownloader, PicoUpgradePackage
 
 LOGGER = logging.getLogger("pico-monitor")
@@ -233,6 +233,11 @@ class RuntimeOperationsMixin:
                         wait_ack=wait_ack,
                         ack_timeout=ack_timeout,
                     )
+                except JsonFrameRejectedError as error:
+                    # 帧错误已由读线程关联到当前请求；保留连接和 ACK 背压，
+                    # 等待下一份最新快照覆盖重试，不再耗尽长 ACK 窗口。
+                    LOGGER.warning("%s；当前连接将在下一帧重试", error)
+                    continue
                 except JsonAckTimeoutError as error:
                     # 快照写入已经完成，缺少 ACK 只能说明设备端未确认该能力，
                     # 不能据此关闭仍然可用的串口，也不能降级为无限异步写入。
@@ -506,6 +511,7 @@ class RuntimeOperationsMixin:
             "adaptive_transmit": bool(getattr(self.arguments, "adaptive_transmit", True)),
             "network_unit": self.arguments.network_unit,
             "style": self.arguments.lcd_style,
+            "idle_enabled": bool(getattr(self.arguments, "idle_enabled", True)),
             "idle_style": getattr(self.arguments, "idle_style", "idle"),
             "idle_timeout": getattr(self.arguments, "idle_timeout", 30),
             "dev": bool(getattr(self.arguments, "dev", False)),

@@ -79,10 +79,10 @@ API 4 的兼容 SPI 固件不支持底层异步整秒同步。
 
 ## 独立 USB CDC
 
-固件按 TinyUSB 官方双 CDC 方案在启动时直接枚举两个原生接口：CDC 0 保留给 REPL，CDC 1 专供 PV1 数据。数据接口由 C 回调立即读空 TinyUSB FIFO，并写入独立 32 KB 环形缓冲，不再使用 `machine.USBDevice` 的 Python 端点回调。环形缓冲在后端初始化时优先从 PSRAM 动态分配，避免把 32 KB 常驻数组塞进紧张的内部 DRAM。该功能必须连接 ESP32-S3 原生 USB OTG 接口，CH343 等 USB-UART 接口仍属于兼容控制台通道。
+固件按 TinyUSB 官方双 CDC 方案在启动时直接枚举两个原生接口：CDC 0 保留给 REPL，CDC 1 专供 PV1 数据。数据接口由独立 `fn_cdc_rx` FreeRTOS 任务持续推进 TinyUSB，C 回调立即读空 FIFO 并写入 32 KB 环形缓冲，再按 PV1 头部与 64 字节物理边界组装到四帧有界队列。全程不再使用 `machine.USBDevice` 的 Python 端点回调。长期缓冲优先从 PSRAM 动态分配；队列和环形缓冲都满时依靠 USB NAK 背压，不覆盖未处理数据。该功能必须连接 ESP32-S3 原生 USB OTG 接口，CH343 等 USB-UART 接口仍属于兼容控制台通道。
 
 - 原生数据 CDC 通过 `_usb_cdc_data → NativeCdcStream → UsbCdcTransport → TransportManager` 接入现有协议。
-- USB 枚举、端点重挂、FIFO 和环形缓冲全部由固件 C 层处理，Python 渲染停顿不会中断逐包端点服务。
+- USB 枚举、端点重挂、FIFO、半帧超时和完整帧队列全部由固件 C 层处理，Python 只取完整帧并调用 `fn_protocol` C 解析器，LCD 渲染停顿不会中断逐包端点服务。
 - 固件没有编译 `_usb_cdc_data` 时才回退到原有内置控制台或 CH343 通道，不再创建存在长期稳定性问题的运行时 Python CDC。
 - 如需固定使用 CH343/控制台传输，应把 `USB_DEDICATED_CDC_ENABLED` 设为 `False`。
 - 可通过 `config.py` 的 `USB_DEDICATED_CDC_ENABLED` 控制数据通道；C 缓冲容量由板级固件宏 `MICROPY_HW_USB_CDC_DATA_RX_BUFSIZE` 决定。

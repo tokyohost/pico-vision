@@ -36,6 +36,11 @@ class UsbCdcTransport(TransportStrategy):
             return 0
         return 1 if self._poller.poll(0) else 0
 
+    def supports_binary_frames(self):
+        """返回底层 CDC 是否绕过 REPL 并支持原始二进制。"""
+        checker = getattr(self._stream, "supports_binary_frames", None)
+        return bool(checker()) if callable(checker) else True
+
     def readinto(self, buffer):
         """从 CDC 接口读取数据到目标缓冲区。"""
         return self._stream.readinto(buffer)

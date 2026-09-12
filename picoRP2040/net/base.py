@@ -30,6 +30,10 @@ class TransportStrategy:
         """提交策略内部尚未发送的数据。"""
         return None
 
+    def supports_binary_frames(self):
+        """默认不声明二进制帧能力，具体策略必须显式启用。"""
+        return False
+
     def close(self):
         """关闭连接并释放策略持有的资源。"""
         return None

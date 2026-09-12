@@ -111,6 +111,10 @@ class Esp32BuiltinUsbStream:
         """返回必须用于检测可读事件的 ESP32 控制台文本流。"""
         return self._input
 
+    def supports_binary_frames(self):
+        """REPL 控制台会处理控制字节，因此禁止承载原始 JSONB。"""
+        return False
+
     def _mark_activity(self):
         """记录 USB 会话活动并保持当前连接锁定。"""
         self._connected = True

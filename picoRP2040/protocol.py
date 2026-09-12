@@ -938,7 +938,7 @@ class JsonProtocol:
             "mode": "usb" if self._dedicated_stream else "none",
             "connected": True,
         }
-        payload = json.dumps({
+        information = {
             "board_model": BOARD_MODEL,
             "screen_color_profile": panel_profile.color_profile_name,
             "firmware_version": FIRMWARE_VERSION,
@@ -948,15 +948,6 @@ class JsonProtocol:
                 "requires_usb": True,
                 "image_format": "unsupported",
             },
-            "snapshot_chunks": {
-                "version": 3,
-                "encoding": "jsonb",
-                "mode": "binary",
-                # 单片沿用 PV1/CDC 的 4 KiB 安全预算；完整事务可以更大。
-                "max_payload": 4096,
-                "max_parts": 4096,
-                "max_bytes": SNAPSHOT_TRANSACTION_MAX_BYTES,
-            },
             "device_name": DEVICE_NAME,
             "lcd_device_type": LCD_DEVICE_TYPE,
             "lcd_driver": LCD_DRIVER,
@@ -965,8 +956,27 @@ class JsonProtocol:
             "pixel_format": PIXEL_FORMAT,
             "styles": style_catalog(),
             "net": net_status,
-        }).encode("utf-8")
+        }
+        if self._binary_snapshot_supported():
+            information["snapshot_chunks"] = {
+                "version": 3,
+                "encoding": "jsonb",
+                "mode": "binary",
+                # 单片沿用 PV1/CDC 的 4 KiB 安全预算；完整事务可以更大。
+                "max_payload": 4096,
+                "max_parts": 4096,
+                "max_bytes": SNAPSHOT_TRANSACTION_MAX_BYTES,
+            }
+        payload = json.dumps(information).encode("utf-8")
         self._write_frame("PONG", payload)
+
+    def _binary_snapshot_supported(self):
+        """仅在当前传输明确支持原始二进制时公布 JSONB 能力。"""
+        transport = self._command_services.get("transport")
+        checker = getattr(transport, "supports_binary_frames", None)
+        if callable(checker):
+            return bool(checker())
+        return True
 
     def write_upgrade_response(self, data):
         """把升级状态封装为 PV1 响应帧。"""
@@ -1092,6 +1102,10 @@ class JsonProtocol:
             # 缺片连接即使仍能发送其它消息，也不能无限持有大块压缩缓冲。
             self._jsonb_transfer = None
             self._write_frame("ERR", b"JSONB_TIMEOUT")
+        # 接收端已有后续字节时优先读取，避免在 4096 字节预算边界处把
+        # 最后一个 64 字节传输块连同前半帧一起丢弃。
+        if self._input_available():
+            return
         if not self._buffer or self._last_byte_ms is None:
             return
         now = self._ticks_ms()

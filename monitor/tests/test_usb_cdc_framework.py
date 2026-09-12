@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import serial
 
-from pico_client import PicoJsonClient, build_frame, parse_frame
+from pico_client import JsonFrameRejectedError, PicoJsonClient, build_frame, parse_frame
 from usbCdcFramework import UsbCdcFramework
 
 
@@ -325,6 +325,22 @@ class UsbCdcFrameworkTest(unittest.TestCase):
             framework.close()
 
         self.assertIn(b"PV1:JSONZ:", bytes(serial_port.written))
+
+    def test_frame_error_immediately_wakes_current_ack_waiter(self):
+        """设备帧错误应立即结束长 ACK 等待，并保留连接供下一帧重试。"""
+        client = PicoJsonClient()
+        client.serial = ThreadedSerial()
+        client.transport = SimpleNamespace(raise_error_if_any=lambda: None)
+        event = client._register_json_ack_waiter(42)
+
+        self.assertTrue(client._handle_cdc_error(("ERR", b"BAD_FRAME_TRAILER")))
+        started = time.monotonic()
+        with self.assertRaisesRegex(JsonFrameRejectedError, "BAD_FRAME_TRAILER"):
+            client._wait_json_ack(42, event, timeout=90.0)
+
+        self.assertLess(time.monotonic() - started, 0.2)
+        self.assertTrue(client.is_connected)
+        client._remove_json_ack_waiter(42)
 
     def test_event_callback_receives_device_config_change(self):
         """设备配置事件应由统一读回调实时转交业务层。"""

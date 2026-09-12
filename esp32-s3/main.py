@@ -161,6 +161,7 @@ class Application:
         self._next_gc = time.ticks_add(now, GC_MIN_INTERVAL_MS)
         self._monitor_interval_ms = 500
         self._monitor_connected = False
+        self._idle_enabled = True
         self._idle_style = "idle"
         self._idle_timeout_ms = 30000
         self._idle_active = False
@@ -638,6 +639,8 @@ class Application:
 
     def _idle_due(self, now):
         """判断最近一次 JSON 或启动等待是否达到待机阈值。"""
+        if not self._idle_enabled:
+            return False
         last_update_ms = self._cache.last_update_ms()
         baseline_ms = last_update_ms if last_update_ms is not None else self._idle_wait_started_ms
         return time.ticks_diff(now, baseline_ms) >= self._idle_timeout_ms
@@ -746,8 +749,8 @@ class Application:
                     CLOCK_REFRESH_INTERVAL_MS, now
                 )
             if self._receiver.is_busy():
-                # 接收优先但不再完全饿死已有渲染任务；每次最多推进一个区域，
-                # 下一轮会立即继续消费协议缓冲区。
+                # 独立 C 任务已持续收取并组帧，Python 繁忙时每轮仍可推进
+                # 一个 LCD 区域；完整帧队列超过阈值后由 USB NAK 自动背压。
                 if self._renderer.is_rendering():
                     render_completed = self._update_renderer_with_fallback(
                         snapshot or {}, receiver_busy=True
@@ -790,6 +793,7 @@ class Application:
                 # 周期压缩到 300ms 以下并造成不必要的会话抖动。
                 self._monitor_interval_ms = max(300, requested_interval_ms)
                 self._monitor_connected = True
+                self._idle_enabled = bool(display.get("idle_enabled", True))
                 self._idle_style = str(display.get("idle_style", self._idle_style) or "idle")
                 try:
                     idle_timeout = int(display.get("idle_timeout", self._idle_timeout_ms // 1000))

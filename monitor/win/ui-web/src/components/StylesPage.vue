@@ -221,6 +221,7 @@ function repairDeletedStyleSelection(deletedName, catalog) {
  * 选择一个显示或待机样式。
  */
 function selectStyle(item) {
+  if (item.idle && !props.settings.idle_enabled) return
   if (item.idle) props.settings.idle_style = item.name
   else props.settings.lcd_style = item.name
 }
@@ -254,9 +255,14 @@ onMounted(loadRemoteStyles)
     <article
       v-for="item in styles"
       :key="item.name"
-      :class="['style-card', { selected: settings.lcd_style === item.name || settings.idle_style === item.name }]"
+      :class="['style-card', {
+        selected: settings.lcd_style === item.name || (settings.idle_enabled && settings.idle_style === item.name),
+        disabled: item.idle && !settings.idle_enabled,
+      }]"
       role="button"
-      tabindex="0"
+      :aria-disabled="item.idle && !settings.idle_enabled"
+      :title="item.idle && !settings.idle_enabled ? '已选择不进入待机，待机样式不可配置' : ''"
+      :tabindex="item.idle && !settings.idle_enabled ? -1 : 0"
       @click="selectStyle(item)"
       @keydown.enter="selectStyle(item)"
       @keydown.space.prevent="selectStyle(item)"

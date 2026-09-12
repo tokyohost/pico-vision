@@ -25,6 +25,10 @@ class WebSocketTransport(TransportStrategy):
     """通过 Wi-Fi WebSocket 服务端提供 PV1 双工字节传输。"""
 
     name = "wifi"
+
+    def supports_binary_frames(self):
+        """WebSocket 二进制消息可无损承载 JSONB。"""
+        return True
     _GUID = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
     _MAX_HTTP_HEADER_BYTES = 4096
     _HANDSHAKE_TIMEOUT_MS = 2000

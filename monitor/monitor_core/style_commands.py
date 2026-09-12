@@ -253,6 +253,7 @@ class StyleCommandMixin:
         brightness = int(payload.get("lcd_brightness", self.arguments.lcd_brightness))
         rotation = int(payload.get("screen_rotation", self.arguments.screen_rotation))
         style = payload.get("lcd_style", self.arguments.lcd_style)
+        idle_enabled = bool(payload.get("idle_enabled", getattr(self.arguments, "idle_enabled", True)))
         idle_style = payload.get("idle_style", getattr(self.arguments, "idle_style", "idle"))
         idle_timeout = int(payload.get("idle_timeout", getattr(self.arguments, "idle_timeout", 30)))
         network_unit = payload.get("network_unit", self.arguments.network_unit)
@@ -262,21 +263,22 @@ class StyleCommandMixin:
             raise ValueError("屏幕旋转角度仅支持 0 或 180")
         if style not in self.available_styles:
             raise ValueError("不支持的 LCD 样式")
-        if idle_style not in getattr(self, "available_idle_styles", {"idle"}):
+        if idle_enabled and idle_style not in getattr(self, "available_idle_styles", {"idle"}):
             raise ValueError("不支持的 LCD 待机样式")
-        if idle_timeout <= 0:
+        if idle_enabled and idle_timeout <= 0:
             raise ValueError("待机秒数必须大于 0")
         if network_unit not in ("MB", "Mbps"):
             raise ValueError("不支持的网络速率单位")
         self.arguments.lcd_brightness = brightness
         self.arguments.screen_rotation = rotation
         self.arguments.lcd_style = style
+        self.arguments.idle_enabled = idle_enabled
         self.arguments.idle_style = idle_style
         self.arguments.idle_timeout = idle_timeout
         self.arguments.network_unit = network_unit
         LOGGER.info(
-            "显示设置已热更新：亮度=%d%%，旋转=%d°，样式=%s，待机样式=%s，待机=%d 秒，网络单位=%s",
-            brightness, rotation, style, idle_style, idle_timeout, network_unit,
+            "显示设置已热更新：亮度=%d%%，旋转=%d°，样式=%s，允许待机=%s，待机样式=%s，待机=%d 秒，网络单位=%s",
+            brightness, rotation, style, idle_enabled, idle_style, idle_timeout, network_unit,
         )
 
     def apply_dev_config(self, payload):

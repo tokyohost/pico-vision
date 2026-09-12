@@ -293,6 +293,15 @@ class HttpAdminConfigurationTest(unittest.TestCase):
 class WindowsSettingsDefaultTest(unittest.TestCase):
     """验证 Windows 控制中心新增配置的默认值。"""
 
+    def test_idle_is_enabled_for_legacy_settings(self):
+        """确认旧配置缺少待机开关时保持原有的默认待机行为。"""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            settings_path = Path(temporary_directory) / "settings.json"
+            settings_path.write_text("{}", encoding="utf-8")
+            settings = TraySettingsStore(settings_path).load()
+
+        self.assertTrue(settings["idle_enabled"])
+
     def test_market_url_uses_official_service_by_default(self):
         """确认首次启动或旧配置缺少字段时采用官方插件市场地址。"""
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -28,6 +28,10 @@ class JsonAckTimeoutError(RuntimeError):
     """表示快照已经发送完成，但未在期限内收到对应 JSON ACK。"""
 
 
+class JsonFrameRejectedError(RuntimeError):
+    """表示设备拒绝当前快照帧，发送端应保留连接并重试。"""
+
+
 def _build_crc16_byte_table():
     """生成 CRC-16/CCITT 的字节查找表。"""
     table = []

@@ -29,6 +29,7 @@ from pico_ack import PicoJsonAckMixin
 from pico_commands import PicoCommandMixin
 from pico_protocol import (
     JsonAckTimeoutError,
+    JsonFrameRejectedError,
     PING_COMMAND,
     PicoRestartingError,
     build_command_packet,
@@ -105,6 +106,7 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         self._json_ack_pending = ExpiringJsonAckTimingCache()
         self._json_ack_lock = threading.Lock()
         self._json_ack_events = {}
+        self._json_ack_errors = {}
         self._snapshot_send_lock = threading.Lock()
         self.transport = None
         self.event_callback = None
@@ -373,10 +375,18 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
             raise PicoRestartingError("Pico 发生不可恢复的渲染错误，设备正在自动重启")
 
     def _handle_cdc_error(self, frame):
-        """处理读线程提前收到的 ERR 帧，JSON 解析错误只记录不触发断线。"""
+        """处理设备 ERR 帧，并立即结束对应快照的 ACK 等待。"""
         payload = frame[1].decode("utf-8", errors="replace")
         if payload.startswith("BAD_JSON"):
-            LOGGER.warning("[JSONZ 异步错误][%s] %s", self.port_name, payload)
+            LOGGER.warning("[JSON 异步错误][%s] %s", self.port_name, payload)
+            return True
+        if (
+            payload.startswith("BAD_FRAME_")
+            or payload.startswith("BAD_JSONB_")
+            or payload in ("FRAME_TIMEOUT", "FRAME_TOO_LARGE", "JSONB_TIMEOUT")
+        ):
+            LOGGER.warning("[JSON 帧错误][%s] %s", self.port_name, payload)
+            self._notify_json_frame_error(payload)
             return True
         return False
 
@@ -813,6 +823,9 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
                     build_elapsed_ms,
                     timeout=ack_timeout,
                 )
+                # 设备可能在分片写入期间已经返回 BAD_FRAME_*。完成当前物理帧后
+                # 立即停止后续分片，不能继续等待完整 ACK 窗口。
+                self._raise_json_frame_error(request_id)
                 if is_final_packet:
                     self._complete_json_ack_timing(request_id, build_started, write_timing)
             if response_wait:

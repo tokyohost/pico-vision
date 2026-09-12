@@ -128,6 +128,18 @@ body {
 .market-frame-empty .el-empty { max-width: 520px; }
 .page-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+.idle-setting-label { display: inline-flex; align-items: center; gap: 18px; }
+.idle-disable-option.el-checkbox {
+  height: 24px; margin: 0; padding: 0 8px; border-radius: 6px;
+  background: rgba(255, 255, 255, .045); font-weight: 400;
+  transition: background-color .18s ease;
+}
+.idle-disable-option.el-checkbox:hover { background: rgba(91, 140, 255, .1); }
+.idle-disable-option .el-checkbox__label { padding-left: 5px; color: var(--muted); font-size: 12px; }
+.idle-disable-option.is-checked .el-checkbox__label { color: var(--accent); }
+.form-label-with-help { display: inline-flex; align-items: center; gap: 6px; }
+.form-help-icon { color: var(--accent); cursor: help; font-size: 15px; }
+.form-help-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 50%; }
 .two-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .network-stack { display: flex; min-width: 0; flex-direction: column; gap: 18px; }
 .network-stack > .el-card { width: 100%; }
@@ -540,6 +552,8 @@ body {
 .style-card:hover, .style-card.selected { transform: translateY(-2px); border-color: rgba(91, 140, 255, .7); box-shadow: 0 12px 28px rgba(0,0,0,.22); }
 .style-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .style-card.selected { background: linear-gradient(145deg, rgba(61, 91, 176, .35), var(--panel)); }
+.style-card.disabled { cursor: not-allowed; opacity: .5; }
+.style-card.disabled:hover { transform: none; border-color: var(--border); box-shadow: none; }
 .style-card small { color: var(--muted); }
 .style-preview-shell {
   position: relative; display: grid; width: 100%; aspect-ratio: 4 / 3; overflow: hidden;
@@ -565,6 +579,7 @@ body {
 .style-icon { display: grid; width: 39px; height: 39px; place-items: center; border-radius: 11px; color: #9eb7ff; background: rgba(91, 140, 255, .13); }
 .about-copy { max-width: 520px; color: var(--muted); }
 .about-layout { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(300px, .55fr); gap: 20px; max-width: 980px; margin: 18px auto; }
+.about-card { grid-row: 1 / span 2; }
 .about-heading { display: flex; align-items: center; gap: 16px; }
 .about-heading h2, .qr-card h3 { margin: 0; color: #f4f7fc; }
 .about-heading p, .qr-card p { margin: 5px 0 0; color: var(--muted); }
@@ -649,11 +664,32 @@ body {
   display: block; width: min(240px, 100%); aspect-ratio: 1; object-fit: contain;
   margin: 22px auto 14px; padding: 10px; border-radius: 14px; background: #fff;
 }
+.qq-group-card { background: linear-gradient(145deg, rgba(25, 40, 68, .96), rgba(16, 25, 43, .98)) !important; }
+.qq-group-heading { display: flex; align-items: center; gap: 12px; text-align: left; }
+.qq-group-heading p { margin-top: 3px; font-size: 12px; }
+.qq-group-icon {
+  display: grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center;
+  border-radius: 12px; color: #91d7ff; background: rgba(54, 169, 255, .13); font-size: 21px;
+}
+.qr-card .qq-group-qr {
+  width: min(240px, 100%); height: auto; max-height: 410px; aspect-ratio: auto;
+  padding: 0; object-fit: contain; background: #f4f5f7;
+}
+.qq-group-number {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 11px; border: 1px solid rgba(135, 157, 194, .16); border-radius: 10px;
+  text-align: left; background: rgba(7, 14, 26, .32);
+}
+.qq-group-number > span { display: grid; gap: 2px; }
+.qq-group-number small { color: var(--muted); font-size: 11px; }
+.qq-group-number strong { color: #edf4ff; font: 600 14px/1.3 Consolas, "Microsoft YaHei", monospace; letter-spacing: .4px; }
+.qq-group-number .el-button { flex: 0 0 auto; }
 
 @media (max-width: 1050px) {
   .page-grid, .two-columns { grid-template-columns: 1fr; }
   .update-card-main { gap: 16px; }
   .about-layout { grid-template-columns: 1fr; }
+  .about-card { grid-row: auto; }
 }
 
 /* 屏幕样式随可视区域扩展为四至六列，窄窗口仍保持最少三列。 */

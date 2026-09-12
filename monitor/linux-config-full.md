@@ -113,6 +113,7 @@ screen:
   rotation: 0                      # 0 或 180
   lcd_brightness: 100              # 1 到 100；裸程序默认值为 50
   lcd_style: "fps_simple"
+  idle_enabled: true               # false 表示永不进入待机样式
   idle_style: "idle"
   idle_timeout: 30
 
@@ -328,6 +329,7 @@ PICO_MONITOR_CUSTOM_DATA_ENABLED='{"my_data": true}'
 | `screen.rotation` | 整数；`0` | 只能是 `0` 或 `180` | 屏幕倒置安装时设为 `180`。其他角度会在参数校验阶段拒绝。 |
 | `screen.lcd_brightness` | 整数；DEB 模板 `100`，程序默认 `50` | 1 到 100 | LCD 背光百分比。夜间运行可设 `20` 或 `30`；设为 `100` 最亮但功耗和发热更高。 |
 | `screen.lcd_style` | 字符串；DEB 模板 `fps_simple`，程序默认 `horizontal_disk4x` | 内置样式名或设备已同步的自定义样式名 | 常见内置值：`default`、`disk`、`diskv2`、`diskv3`、`diskv4`、`horizontal_disk`、`horizontal_diskv2`、`horizontal_disk4x`、`horizontal_disk4x_qb`、`horizontal_disk6x`、`simple`、`fpstest`、`fps_simple`、`game`、`idle`。自定义样式必须先上传并同步到设备。 |
+| `screen.idle_enabled` | 布尔值；`true` | `true` 或 `false` | 设为 `false` 时设备不会进入待机样式，`idle_style` 与 `idle_timeout` 暂不生效。 |
 | `screen.idle_style` | 字符串；`idle` | 设备样式目录中的待机样式 | 连续超过 `idle_timeout` 未收到有效快照后显示的样式。通常保持 `idle`。 |
 | `screen.idle_timeout` | 整数；`30` 秒 | 必须大于 0 | Pico 多久没有收到 JSON 后切换到待机样式。USB 或 Wi-Fi 经常短暂断线时可设 `60`，避免频繁切换。 |
 
@@ -338,6 +340,7 @@ screen:
   rotation: 180
   lcd_brightness: 35
   lcd_style: "horizontal_disk4x"
+  idle_enabled: true
   idle_style: "idle"
   idle_timeout: 60
 
@@ -580,6 +583,7 @@ sudo systemctl start pico-monitor
 | `PICO_MONITOR_SCREEN_ROTATION` | `screen.rotation` | `0` 或 `180` |
 | `PICO_MONITOR_LCD_BRIGHTNESS` | `screen.lcd_brightness` | 1 到 100 |
 | `PICO_MONITOR_LCD_STYLE` | `screen.lcd_style` | 样式名 |
+| `PICO_MONITOR_IDLE_ENABLED` | `screen.idle_enabled` | 待机功能开关 |
 | `PICO_MONITOR_IDLE_STYLE` | `screen.idle_style` | 待机样式 |
 | `PICO_MONITOR_IDLE_TIMEOUT` | `screen.idle_timeout` | 正整数秒 |
 | `PICO_MONITOR_LOG_LEVEL` | `logging.level` | 日志级别 |

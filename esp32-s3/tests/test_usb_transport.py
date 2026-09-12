@@ -12,6 +12,7 @@ if str(ESP32_ROOT) not in sys.path:
     sys.path.insert(0, str(ESP32_ROOT))
 
 import usb_transport
+from protocol import JsonProtocol
 from net.usb_cdc import UsbCdcTransport
 from usb import dedicated_cdc
 from usb.buffer_policy import normalize_rx_buffer_size
@@ -90,6 +91,54 @@ class FakeConsoleOutput(FakeStream):
         self.buffer = self
 
 
+class FakeCompleteFrameTransport:
+    """模拟 C 层完整帧队列和异步错误通道。"""
+
+    def __init__(self, frames=None, receive_error=None):
+        """初始化完整帧、异步错误与写入记录。"""
+        self.frames = list(frames or ())
+        self.receive_error = receive_error
+        self.written = bytearray()
+        self.raw_read_count = 0
+
+    def available(self):
+        """返回完整帧和异步错误的待读事件数。"""
+        return len(self.frames) + (1 if self.receive_error else 0)
+
+    def uses_complete_frame_queue(self):
+        """声明当前模拟传输由 C 层提供完整帧。"""
+        return True
+
+    def read_frame(self):
+        """取出一个模拟完整帧。"""
+        return self.frames.pop(0) if self.frames else None
+
+    def read_receive_error(self):
+        """取出并清除一个模拟 C 层错误。"""
+        error = self.receive_error
+        self.receive_error = None
+        return error
+
+    def readinto(self, buffer):
+        """记录不应发生的原始半包读取。"""
+        del buffer
+        self.raw_read_count += 1
+        raise AssertionError("C 完整帧模式不得读取原始半包")
+
+    def write(self, data):
+        """记录协议层写回的帧。"""
+        self.written.extend(data)
+        return len(data)
+
+    def flush(self):
+        """模拟立即完成 CDC 发送刷新。"""
+        return None
+
+    def is_open(self):
+        """返回模拟 CDC 始终已连接。"""
+        return True
+
+
 class UsbTransportTest(unittest.TestCase):
     """确认 ESP32-S3 使用固件原生 CDC，并保留能力回退路径。"""
 
@@ -130,6 +179,7 @@ class UsbTransportTest(unittest.TestCase):
         self.assertIn("mp_usbd_cdc_data_rx_configure", cdc_header)
         self.assertIn("mp_usbd_cdc_data_rx_any", cdc_header)
         self.assertIn("mp_usbd_cdc_data_rx_read", cdc_header)
+        self.assertIn("mp_usbd_cdc_data_rx_read_buffered", cdc_header)
         self.assertIn("mp_usbd_cdc_data_tx_write", cdc_header)
         self.assertIn("mp_usbd_cdc_data_connected", cdc_header)
         self.assertIn("mp_usbd_cdc_data_tx_flush", cdc_header)
@@ -142,6 +192,15 @@ class UsbTransportTest(unittest.TestCase):
             repository_root / "micropython/shared/tinyusb/mp_usbd.c"
         ).read_text(encoding="utf-8"))
         self.assertIn('#include "shared/tinyusb/mp_usbd_cdc.h"', cdc_binding)
+        self.assertIn('#include "freertos/idf_additions.h"', cdc_binding)
+        self.assertIn("extern void mp_usbd_task_lock_enable(void);", cdc_binding)
+        self.assertIn("xTaskCreatePinnedToCore", cdc_binding)
+        self.assertIn("vTaskDelay(USB_CDC_TASK_DELAY_TICKS);", cdc_binding)
+        self.assertNotIn("vTaskDelay(pdMS_TO_TICKS(1));", cdc_binding)
+        self.assertIn("usb_cdc_feed_byte_locked", cdc_binding)
+        self.assertIn("MP_QSTR_frames_available", cdc_binding)
+        self.assertIn("MP_QSTR_read_frame", cdc_binding)
+        self.assertIn("MP_QSTR_read_error", cdc_binding)
         self.assertIn("--undefined=tud_descriptor_device_cb", esp32_cmake)
         self.assertIn("--undefined=tud_descriptor_configuration_cb", esp32_cmake)
         self.assertIn("--undefined=tud_descriptor_string_cb", esp32_cmake)
@@ -183,6 +242,16 @@ class UsbTransportTest(unittest.TestCase):
         self.assertTrue(stream.is_open())
         self.assertEqual(initialized, [True])
 
+    def test_native_cdc_initialization_failure_falls_back_before_lcd_start(self):
+        """C 缓冲或任务初始化失败时应回退控制台，不得阻断 LCD 启动。"""
+        backend = types.SimpleNamespace(
+            api_version=lambda: 2,
+            init=lambda: (_ for _ in ()).throw(RuntimeError("task failed")),
+        )
+        with mock.patch.dict(sys.modules, {"_usb_cdc_data": backend}):
+            with self.assertRaises(dedicated_cdc.DedicatedCdcUnavailable):
+                dedicated_cdc.create_dedicated_cdc(1024, 4096)
+
     def test_create_usb_stream_returns_raw_dedicated_cdc(self):
         """独立 CDC 创建成功后必须直接交给现有 USB 传输策略。"""
         dedicated = FakeStream(opened=True)
@@ -199,6 +268,62 @@ class UsbTransportTest(unittest.TestCase):
             stream = usb_transport.create_usb_stream()
 
         self.assertIs(dedicated, stream)
+
+    def test_console_and_native_cdc_report_distinct_binary_capabilities(self):
+        """REPL 回退必须禁用 JSONB，原生第二路 CDC 必须保留 JSONB。"""
+        fallback = usb_transport.Esp32S3ConsoleStream.__new__(
+            usb_transport.Esp32S3ConsoleStream
+        )
+        backend = types.SimpleNamespace(
+            api_version=lambda: 1,
+            init=lambda: None,
+        )
+        native = NativeCdcStream(backend)
+
+        self.assertFalse(fallback.supports_binary_frames())
+        self.assertTrue(native.supports_binary_frames())
+
+    def test_native_cdc_reads_only_complete_c_frames(self):
+        """新固件应向 Python 暴露 C 层完整帧队列，不再读取半包字节。"""
+        frames = [b"PV1:PING:0:0000:\n"]
+        backend = types.SimpleNamespace(
+            api_version=lambda: 2,
+            init=lambda: None,
+            frames_available=lambda: len(frames),
+            read_frame=lambda: frames.pop(0) if frames else None,
+            read_error=lambda: None,
+            is_open=lambda: True,
+        )
+        native = NativeCdcStream(backend)
+        transport = UsbCdcTransport(native)
+
+        self.assertTrue(native.uses_complete_frame_queue())
+        self.assertTrue(transport.uses_complete_frame_queue())
+        self.assertEqual(1, transport.available())
+        self.assertEqual(b"PV1:PING:0:0000:\n", transport.read_frame())
+        self.assertIsNone(transport.read_receive_error())
+        self.assertEqual(0, transport.available())
+
+    def test_protocol_never_reads_raw_bytes_in_complete_frame_mode(self):
+        """Python 协议层必须只取 C 层完整帧，不再进入 readinto 半包路径。"""
+        stream = FakeCompleteFrameTransport((JsonProtocol._build_frame("PING", b""),))
+        protocol = JsonProtocol(stream=stream)
+        protocol._write_pong = lambda: protocol._write_frame("PONG", b"{}")
+
+        self.assertIsNone(protocol.poll())
+
+        self.assertEqual(0, stream.raw_read_count)
+        self.assertTrue(bytes(stream.written).startswith(b"PV1:PONG:"))
+
+    def test_protocol_reports_c_partial_frame_timeout(self):
+        """C 任务清除超时半帧后，Python 应立即向主机返回 FRAME_TIMEOUT。"""
+        stream = FakeCompleteFrameTransport(receive_error=b"FRAME_TIMEOUT")
+        protocol = JsonProtocol(stream=stream)
+
+        self.assertIsNone(protocol.poll())
+
+        self.assertEqual(0, stream.raw_read_count)
+        self.assertIn(b"FRAME_TIMEOUT", stream.written)
 
     def test_receive_buffer_holds_two_maximum_frames(self):
         """独立 CDC 接收队列必须能覆盖业务阻塞期间的双帧突发。"""

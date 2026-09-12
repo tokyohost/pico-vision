@@ -144,6 +144,7 @@ class Application:
         self._next_gc = time.ticks_add(now, GC_MIN_INTERVAL_MS)
         self._monitor_interval_ms = 500
         self._monitor_connected = False
+        self._idle_enabled = True
         self._idle_style = "idle"
         self._idle_timeout_ms = 30000
         self._idle_active = False
@@ -460,6 +461,8 @@ class Application:
 
     def _idle_due(self, now):
         """判断最近一次 JSON 或启动等待是否达到待机阈值。"""
+        if not self._idle_enabled:
+            return False
         last_update_ms = self._cache.last_update_ms()
         baseline_ms = last_update_ms if last_update_ms is not None else self._idle_wait_started_ms
         return time.ticks_diff(now, baseline_ms) >= self._idle_timeout_ms
@@ -553,13 +556,8 @@ class Application:
                     CLOCK_REFRESH_INTERVAL_MS, now
                 )
             if self._receiver.is_busy():
-                # 接收优先但不再完全饿死已有渲染任务；每次最多推进一个区域，
-                # 下一轮会立即继续消费协议缓冲区。
-                if self._renderer.is_rendering():
-                    render_completed = self._update_renderer_with_fallback(
-                        snapshot or {}, receiver_busy=True
-                    )
-                    self._write_render_profile_if_needed(render_completed)
+                # 物理帧尚未收齐时完全暂停 LCD 刷新，优先清空容量更小的
+                # RP2040 CDC 接收缓冲，避免最后一个传输块滞留形成半包。
                 time.sleep_ms(0)
                 continue
             has_new_snapshot = version != self._rendering_version
@@ -593,6 +591,7 @@ class Application:
                     requested_interval_ms = self._monitor_interval_ms
                 self._monitor_interval_ms = max(1, requested_interval_ms)
                 self._monitor_connected = True
+                self._idle_enabled = bool(display.get("idle_enabled", True))
                 self._idle_style = str(display.get("idle_style", self._idle_style) or "idle")
                 try:
                     idle_timeout = int(display.get("idle_timeout", self._idle_timeout_ms // 1000))

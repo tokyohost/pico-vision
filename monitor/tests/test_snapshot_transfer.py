@@ -174,6 +174,39 @@ class SnapshotExtremeTest(unittest.TestCase):
         device._ticks_ms = lambda: 100
         return device
 
+    def test_partial_frame_timeout_defers_when_transport_has_pending_bytes(self):
+        """CDC 已有待读字节时，两种固件均不得在读取前清除超时半包。"""
+        for board in ("esp32-s3", "picoRP2040"):
+            module = load_device_protocol(board)
+            device = module.JsonProtocol.__new__(module.JsonProtocol)
+            device._buffer = bytearray(b"PV1:JSONB:4096:0000:partial")
+            device._last_byte_ms = 1
+            device._frame_started_ms = 1
+            device._frame_read_calls = 8
+            device._jsonb_transfer = None
+            device._ticks_ms = lambda: 2001
+            device._input_available = lambda: True
+            device._write_frame = mock.Mock()
+
+            device._expire_partial_frame()
+
+            self.assertTrue(device._buffer, board)
+            device._write_frame.assert_not_called()
+
+    def test_jsonb_capability_requires_binary_safe_transport(self):
+        """控制台回退不得公布 JSONB，独立 CDC 或 WebSocket 可以公布。"""
+        for board in ("esp32-s3", "picoRP2040"):
+            module = load_device_protocol(board)
+            device = module.JsonProtocol.__new__(module.JsonProtocol)
+            device._command_services = {
+                "transport": SimpleNamespace(supports_binary_frames=lambda: False)
+            }
+            self.assertFalse(device._binary_snapshot_supported(), board)
+            device._command_services["transport"] = SimpleNamespace(
+                supports_binary_frames=lambda: True
+            )
+            self.assertTrue(device._binary_snapshot_supported(), board)
+
     def test_jsonb_binary_chunks_ignore_embedded_newlines_and_replace_snapshot(self):
         """JSONB 内嵌换行不截帧，连续完整快照会删除上一份遗留字段。"""
         from pico_protocol import build_jsonb_packets, parse_frame

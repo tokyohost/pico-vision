@@ -168,6 +168,10 @@ class SettingsWindowMixin:
                 master=root,
                 value=style_label(self.settings["idle_style"], self.settings),
             ),
+            "idle_disabled": tk.BooleanVar(
+                master=root,
+                value=not bool(self.settings.get("idle_enabled", True)),
+            ),
             "idle_timeout": tk.StringVar(
                 master=root,
                 value=str(self.settings.get("idle_timeout", 30)),
@@ -226,8 +230,32 @@ class SettingsWindowMixin:
         styles = [style_label(name, self.settings) for name in style_names(self.settings, idle=False)]
         idle_styles = [style_label(name, self.settings) for name in style_names(self.settings, idle=True)]
         field(display, 0, "界面样式", ttk.Combobox(display, textvariable=variables["lcd_style"], values=styles, state="readonly"))
-        field(display, 1, "待机样式", ttk.Combobox(display, textvariable=variables["idle_style"], values=idle_styles, state="readonly"))
-        field(display, 2, "空闲进入待机（秒）", ttk.Entry(display, textvariable=variables["idle_timeout"]))
+        idle_style_control = ttk.Frame(display, style="Card.TFrame")
+        idle_style_control.columnconfigure(0, weight=1)
+        idle_style_combobox = ttk.Combobox(
+            idle_style_control,
+            textvariable=variables["idle_style"],
+            values=idle_styles,
+            state="readonly",
+        )
+        idle_style_combobox.grid(row=0, column=0, sticky="ew")
+        ttk.Checkbutton(
+            idle_style_control,
+            text="不进入待机",
+            variable=variables["idle_disabled"],
+            command=lambda: update_idle_controls(),
+        ).grid(row=0, column=1, padx=(12, 0))
+        field(display, 1, "待机样式", idle_style_control)
+        idle_timeout_entry = ttk.Entry(display, textvariable=variables["idle_timeout"])
+        field(display, 2, "空闲进入待机（秒）", idle_timeout_entry)
+
+        def update_idle_controls():
+            """根据“不进入待机”选项同步待机样式和超时输入框状态。"""
+            disabled = variables["idle_disabled"].get()
+            idle_style_combobox.configure(state="disabled" if disabled else "readonly")
+            idle_timeout_entry.configure(state="disabled" if disabled else "normal")
+
+        update_idle_controls()
         field(display, 3, "屏幕旋转", ttk.Combobox(display, textvariable=variables["screen_rotation"], values=("0", "180"), state="readonly"))
         brightness_control = ttk.Frame(display, style="Card.TFrame")
         brightness_control.columnconfigure(0, weight=1)
@@ -263,15 +291,17 @@ class SettingsWindowMixin:
                 )
                 brightness = int(variables["lcd_brightness"].get())
                 idle_timeout = int(variables["idle_timeout"].get())
+                idle_enabled = not variables["idle_disabled"].get()
                 if not 1 <= brightness <= 100:
                     raise ValueError
-                if idle_timeout <= 0:
+                if idle_enabled and idle_timeout <= 0:
                     raise ValueError
             except (ValueError, StopIteration):
                 messagebox.showerror("配置错误", "背光亮度必须为 1 至 100，待机秒数必须大于 0。", parent=root)
                 return
             self.settings.update({
                 "lcd_style": selected_style,
+                "idle_enabled": idle_enabled,
                 "idle_style": selected_idle_style,
                 "idle_timeout": idle_timeout,
                 "screen_rotation": int(variables["screen_rotation"].get()),

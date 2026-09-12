@@ -30,6 +30,22 @@ class TransportStrategy:
         """提交策略内部尚未发送的数据。"""
         return None
 
+    def supports_binary_frames(self):
+        """默认不声明二进制帧能力，具体策略必须显式启用。"""
+        return False
+
+    def uses_complete_frame_queue(self):
+        """默认使用原始字节流，只有原生 CDC C 任务覆盖此能力。"""
+        return False
+
+    def read_frame(self):
+        """默认不提供 C 层完整帧。"""
+        return None
+
+    def read_receive_error(self):
+        """默认没有 C 层异步接收错误。"""
+        return None
+
     def close(self):
         """关闭连接并释放策略持有的资源。"""
         return None

@@ -121,6 +121,12 @@ class TransportManager:
         """返回活动策略适合的单次写入大小。"""
         return 65535 if self.active_mode() == "wifi" else 63
 
+    def supports_binary_frames(self):
+        """返回当前活动传输是否能无损承载原始二进制帧。"""
+        self._update_selection()
+        checker = getattr(self._active, "supports_binary_frames", None)
+        return bool(checker()) if callable(checker) else False
+
     def status(self):
         """返回当前模式；Wi-Fi 模式额外返回无线网络详情。"""
         self._update_selection()

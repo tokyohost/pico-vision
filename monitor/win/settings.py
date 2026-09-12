@@ -67,6 +67,7 @@ DEFAULT_SETTINGS = {
     "lcd_brightness": 100,
     "network_unit": "MB",
     "lcd_style": "horizontal_disk6x",
+    "idle_enabled": True,
     "idle_style": "idle",
     "idle_timeout": 30,
     "styles": DEFAULT_STYLE_CATALOG,
@@ -226,6 +227,7 @@ class TraySettingsStore:
         if settings.get("json_chunk_size") not in (512, 1024, 2048, 4096, 8192, 16384):
             settings["json_chunk_size"] = 4096
         settings["adaptive_transmit"] = bool(settings.get("adaptive_transmit", True))
+        settings["idle_enabled"] = bool(settings.get("idle_enabled", True))
         settings["force_usb_cdc"] = bool(settings.get("force_usb_cdc", False))
         discovery_strategy = str(
             settings.get("wifi_discovery_strategy") or "announcement"
@@ -323,6 +325,7 @@ def apply_worker_arguments(arguments, settings):
                 "--adaptive-transmit", "--no-adaptive-transmit",
                 "--collection-task-logs", "--no-collection-task-logs",
                 "--force-usb-cdc", "--no-force-usb-cdc",
+                "--idle-enabled", "--no-idle",
         ):
             index += 1
             continue
@@ -346,6 +349,7 @@ def apply_worker_arguments(arguments, settings):
     retained.append("--adaptive-transmit" if settings["adaptive_transmit"] else "--no-adaptive-transmit")
     retained.append("--collection-task-logs" if settings["collection_task_logs"] else "--no-collection-task-logs")
     retained.append("--force-usb-cdc" if settings["force_usb_cdc"] else "--no-force-usb-cdc")
+    retained.append("--idle-enabled" if settings["idle_enabled"] else "--no-idle")
     if settings["dev"]:
         retained.append("--dev")
     return retained
@@ -391,6 +395,10 @@ def settings_from_arguments(arguments, base=None):
             settings["force_usb_cdc"] = True
         elif argument == "--no-force-usb-cdc":
             settings["force_usb_cdc"] = False
+        elif argument == "--idle-enabled":
+            settings["idle_enabled"] = True
+        elif argument == "--no-idle":
+            settings["idle_enabled"] = False
         elif argument == "--dev":
             settings["dev"] = True
         elif argument == "--no-dev":

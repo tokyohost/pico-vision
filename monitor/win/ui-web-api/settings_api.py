@@ -46,6 +46,12 @@ class SettingsApiMixin:
             qr_data_url = "data:image/png;base64," + base64.b64encode(
                 qr_path.read_bytes()
             ).decode("ascii")
+        qq_group_qr_path = application._resource_path("assert", "qqgroup.png")
+        qq_group_qr_data_url = ""
+        if qq_group_qr_path.is_file():
+            qq_group_qr_data_url = "data:image/png;base64," + base64.b64encode(
+                qq_group_qr_path.read_bytes()
+            ).decode("ascii")
         return {
             "applicationName": APPLICATION_NAME,
             "version": MONITOR_VERSION,
@@ -61,6 +67,8 @@ class SettingsApiMixin:
                 "wechat": "hi2024FL",
                 "repository": GITHUB_REPOSITORY,
                 "qrDataUrl": qr_data_url,
+                "qqGroup": "1109488330",
+                "qqGroupQrDataUrl": qq_group_qr_data_url,
             },
         }
 
@@ -105,6 +113,7 @@ class SettingsApiMixin:
         updated["screen_rotation"] = int(updated["screen_rotation"])
         updated["lcd_brightness"] = int(updated["lcd_brightness"])
         updated["adaptive_transmit"] = bool(updated["adaptive_transmit"])
+        updated["idle_enabled"] = bool(updated.get("idle_enabled", True))
         updated["force_usb_cdc"] = bool(updated.get("force_usb_cdc", False))
         updated["wifi_discovery_strategy"] = str(
             updated.get("wifi_discovery_strategy") or "announcement"
@@ -137,7 +146,7 @@ class SettingsApiMixin:
         )
         if updated["lcd_style"] not in style_names(updated, idle=False):
             raise ValueError("界面样式无效")
-        if updated["idle_style"] not in style_names(updated, idle=True):
+        if updated["idle_enabled"] and updated["idle_style"] not in style_names(updated, idle=True):
             raise ValueError("待机样式无效")
         intervals = (
             updated["interval"],
@@ -150,7 +159,7 @@ class SettingsApiMixin:
             or not updated["ping_target"]
             or updated["interval"] < 0.3
             or min(intervals[1:]) <= 0
-            or updated["idle_timeout"] <= 0
+            or (updated["idle_enabled"] and updated["idle_timeout"] <= 0)
             or not 1 <= updated["lcd_brightness"] <= 100
         ):
             raise ValueError("请检查设备名称、地址、亮度和时间间隔")

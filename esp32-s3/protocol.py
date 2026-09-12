@@ -274,6 +274,9 @@ class JsonProtocol:
     def poll(self):
         """在固定读取预算内接收数据并返回最新完整 JSON 对象。"""
         self._expire_partial_frame()
+        complete_frame_queue = getattr(self._reader, "uses_complete_frame_queue", None)
+        if callable(complete_frame_queue) and complete_frame_queue():
+            return self._poll_complete_frames()
         read_count = 0
         while read_count < SERIAL_READ_BUDGET and self._input_available():
             received = self._reader.readinto(self._read_buffer)
@@ -292,6 +295,29 @@ class JsonProtocol:
                 self._frame_read_calls = 0
                 self._write_frame("ERR", b"FRAME_TOO_LARGE")
                 return None
+        return self._parse_lines()
+
+    def _poll_complete_frames(self):
+        """仅取出 C 任务已组装的完整帧，Python 不再持有 USB 半包。"""
+        read_count = 0
+        reader = getattr(self._reader, "read_frame", None)
+        error_reader = getattr(self._reader, "read_receive_error", None)
+        while read_count < SERIAL_READ_BUDGET and self._input_available():
+            receive_error = error_reader() if callable(error_reader) else None
+            if receive_error:
+                self._buffer = bytearray()
+                self._last_byte_ms = None
+                self._frame_started_ms = None
+                self._frame_read_calls = 0
+                self._write_frame("ERR", bytes(receive_error))
+                continue
+            frame = reader() if callable(reader) else None
+            if not frame:
+                break
+            self._buffer.extend(frame)
+            read_count += len(frame)
+            self._last_byte_ms = self._ticks_ms()
+            self._frame_read_calls += 1
         return self._parse_lines()
 
     def is_busy(self):
@@ -961,7 +987,7 @@ class JsonProtocol:
             "mode": "usb" if self._dedicated_stream else "none",
             "connected": True,
         }
-        payload = json.dumps({
+        information = {
             "board_model": BOARD_MODEL,
             "device_id": device_uuid(),
             "screen_color_profile": panel_profile.color_profile_name,
@@ -972,15 +998,6 @@ class JsonProtocol:
                 "requires_usb": True,
                 "image_format": "esp32s3-merged-bin",
             },
-            "snapshot_chunks": {
-                "version": 3,
-                "encoding": "jsonb",
-                "mode": "binary",
-                # 单片沿用 PV1/CDC 的 4 KiB 安全预算；完整事务可以更大。
-                "max_payload": 4096,
-                "max_parts": 4096,
-                "max_bytes": SNAPSHOT_TRANSACTION_MAX_BYTES,
-            },
             "device_name": DEVICE_NAME,
             "lcd_device_type": LCD_DEVICE_TYPE,
             "lcd_driver": LCD_DRIVER,
@@ -989,8 +1006,29 @@ class JsonProtocol:
             "pixel_format": PIXEL_FORMAT,
             "styles": style_catalog(),
             "net": net_status,
-        }).encode("utf-8")
+        }
+        if self._binary_snapshot_supported():
+            information["snapshot_chunks"] = {
+                "version": 3,
+                "encoding": "jsonb",
+                "mode": "binary",
+                # 单片沿用 PV1/CDC 的 4 KiB 安全预算；完整事务可以更大。
+                "max_payload": 4096,
+                "max_parts": 4096,
+                "max_bytes": SNAPSHOT_TRANSACTION_MAX_BYTES,
+            }
+        payload = json.dumps(information).encode("utf-8")
         self._write_frame("PONG", payload)
+
+    def _binary_snapshot_supported(self):
+        """仅在当前传输明确支持原始二进制时公布 JSONB 能力。"""
+        transport = self._command_services.get("transport")
+        checker = getattr(transport, "supports_binary_frames", None)
+        if callable(checker):
+            return bool(checker())
+        # 未使用传输管理器的旧调用路径维持原能力；控制台回退路径会通过
+        # TransportManager 明确返回 False，避免 REPL 吞掉二进制控制字节。
+        return True
 
     def write_upgrade_response(self, data):
         """把升级状态封装为 PV1 响应帧。"""
@@ -1120,6 +1158,10 @@ class JsonProtocol:
             # 缺片连接即使仍能发送其它消息，也不能无限持有大块压缩缓冲。
             self._jsonb_transfer = None
             self._write_frame("ERR", b"JSONB_TIMEOUT")
+        # 物理半包超时检查发生在本轮读取前；CDC 中已有字节时必须先消费，
+        # 不能把可继续完成的半包误判为静默超时。
+        if self._input_available():
+            return
         if not self._buffer or self._last_byte_ms is None:
             return
         now = self._ticks_ms()

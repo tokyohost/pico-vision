@@ -549,6 +549,15 @@ class PicoClientTest(unittest.TestCase):
         self.assertEqual(500, snapshot["collection_interval_ms"])
         self.assertFalse(snapshot["adaptive_transmit"])
 
+    def test_display_snapshot_sends_disabled_idle_state(self):
+        """确认关闭待机后会把禁用状态随显示配置下发给设备。"""
+        service = RuntimeOperationsHarness()
+        service.arguments.idle_enabled = False
+
+        snapshot = service._display_configuration_snapshot()
+
+        self.assertFalse(snapshot["idle_enabled"])
+
     def test_adaptive_interval_starts_from_fast_period(self):
         """确认首次连接不受较慢基础配置影响，直接从四百毫秒开始协商。"""
         service = RuntimeOperationsHarness(adaptive_transmit=True)

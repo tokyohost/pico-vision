@@ -32,6 +32,7 @@ CONFIG_ENV_MAP = {
     "PICO_MONITOR_LCD_BRIGHTNESS": ("screen", "lcd_brightness"),
     "PICO_MONITOR_NETWORK_UNIT": ("network", "unit"),
     "PICO_MONITOR_LCD_STYLE": ("screen", "lcd_style"),
+    "PICO_MONITOR_IDLE_ENABLED": ("screen", "idle_enabled"),
     "PICO_MONITOR_IDLE_STYLE": ("screen", "idle_style"),
     "PICO_MONITOR_IDLE_TIMEOUT": ("screen", "idle_timeout"),
     "PICO_MONITOR_DEV": ("monitor", "dev"),

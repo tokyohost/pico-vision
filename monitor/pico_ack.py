@@ -9,7 +9,12 @@ import logging
 import threading
 import time
 
-from pico_protocol import JsonAckTimeoutError, PicoRestartingError, is_restarting_fatal
+from pico_protocol import (
+    JsonAckTimeoutError,
+    JsonFrameRejectedError,
+    PicoRestartingError,
+    is_restarting_fatal,
+)
 
 
 LOGGER = logging.getLogger("pico-monitor.serial")
@@ -108,13 +113,37 @@ class PicoJsonAckMixin:
         """为指定 JSON 请求创建 ACK 等待事件。"""
         event = threading.Event()
         with self._json_ack_lock:
-            self._json_ack_events[str(request_id)] = event
+            request_key = str(request_id)
+            self._json_ack_errors.pop(request_key, None)
+            self._json_ack_events[request_key] = event
         return event
 
     def _remove_json_ack_waiter(self, request_id):
         """清理指定 JSON 请求的 ACK 等待事件。"""
         with self._json_ack_lock:
-            self._json_ack_events.pop(str(request_id), None)
+            request_key = str(request_id)
+            self._json_ack_events.pop(request_key, None)
+            self._json_ack_errors.pop(request_key, None)
+
+    def _notify_json_frame_error(self, payload):
+        """把无请求号的设备帧错误关联到当前唯一在途快照。"""
+        error_text = str(payload or "UNKNOWN_FRAME_ERROR")
+        with self._json_ack_lock:
+            for request_key, event in self._json_ack_events.items():
+                self._json_ack_errors[request_key] = error_text
+                event.set()
+
+    def _raise_json_frame_error(self, request_id):
+        """若设备已拒绝当前帧，则立即结束 ACK 等待并交给上层重试。"""
+        with self._json_ack_lock:
+            error_text = self._json_ack_errors.pop(str(request_id), None)
+        if error_text is not None:
+            raise JsonFrameRejectedError(
+                "设备拒绝 JSON 帧：request_id={}，错误={}".format(
+                    request_id,
+                    error_text,
+                )
+            )
 
     def _notify_json_ack(self, frame):
         """在 CDC 读线程收到 JSON ACK 时唤醒等待发送线程。"""
@@ -157,6 +186,7 @@ class PicoJsonAckMixin:
                     raise RuntimeError(frame[1].decode("utf-8", errors="replace"))
                 continue
             if event.wait(min(0.1, max(0.0, deadline - time.monotonic()))):
+                self._raise_json_frame_error(request_id)
                 return
             self.transport.raise_error_if_any()
         raise JsonAckTimeoutError("等待 JSON ACK 超时：request_id={}".format(request_id))
@@ -173,7 +203,7 @@ class PicoJsonAckMixin:
                     continue
                 if frame[0] == "ERR":
                     LOGGER.warning(
-                        "[JSONZ 异步错误][%s] %s",
+                        "[JSON 异步错误][%s] %s",
                         self.port_name,
                         frame[1].decode("utf-8", errors="replace"),
                     )
@@ -188,7 +218,7 @@ class PicoJsonAckMixin:
                 continue
             if frame[0] == "ERR":
                 LOGGER.warning(
-                    "[JSONZ 异步错误][%s] %s",
+                    "[JSON 异步错误][%s] %s",
                     self.port_name,
                     frame[1].decode("utf-8", errors="replace"),
                 )

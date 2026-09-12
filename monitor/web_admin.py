@@ -161,6 +161,7 @@ class LinuxInvokeBridge:
                 "lcd_brightness": 100,
                 "network_unit": "MB",
                 "lcd_style": "default",
+                "idle_enabled": True,
                 "idle_style": "idle",
                 "idle_timeout": 30,
                 "qbittorrent_enabled": False,
@@ -195,6 +196,12 @@ class LinuxInvokeBridge:
         from collectTask import system_task_defaults, system_task_zh_names
 
         settings = self._settings_snapshot()
+        qq_group_qr_path = Path(__file__).resolve().parent / "assert" / "qqgroup.png"
+        qq_group_qr_data_url = ""
+        if qq_group_qr_path.is_file():
+            qq_group_qr_data_url = "data:image/png;base64," + base64.b64encode(
+                qq_group_qr_path.read_bytes()
+            ).decode("ascii")
         return {
             "applicationName": "OmniWatch",
             "version": MONITOR_VERSION,
@@ -210,6 +217,8 @@ class LinuxInvokeBridge:
                 "wechat": "hi2024FL",
                 "repository": GITHUB_REPOSITORY,
                 "qrDataUrl": "",
+                "qqGroup": "1109488330",
+                "qqGroupQrDataUrl": qq_group_qr_data_url,
             },
         }
 
@@ -455,6 +464,7 @@ class LinuxInvokeBridge:
             "lcd_brightness": ("screen", "lcd_brightness"),
             "network_unit": ("screen", "unit"),
             "lcd_style": ("screen", "lcd_style"),
+            "idle_enabled": ("screen", "idle_enabled"),
             "idle_style": ("screen", "idle_style"),
             "idle_timeout": ("screen", "idle_timeout"),
             "market_url": ("market", "url"),
@@ -504,7 +514,7 @@ class LinuxInvokeBridge:
                     "lan_probe_port", "lan_probe_path", "lan_probe_timeout", "lan_probe_max_workers",
                     "collection_task_intervals", "custom_data_configs", "custom_data_enabled",
                     "collection_task_logs", "screen_rotation", "lcd_brightness", "network_unit",
-                    "lcd_style", "idle_style", "idle_timeout", "qbittorrent_enabled",
+                    "lcd_style", "idle_enabled", "idle_style", "idle_timeout", "qbittorrent_enabled",
                     "qbittorrent_address", "qbittorrent_username", "qbittorrent_password",
                     "qbittorrent_interval", "dev",
                 )

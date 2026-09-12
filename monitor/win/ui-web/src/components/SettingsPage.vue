@@ -13,6 +13,10 @@ const emit = defineEmits(['save'])
 
 const normalStyles = computed(() => props.metadata.styles.filter((item) => !item.idle))
 const idleStyles = computed(() => props.metadata.styles.filter((item) => item.idle))
+const idleDisabled = computed({
+  get: () => !props.settings.idle_enabled,
+  set: (disabled) => { props.settings.idle_enabled = !disabled },
+})
 const runningActions = reactive({})
 
 /**
@@ -137,8 +141,14 @@ function isActionRunning(panel, item) {
               <el-option v-for="item in normalStyles" :key="item.name" :label="`${item.chinese_name}（${item.name}）`" :value="item.name" />
             </el-select>
           </el-form-item>
-          <el-form-item label="待机样式">
-            <el-select v-model="settings.idle_style">
+          <el-form-item>
+            <template #label>
+              <span class="idle-setting-label">
+                <span>待机样式</span>
+                <el-checkbox v-model="idleDisabled" class="idle-disable-option">不进入待机</el-checkbox>
+              </span>
+            </template>
+            <el-select v-model="settings.idle_style" :disabled="idleDisabled">
               <el-option v-for="item in idleStyles" :key="item.name" :label="`${item.chinese_name}（${item.name}）`" :value="item.name" />
             </el-select>
           </el-form-item>
@@ -149,7 +159,7 @@ function isActionRunning(panel, item) {
             </el-select>
           </el-form-item>
           <el-form-item label="空闲进入待机（秒）">
-            <el-input-number v-model="settings.idle_timeout" :min="1" />
+            <el-input-number v-model="settings.idle_timeout" :min="1" :disabled="idleDisabled" />
           </el-form-item>
         </div>
         <el-form-item label="背光亮度">
@@ -172,7 +182,24 @@ function isActionRunning(panel, item) {
           <el-form-item label="客户端名称"><el-input v-model="settings.websocket_client_name" /></el-form-item>
           <el-form-item label="Ping 目标"><el-input v-model="settings.ping_target" /></el-form-item>
           <el-form-item label="JSON 发送间隔（秒）"><el-input-number v-model="settings.interval" :min="0.3" :step="0.1" /></el-form-item>
-          <el-form-item label="JSON 分片大小（字节）">
+          <el-form-item>
+            <template #label>
+              <span class="form-label-with-help">
+                <span>JSON 分片大小（字节）</span>
+                <el-popover
+                  trigger="hover"
+                  placement="top"
+                  :width="320"
+                  content="保存后生效，实际分片不超过设备上限；需设备支持 PV1 JSONB 二进制分片。"
+                >
+                  <template #reference>
+                    <el-icon class="form-help-icon" tabindex="0" aria-label="查看 JSON 分片大小说明">
+                      <QuestionFilled />
+                    </el-icon>
+                  </template>
+                </el-popover>
+              </span>
+            </template>
             <el-select v-model="settings.json_chunk_size">
               <el-option :value="512" label="512 字节" />
               <el-option :value="1024" label="1024 字节（1 KB）" />
@@ -181,7 +208,6 @@ function isActionRunning(panel, item) {
               <el-option :value="8192" label="8192 字节（8 KB）" />
               <el-option :value="16384" label="16384 字节（16 KB）" />
             </el-select>
-            <div class="form-tip">保存后生效，实际分片不超过设备上限；需设备支持 PV1 JSONB 二进制分片。</div>
           </el-form-item>
           <el-form-item label="重连间隔（秒）"><el-input-number v-model="settings.reconnect_interval" :min="0.1" :step="0.5" /></el-form-item>
           <el-form-item label="串口探测间隔（秒）"><el-input-number v-model="settings.serial_probe_interval" :min="0.1" :step="0.5" /></el-form-item>

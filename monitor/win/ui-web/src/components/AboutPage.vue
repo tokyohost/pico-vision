@@ -9,6 +9,7 @@ const props = defineProps({
 })
 
 const savingPlan = ref(false)
+const qqGroupNumber = '1109488330'
 
 /**
  * 保存开发者计划开关，成功后同步页面设置。
@@ -36,6 +37,19 @@ async function openDataDirectory() {
     ElMessage.error(error?.message || String(error))
   }
 }
+
+/**
+ * 复制 QQ 群号并反馈操作结果。
+ */
+async function copyQqGroupNumber() {
+  const groupNumber = props.metadata.about.qqGroup || qqGroupNumber
+  try {
+    await navigator.clipboard.writeText(groupNumber)
+    ElMessage.success('QQ群号已复制')
+  } catch (error) {
+    ElMessage.error(error?.message || 'QQ群号复制失败')
+  }
+}
 </script>
 
 <template>
@@ -58,13 +72,39 @@ async function openDataDirectory() {
         </el-form-item>
         <el-alert title="加入后可更新 Preview 版本开发固件，但可能存在性能不稳定等问题。关闭后，检查更新将不显示标签含 -preview 的新版本。" type="warning" :closable="false" show-icon />
       </el-form>
-      <el-button type="primary" @click="openDataDirectory">打开日志和数据目录</el-button>
+      <el-button class="section-gap" type="primary" @click="openDataDirectory">打开日志和数据目录</el-button>
     </el-card>
     <el-card shadow="never" class="qr-card">
       <h3>咸鱼店铺二维码</h3>
       <img v-if="metadata.about.qrDataUrl" :src="metadata.about.qrDataUrl" alt="咸鱼店铺二维码" />
       <el-empty v-else description="二维码资源未找到" />
       <p>微信号：{{ metadata.about.wechat || 'hi2024FL' }}</p>
+    </el-card>
+    <el-card shadow="never" class="qr-card qq-group-card">
+      <div class="qq-group-heading">
+        <span class="qq-group-icon"><el-icon><ChatDotRound /></el-icon></span>
+        <div>
+          <h3>OmniWatch QQ群</h3>
+          <p>扫码加入用户交流群</p>
+        </div>
+      </div>
+      <img
+        v-if="metadata.about.qqGroupQrDataUrl"
+        :src="metadata.about.qqGroupQrDataUrl"
+        alt="OmniWatch QQ群二维码"
+        class="qq-group-qr"
+      />
+      <el-empty v-else description="QQ群二维码资源未找到" />
+      <div class="qq-group-number">
+        <span>
+          <small>QQ群号</small>
+          <strong>{{ metadata.about.qqGroup || qqGroupNumber }}</strong>
+        </span>
+        <el-button type="primary" plain size="small" @click="copyQqGroupNumber">
+          <el-icon><CopyDocument /></el-icon>
+          <span>复制群号</span>
+        </el-button>
+      </div>
     </el-card>
   </div>
 </template>

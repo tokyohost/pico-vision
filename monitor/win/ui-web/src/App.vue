@@ -30,6 +30,8 @@ const metadata = reactive({
     wechat: '',
     repository: '',
     qrDataUrl: '',
+    qqGroup: '1109488330',
+    qqGroupQrDataUrl: '',
   },
 })
 const settings = reactive({})

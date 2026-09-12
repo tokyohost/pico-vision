@@ -296,6 +296,7 @@ class WorkerControllerMixin:
             return False
         payload = {
             "lcd_style": self.settings["lcd_style"],
+            "idle_enabled": self.settings["idle_enabled"],
             "idle_style": self.settings["idle_style"],
             "idle_timeout": self.settings["idle_timeout"],
             "screen_rotation": self.settings["screen_rotation"],

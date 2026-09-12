@@ -93,6 +93,24 @@ class TransportManager:
         self._update_selection()
         return self._active.readinto(buffer) if self._active is not None else 0
 
+    def uses_complete_frame_queue(self):
+        """返回当前锁定传输是否使用 C 层完整帧队列。"""
+        self._update_selection()
+        checker = getattr(self._active, "uses_complete_frame_queue", None)
+        return bool(checker()) if callable(checker) else False
+
+    def read_frame(self):
+        """从当前锁定传输取出一个 C 层已组装的完整帧。"""
+        self._update_selection()
+        reader = getattr(self._active, "read_frame", None)
+        return reader() if callable(reader) else None
+
+    def read_receive_error(self):
+        """取出当前传输的 C 层异步接收错误。"""
+        self._update_selection()
+        reader = getattr(self._active, "read_receive_error", None)
+        return reader() if callable(reader) else None
+
     def write(self, data):
         """仅通过已锁定策略发送数据，防止跨通道响应串线。"""
         self._update_selection()
@@ -120,6 +138,12 @@ class TransportManager:
     def preferred_write_size(self):
         """返回活动策略适合的单次写入大小。"""
         return 65535 if self.active_mode() == "wifi" else 63
+
+    def supports_binary_frames(self):
+        """返回当前活动传输是否能无损承载原始二进制帧。"""
+        self._update_selection()
+        checker = getattr(self._active, "supports_binary_frames", None)
+        return bool(checker()) if callable(checker) else False
 
     def status(self):
         """返回当前模式；Wi-Fi 模式额外返回无线网络详情。"""
