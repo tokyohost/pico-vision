@@ -122,6 +122,12 @@ class FakeRenderer:
         """保存模拟安全垃圾回收耗时。"""
         self._gc_us = int(elapsed_us)
 
+    def dispatch_button_event(self, button, event_type, snapshot):
+        """记录样式按键监听调用及其所属线程。"""
+        self._last_control_thread = _thread.get_ident()
+        self._button_event = (button, event_type, snapshot)
+        return button == "function"
+
     def style_name(self):
         """返回当前模拟样式名称。"""
         return self._style_name
@@ -268,6 +274,16 @@ class Esp32RenderServiceTest(unittest.TestCase):
             self.assertNotEqual(renderer._last_control_thread, main_thread)
             self.assertTrue(service.set_backlight_brightness(80))
             self.assertNotEqual(lcd.control_threads[-1], main_thread)
+            self.assertTrue(
+                service.dispatch_button_event(
+                    "function", "press", {"items": [1, 2]}
+                )
+            )
+            self.assertNotEqual(renderer._last_control_thread, main_thread)
+            self.assertEqual(
+                ("function", "press", {"items": (1, 2)}),
+                renderer._button_event,
+            )
         finally:
             self.assertTrue(service.stop())
 
@@ -291,6 +307,11 @@ class Esp32RenderServiceTest(unittest.TestCase):
         self.assertEqual(service.last_completed_version(), 9)
         self.assertTrue(service.set_backlight_brightness(80))
         self.assertEqual(80, service.backlight_brightness())
+        self.assertFalse(
+            service.dispatch_button_event(
+                "style_next", "press", {"value": 1}
+            )
+        )
 
     def test_thread_creation_failure_uses_synchronous_fallback(self):
         """确认线程创建失败时自动在通信主线程建立同步渲染器。"""

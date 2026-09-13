@@ -70,7 +70,7 @@ async function copyQqGroupNumber() {
         <el-form-item label="加入开发者计划">
           <el-switch :model-value="!!settings.developer_plan" :loading="savingPlan" :disabled="savingPlan" @change="saveDeveloperPlan" />
         </el-form-item>
-        <el-alert title="加入后可更新 Preview 版本开发固件，但可能存在性能不稳定等问题。关闭后，检查更新将不显示标签含 -preview 的新版本。" type="warning" :closable="false" show-icon />
+        <el-alert title="加入后可更新 Preview 版本开发固件，但可能存在性能不稳定等问题。" type="warning" :closable="false" show-icon />
       </el-form>
       <el-button class="section-gap" type="primary" @click="openDataDirectory">打开日志和数据目录</el-button>
     </el-card>

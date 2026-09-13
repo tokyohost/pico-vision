@@ -55,6 +55,13 @@ class DashboardRenderer:
         """返回当前渲染器使用的 Canvas 后端名称。"""
         return canvas_backend_name()
 
+    def dispatch_button_event(self, button, event_type, snapshot):
+        """把物理按键事件交给当前样式监听器，并返回是否已被消费。"""
+        listener = getattr(self._style, "on_button_event", None)
+        if not callable(listener):
+            return False
+        return bool(listener(button, event_type, dict(snapshot or {})))
+
     def preload_style(self, style_name):
         """预加载并注册指定样式，但保持当前画布和显示内容不变。"""
         normalized_name = normalize_style_name(style_name)

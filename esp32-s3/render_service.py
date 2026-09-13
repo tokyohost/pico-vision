@@ -429,6 +429,8 @@ class RenderService:
                 request.result = renderer.capture_screen(*arguments)
             elif action == "record_gc_us":
                 request.result = renderer.record_gc_us(*arguments)
+            elif action == "dispatch_button_event":
+                request.result = renderer.dispatch_button_event(*arguments)
             elif action == "set_backlight_brightness":
                 request.result = renderer.lcd.set_backlight_brightness(*arguments)
             else:
@@ -598,6 +600,13 @@ class RenderService:
     def record_gc_us(self, elapsed_us):
         """在渲染所有者线程记录安全垃圾回收耗时。"""
         return self._submit_control("record_gc_us", elapsed_us)
+
+    def dispatch_button_event(self, button, event_type, snapshot):
+        """在渲染所有者线程调用当前样式的按键事件监听器。"""
+        safe_snapshot = _clone_render_value(snapshot or {})
+        return self._submit_control(
+            "dispatch_button_event", button, event_type, safe_snapshot
+        )
 
     def style_name(self):
         """返回缓存的当前样式名称。"""

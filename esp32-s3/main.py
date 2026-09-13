@@ -382,6 +382,25 @@ class Application:
         """使用命令分派器处理按下、长按和连发事件。"""
         self._button_commands.dispatch(actions, self, snapshot)
 
+    def notify_style_button_event(self, button, event_type, snapshot):
+        """向当前主题透传按键事件，并在主题消费事件后请求完整刷新。"""
+        try:
+            handled = self._renderer.dispatch_button_event(
+                button, event_type, snapshot
+            )
+        except Exception as error:
+            # 自定义主题监听器异常不能阻断按键默认命令和设备通信主循环。
+            self._protocol.write(
+                "BUTTON:STYLE_EVENT_ERROR:{}:{}:{}\n".format(
+                    button, event_type, error
+                ).encode("utf-8")
+            )
+            return False
+        if handled:
+            self._rendering_version = -1
+            self._renderer.request_render(snapshot or {}, force=True)
+        return handled
+
     def _emit_config_change(self, key, value):
         """通过通用 configChange 事件向 Monitor 同步配置变化。"""
         payload = json.dumps({"key": key, "value": value})

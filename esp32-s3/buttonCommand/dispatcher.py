@@ -26,8 +26,11 @@ class ButtonCommandDispatcher:
         return self._commands[self._index]
 
     def dispatch(self, events, host, snapshot):
-        """处理本轮全部事件，功能键负责循环选择命令。"""
+        """先通知当前样式，再由未消费的事件执行设备默认命令。"""
         for action, event_type in events:
+            listener = getattr(host, "notify_style_button_event", None)
+            if callable(listener) and listener(action, event_type, snapshot):
+                continue
             if action == "function":
                 if event_type == "press":
                     self._index = (self._index + 1) % len(self._commands)

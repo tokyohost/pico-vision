@@ -323,8 +323,24 @@ class Application:
             )
 
     def _handle_button_actions(self, actions, snapshot):
-        """处理本轮按键动作，样式键立即切换，功能键暂时仅上报事件。"""
+        """先向当前主题透传按键，再处理未被消费的设备默认动作。"""
         for action in actions:
+            try:
+                handled = self._renderer.dispatch_button_event(
+                    action, "press", snapshot
+                )
+            except Exception as error:
+                # 自定义主题监听器异常不能阻断设备默认动作和通信主循环。
+                self._protocol.write(
+                    "BUTTON:STYLE_EVENT_ERROR:{}:press:{}\n".format(
+                        action, error
+                    ).encode("utf-8")
+                )
+                handled = False
+            if handled:
+                self._rendering_version = -1
+                self._renderer.request_render(snapshot or {}, force=True)
+                continue
             if action == "style_previous":
                 self._apply_button_style(
                     self._neighbor_style_name(-1), snapshot

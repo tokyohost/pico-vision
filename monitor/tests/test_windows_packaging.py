@@ -147,6 +147,15 @@ class WindowsPackagingTest(unittest.TestCase):
         self.assertIn("mpremote_stream_copy.py", specification)
         self.assertIn("mpremote>=", requirements)
 
+    def test_about_qr_images_are_bundled(self):
+        """确认关于页的店铺和 QQ 群二维码均进入单文件程序。"""
+        specification = (MONITOR_ROOT / "pico_monitor.spec").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('("assert/fishQr.png", "assert")', specification)
+        self.assertIn('("assert/qqgroup.png", "assert")', specification)
+
     def test_device_page_exposes_port_package_and_full_update_mode(self):
         """确认设备管理固件更新可选择串口、ZIP 包和全量覆盖模式。"""
         page = (

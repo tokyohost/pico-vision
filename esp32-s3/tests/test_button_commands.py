@@ -11,6 +11,12 @@ class FakeCommandHost:
     def __init__(self):
         """初始化调用记录。"""
         self.calls = []
+        self.handled_events = set()
+
+    def notify_style_button_event(self, button, event_type, snapshot):
+        """记录透传给样式的事件，并按测试配置决定是否消费。"""
+        self.calls.append(("listener", button, event_type, snapshot))
+        return (button, event_type) in self.handled_events
 
     def show_button_mode(self, label, snapshot):
         """记录功能键选择的模式。"""
@@ -50,7 +56,7 @@ class ButtonCommandDispatcherTest(unittest.TestCase):
 
         self.assertEqual(
             ["亮度调节", "屏幕旋转", "网络速率单位", "样式切换"],
-            [call[1] for call in host.calls],
+            [call[1] for call in host.calls if call[0] == "mode"],
         )
 
     def test_brightness_mode_commits_once_after_release(self):
@@ -73,7 +79,7 @@ class ButtonCommandDispatcherTest(unittest.TestCase):
 
         self.assertEqual(
             ["brightness", "brightness", "brightness", "brightness_commit"],
-            [call[0] for call in host.calls],
+            [call[0] for call in host.calls if call[0] != "listener"],
         )
 
     def test_style_mode_ignores_long_press_repeat(self):
@@ -91,7 +97,31 @@ class ButtonCommandDispatcherTest(unittest.TestCase):
             {},
         )
 
-        self.assertEqual([("style", -1, {})], host.calls)
+        self.assertEqual(
+            [("style", -1, {})],
+            [call for call in host.calls if call[0] != "listener"],
+        )
+
+    def test_style_listener_receives_all_events_and_can_consume_default(self):
+        """主题监听器应收到物理键事件，并可阻止对应默认命令。"""
+        dispatcher = ButtonCommandDispatcher()
+        host = FakeCommandHost()
+        host.handled_events.add(("style_next", "press"))
+
+        dispatcher.dispatch(
+            (("style_next", "press"), ("style_next", "release")),
+            host,
+            {"version": 2},
+        )
+
+        self.assertEqual(
+            [
+                ("listener", "style_next", "press", {"version": 2}),
+                ("listener", "style_next", "release", {"version": 2}),
+            ],
+            [call for call in host.calls if call[0] == "listener"],
+        )
+        self.assertNotIn(("style", 1, {"version": 2}), host.calls)
 
 
 if __name__ == "__main__":

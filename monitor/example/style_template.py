@@ -46,6 +46,19 @@ class TemplateStyle:
         self._prepared_snapshot = None
         self._prepared_text = {}
         self._command_cache = {}
+        self._function_enabled = False
+
+    def on_button_event(self, button, event_type, snapshot):
+        """监听设备按键；返回真表示由主题消费并立即刷新。 / Consume a device button event and refresh."""
+        del snapshot
+        # button 可取 style_previous、style_next、function；ESP32-S3 的
+        # event_type 可取 press、long_press、repeat、release，RP2040 当前只透传 press。
+        # 返回 False 会保留设备原有的样式切换、亮度、旋转等默认行为；
+        # 要接管长按生命周期时，主题也应按需消费 long_press、repeat 和 release。
+        if button != "function" or event_type != "press":
+            return False
+        self._function_enabled = not self._function_enabled
+        return True
 
     def prepare_frame(self, snapshot):
         """在渲染计时前统一格式化本帧文本，减少重复转换。 / Format frame text once before timed rendering."""
@@ -58,6 +71,7 @@ class TemplateStyle:
             "cpu": "{}%".format(int(self._number(cpu.get("percent")))),
             "clock": timestamp[11:19] if len(timestamp) >= 19 else "--:--:--",
             "network": "ONLINE" if network.get("online") else "OFFLINE",
+            "function": "KEY ON" if self._function_enabled else "KEY OFF",
         }
         self._prepared_snapshot = snapshot
 
@@ -202,6 +216,7 @@ class TemplateStyle:
     def _draw_footer(self, canvas):
         """绘制时钟页脚。 / Draw the clock footer."""
         canvas.text(8, 292, self._prepared_text["clock"], GRAY)
+        canvas.text(152, 292, self._prepared_text["function"], GRAY)
 
     def draw_visible(self, canvas, snapshot):
         """首次显示或完整重绘时，绘制与当前条带相交的全部内容。 / Draw all content intersecting the current strip."""

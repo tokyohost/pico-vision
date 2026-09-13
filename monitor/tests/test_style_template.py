@@ -66,6 +66,16 @@ class StyleTemplateTest(unittest.TestCase):
         )
         self.assertLessEqual(len(validated.source), MAX_STYLE_FILE_SIZE)
 
+    def test_function_button_listener_toggles_template_state(self):
+        """确认模板示范如何消费功能键并更新主题内部状态。"""
+        style = self.template()
+
+        self.assertFalse(style.on_button_event("style_next", "press", {}))
+        self.assertTrue(style.on_button_event("function", "press", {}))
+
+        style.prepare_frame({})
+        self.assertEqual("KEY ON", style._prepared_text["function"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,6 +12,10 @@
 - 十针信号：RS 接 GPIO9，CS 接 GPIO10，SCL 接 GPIO12，SDA 接 GPIO11，RESET 接 GPIO14
 - 十针背光：LED+ 接受限电源，LED- 通过外部低端 MOSFET 调光，GPIO13 只驱动 MOSFET 栅极
 - 按键：GPIO1、GPIO2、GPIO3，低电平有效并启用内部上拉
+
+### 主题按键监听
+
+当前主题可以实现可选的 `on_button_event(button, event_type, snapshot)` 方法监听三枚物理按键。`button` 分别为 `style_previous`、`style_next`、`function`，`event_type` 分别为 `press`、`long_press`、`repeat`、`release`。返回 `True` 表示主题消费该事件，驱动会使用当前快照立即刷新主题；返回 `False` 或不实现该方法时，继续执行设备原有的样式切换、亮度、旋转等默认命令。监听器异常只会上报 `BUTTON:STYLE_EVENT_ERROR`，不会中断设备主循环。
 - 通信：ESP32-S3 内置 USB 控制台和可选 Wi-Fi WebSocket
 - WebSocket：客户端握手携带设备名称和稳定标识；设备持久化连接记录，并支持禁用、优先级抢占和单活动连接 JSON 同步
 
