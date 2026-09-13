@@ -2,57 +2,11 @@
 
 import queue
 
-
-def merge_wifi_networks(networks, wifi_status):
-    """合并扫描结果与设备已保存网络，并标记当前连接状态。"""
-    wifi_status = wifi_status if isinstance(wifi_status, dict) else {}
-    saved_ssid = wifi_status.get("ssid") or ""
-    connected = bool(wifi_status.get("connected"))
-    merged = {}
-    for network in networks if isinstance(networks, list) else []:
-        if not isinstance(network, dict) or not network.get("ssid"):
-            continue
-        candidate = dict(network)
-        candidate["saved"] = candidate["ssid"] == saved_ssid
-        candidate["connected"] = connected and candidate["saved"]
-        previous = merged.get(candidate["ssid"])
-        if previous is None or candidate.get("rssi", -999) > previous.get("rssi", -999):
-            merged[candidate["ssid"]] = candidate
-    if saved_ssid and saved_ssid not in merged:
-        merged[saved_ssid] = {
-            "ssid": saved_ssid,
-            "rssi": wifi_status.get("rssi"),
-            "security": None,
-            "saved": True,
-            "connected": connected,
-        }
-    return sorted(
-        merged.values(),
-        key=lambda item: (
-            not item.get("connected"),
-            not item.get("saved"),
-            -(item.get("rssi") if isinstance(item.get("rssi"), int) else -999),
-            item["ssid"].lower(),
-        ),
-    )
-
-
-def wifi_state_label(network):
-    """返回无线网络的中文连接状态标签。"""
-    if network.get("connected"):
-        return "已连接"
-    if network.get("saved"):
-        return "已保存"
-    return "可用"
-
-
-def wifi_security_label(security):
-    """把设备安全类型编码转换为适合界面展示的文本。"""
-    if security == 0:
-        return "开放"
-    if security is None:
-        return "未知"
-    return "需要密钥"
+from monitor_core.ui_helpers import (
+    merge_wifi_networks,
+    wifi_security_label,
+    wifi_state_label,
+)
 
 
 class WifiWindowMixin:

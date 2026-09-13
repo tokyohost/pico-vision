@@ -10,6 +10,7 @@ from pathlib import Path
 import serial
 
 from .console import configure_logging
+from .ui_helpers import normalize_style_catalog
 
 LOGGER = logging.getLogger("pico-monitor")
 BUILTIN_LCD_STYLES = (
@@ -43,7 +44,7 @@ class StyleCommandMixin:
         } or {"idle"}
         settings_path = os.getenv("PICO_MONITOR_SETTINGS_PATH")
         if settings_path:
-            from win.settings import TraySettingsStore, normalize_style_catalog
+            from win.settings import TraySettingsStore
 
             normalized = normalize_style_catalog(catalog)
             if normalized:

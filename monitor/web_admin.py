@@ -24,6 +24,15 @@ from urllib.parse import urlsplit
 from aiohttp import WSMsgType, web
 
 import custom_data
+from monitor_core.ui_helpers import (
+    extract_style_package,
+    load_style_assets,
+    merge_wifi_networks,
+    normalize_style_catalog,
+    persist_style_package_assets,
+    wifi_security_label,
+    wifi_state_label,
+)
 
 
 LOGGER = logging.getLogger("pico-monitor.http")
@@ -125,8 +134,6 @@ class LinuxInvokeBridge:
 
     def _style_catalog(self):
         """返回包含内置样式和设备自定义样式的规范化目录。"""
-        from win.settings import normalize_style_catalog
-
         return normalize_style_catalog(getattr(self._service.client, "styles", []))
 
     def _settings_snapshot(self):
@@ -732,17 +739,7 @@ class LinuxInvokeBridge:
     def _style_assets(payload):
         """读取数据插件和纯样式包提供的预览图、详情页资源。"""
         del payload
-        from importlib import import_module
-
-        style_api = import_module("win.ui-web-api.style_api")
-        return style_api.StyleApiMixin._style_assets({})
-
-    @staticmethod
-    def _style_package_helpers():
-        """加载与 Windows 页面共用的安全样式包解析工具。"""
-        from importlib import import_module
-
-        return import_module("win.ui-web-api.style_api").StyleApiMixin
+        return load_style_assets()
 
     def _upload_style_python(self, path, payload):
         """校验浏览器上传的 Python 样式并交给 Linux 设备主循环上传。"""
@@ -778,11 +775,10 @@ class LinuxInvokeBridge:
             return self._upload_style_python(source_path, payload)
         if source_path.suffix.lower() != ".zip":
             raise ValueError("屏幕样式仅支持 py 文件或 zip 包")
-        helpers = self._style_package_helpers()
         with tempfile.TemporaryDirectory(prefix="omniwatch-style-") as temporary:
-            package = helpers._extract_style_package(source_path, Path(temporary))
+            package = extract_style_package(source_path, Path(temporary))
             result = self._upload_style_python(package["style"], payload)
-            helpers._persist_style_package_assets(
+            persist_style_package_assets(
                 result["styleName"], package.get("detail"), package.get("preview")
             )
             return result
@@ -841,8 +837,6 @@ class LinuxInvokeBridge:
         result_queue = queue.Queue()
         self._service.request_wifi_list(result_queue)
         result = self._wait_result(result_queue, 30, "wifi.list")
-        from win.ui.wifi_window import merge_wifi_networks, wifi_security_label, wifi_state_label
-
         data = self._response_data(result)
         networks = merge_wifi_networks(data.get("networks"), data.get("wifi"))
         for network in networks:

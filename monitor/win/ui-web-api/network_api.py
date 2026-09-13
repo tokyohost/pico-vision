@@ -1,6 +1,6 @@
 """Web 界面的 Wi-Fi 和 WebSocket 客户端管理接口。"""
 
-from ..ui.wifi_window import (
+from monitor_core.ui_helpers import (
     merge_wifi_networks,
     wifi_security_label,
     wifi_state_label,
@@ -97,4 +97,3 @@ class NetworkApiMixin:
             self._application.websocket_client_messages, 12, "update"
         )
         return result.get("data") or {}
-

@@ -55,6 +55,28 @@ def _linux_runtime_module_files():
     return {module_name + ".py" for module_name in discovered}
 
 
+def _runtime_imports_package(path, package_name):
+    """查找源码任意作用域内对指定平台包的直接或动态导入。"""
+    tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+    imports = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imports.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imports.append(node.module)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "import_module"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            imports.append(node.args[0].value)
+    prefix = package_name + "."
+    return sorted(name for name in imports if name == package_name or name.startswith(prefix))
+
+
 class LinuxPackagingTest(unittest.TestCase):
     """确认 Debian 与通用 Linux 安装方式不会遗漏本地运行模块。"""
 
@@ -132,6 +154,12 @@ class LinuxPackagingTest(unittest.TestCase):
         self.assertIn("python3-websocket", debian_control)
         self.assertIn("websocket-client>=1.7", requirements)
         self.assertIn('pip install -r "$INSTALL_ROOT/requirements.txt"', installer)
+
+    def test_linux_http_bridge_does_not_import_windows_runtime(self):
+        """确认 Linux HTTP 桥接不会引用安装包中不存在的 Windows 模块。"""
+        imports = _runtime_imports_package(MONITOR_ROOT / "web_admin.py", "win")
+
+        self.assertEqual([], imports, "Linux HTTP 桥接包含 Windows 运行时依赖")
 
     def test_nas_release_packages_contain_version_and_all_strategies(self):
         """确认每种 NAS 发布包包含版本清单和完整系统策略。"""

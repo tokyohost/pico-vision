@@ -9,33 +9,13 @@ from pathlib import Path
 from custom_data import normalize_plugin_configs, normalize_plugin_enabled
 from collectTask import system_task_defaults, system_task_zh_names
 from collectTask.system_tasks import system_task_aliases
+from monitor_core.ui_helpers import (
+    DEFAULT_STYLE_CATALOG,
+    STYLE_NAMES,
+    normalize_style_catalog,
+)
 
 
-STYLE_NAMES = {
-    "default": "经典概览",
-    "disk": "磁盘概览",
-    "diskv2": "十五盘紧凑版",
-    "diskv3": "十五盘 IP 版",
-    "diskv4": "十五盘趋势版",
-    "horizontal_disk": "九盘横屏版",
-    "horizontal_diskv2": "九盘紧凑版",
-    "horizontal_disk4x": "四盘清晰版",
-    "horizontal_disk4x_qb": "四盘下载版(qBittorrent)",
-    "horizontal_disk6x": "六盘均衡版",
-    "simple": "三盘简洁版",
-    "fps_simple": "FPS 监控简约",
-    "game": "游戏监控简约",
-    "idle": "像素待机时钟",
-}
-DEFAULT_STYLE_CATALOG = [
-    {
-        "name": name,
-        "chinese_name": chinese_name,
-        "type": "builtin",
-        "idle": name == "idle",
-    }
-    for name, chinese_name in STYLE_NAMES.items()
-]
 DEFAULT_COLLECTION_TASK_INTERVALS = system_task_defaults()
 COLLECTION_TASK_ZH_NAMES = system_task_zh_names()
 DEFAULT_MARKET_URL = "https://omni.mzlblog.com"
@@ -137,30 +117,6 @@ def style_label(style, settings=None):
     """返回包含中文名称和程序名称的样式显示文本。"""
     names = style_names(settings)
     return "{}（{}）".format(names.get(style, style), style)
-
-
-def normalize_style_catalog(catalog):
-    """校验设备样式清单，并在保留全部内置样式的基础上合并自定义样式。"""
-    normalized = [dict(item) for item in DEFAULT_STYLE_CATALOG]
-    seen = {item["name"] for item in normalized}
-    for item in catalog if isinstance(catalog, list) else ():
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name") or "").strip()
-        chinese_name = str(item.get("chinese_name") or "").strip()
-        style_type = item.get("type")
-        if not name or not chinese_name or name in seen or style_type not in ("builtin", "custom"):
-            continue
-        normalized_item = {
-            "name": name,
-            "chinese_name": chinese_name,
-            "type": style_type,
-        }
-        if isinstance(item.get("idle"), bool):
-            normalized_item["idle"] = item["idle"]
-        normalized.append(normalized_item)
-        seen.add(name)
-    return normalized
 
 
 def normalize_collection_task_intervals(intervals):
