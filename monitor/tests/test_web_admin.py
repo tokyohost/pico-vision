@@ -6,12 +6,13 @@ import tempfile
 import unittest
 from importlib import import_module
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from aiohttp import ClientSession, FormData, WSServerHandshakeError
 
 from monitor_core.arguments import create_argument_parser
-from web_admin import HttpAdminServer
+from web_admin import HttpAdminServer, LinuxInvokeBridge
 from win.settings import DEFAULT_MARKET_URL, TraySettingsStore
 
 
@@ -288,6 +289,48 @@ class HttpAdminConfigurationTest(unittest.TestCase):
             "market": {"url": "https://market.example/market"},
         }).parse_args([])
         self.assertEqual("https://market.example/market", arguments.market_url)
+
+
+class LinuxInvokeBridgeTest(unittest.TestCase):
+    """验证 Linux 桥接动作遵循统一的载荷调用约定。"""
+
+    def setUp(self):
+        """创建无需真实设备的 Linux 桥接对象。"""
+        client = SimpleNamespace(
+            is_connected=False,
+            port_name=None,
+            screen_width=None,
+            screen_height=None,
+            net_status=None,
+            sdk_update_info=None,
+            styles=[],
+        )
+        service = SimpleNamespace(client=client, arguments=SimpleNamespace())
+        self.bridge = LinuxInvokeBridge(service)
+
+    def test_device_status_accepts_invoke_payload(self):
+        """确认设备状态动作可接收统一入口传入的空载荷。"""
+        result = self.bridge.invoke("device.status", {})
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["data"]["connected"])
+
+    def test_bootstrap_accepts_invoke_payload(self):
+        """确认首屏动作可接收统一入口传入的空载荷。"""
+        with mock.patch(
+            "custom_data.custom_data_panels",
+            return_value=[],
+        ), mock.patch(
+            "collectTask.system_task_defaults",
+            return_value=(),
+        ), mock.patch(
+            "collectTask.system_task_zh_names",
+            return_value={},
+        ):
+            result = self.bridge.invoke("app.bootstrap", {})
+
+        self.assertTrue(result["ok"])
+        self.assertEqual([], result["data"]["customDataPanels"])
 
 
 class WindowsSettingsDefaultTest(unittest.TestCase):

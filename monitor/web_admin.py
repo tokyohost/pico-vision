@@ -95,8 +95,9 @@ class LinuxInvokeBridge:
         """绑定 HTTP 服务，使首屏可以显示当前服务端口和鉴权配置。"""
         self._http_server = server
 
-    def _device_status(self):
+    def _device_status(self, payload=None):
         """返回 Linux 服务当前设备的完整连接与版本状态。"""
+        del payload
         client = self._service.client
         port = getattr(client, "port_name", None)
         websocket = isinstance(port, str) and port.lower().startswith(("ws://", "wss://"))
@@ -188,8 +189,9 @@ class LinuxInvokeBridge:
             })
         return settings
 
-    def _bootstrap(self):
+    def _bootstrap(self, payload=None):
         """构造现有 Vue 首屏所需的 Linux 兼容数据。"""
+        del payload
         import custom_data
 
         from build_info import GITHUB_REPOSITORY, MONITOR_VERSION
