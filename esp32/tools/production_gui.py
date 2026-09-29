@@ -5,15 +5,19 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
-from pathlib import Path
+from contextlib import contextmanager
+from pathlib import Path, PurePosixPath
 import queue
 import re
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import tkinter as tk
+import zipfile
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 
@@ -22,6 +26,8 @@ PROJECT = TOOLS.parents[1]
 COPY_SCRIPT = PROJECT / "tools" / "mpremote_stream_copy.py"
 USB_VIDS = {0x303A, 0x10C4, 0x1A86, 0x0403}
 PROBE_PREFIX = "PRODUCTION_DEVICE:"
+MAX_CODE_PACKAGE_FILES = 5000
+MAX_CODE_PACKAGE_SIZE = 64 * 1024 * 1024
 PROBE_CODE = (
     "import sys, os, json, machine\n"
     "d={'platform':sys.platform,'machine':os.uname().machine,"
@@ -35,8 +41,8 @@ PROBE_CODE = (
 )
 
 
-def select_sdk(script: Path) -> tuple[Path, str, int, str]:
-    """读取最后一条刷写命令，并按同系列数字版本选择最新 SDK。"""
+def select_sdk(script: Path, selected_image: Path | None = None) -> tuple[Path, str, int, str]:
+    """读取刷写参数；未指定镜像时按同系列数字版本选择最新 SDK。"""
     commands = []
     for line in script.read_text(encoding="utf-8-sig").splitlines():
         tokens = [item.strip('\"\'') for item in shlex.split(line, posix=False)]
@@ -54,6 +60,11 @@ def select_sdk(script: Path) -> tuple[Path, str, int, str]:
     address = tokens[index + 1]
     if chip != "esp32s3" or int(address, 0) != 0:
         raise ValueError("当前量产代码库仅支持 ESP32-S3、0x0 合并镜像")
+    if selected_image is not None:
+        image = Path(selected_image).expanduser().resolve()
+        if image.suffix.lower() != ".bin" or not image.is_file():
+            raise ValueError("手动选择的 SDK 必须是存在的 .bin 文件")
+        return image, chip, baud, address
     name = tokens[index + 2].replace("\\", "/").rsplit("/", 1)[-1]
     match = re.fullmatch(r"(.+)-v(\d+(?:\.\d+)+)(.*\.bin)", name)
     if not match:
@@ -67,6 +78,66 @@ def select_sdk(script: Path) -> tuple[Path, str, int, str]:
     if not candidates:
         raise ValueError("flash.sh 同目录没有相同硬件规格和固件系列的 SDK")
     return max(candidates)[1], chip, baud, address
+
+
+def extract_code_package(package: Path, destination: Path) -> None:
+    """校验并安全解压发版全量 ZIP，拒绝路径穿越、重复项和异常体积。"""
+    try:
+        archive = zipfile.ZipFile(package, "r")
+    except (OSError, zipfile.BadZipFile) as error:
+        raise ValueError("所选文件不是有效的发版全量 ZIP 包") from error
+    with archive:
+        files = []
+        paths = set()
+        total_size = 0
+        for item in archive.infolist():
+            if item.is_dir():
+                continue
+            relative = PurePosixPath(str(item.filename).replace("\\", "/"))
+            # Windows 的冒号可能被解释为 NTFS 备用数据流，也必须提前拒绝。
+            if (
+                relative.is_absolute()
+                or not relative.parts
+                or any(part in ("", ".", "..") or ":" in part for part in relative.parts)
+            ):
+                raise ValueError(f"发版全量包包含不安全路径：{item.filename}")
+            normalized = relative.as_posix().casefold()
+            if normalized in paths:
+                raise ValueError(f"发版全量包包含重复文件：{relative.as_posix()}")
+            paths.add(normalized)
+            files.append((item, relative))
+            total_size += item.file_size
+        if not files:
+            raise ValueError("发版全量包不包含可部署文件")
+        if len(files) > MAX_CODE_PACKAGE_FILES or total_size > MAX_CODE_PACKAGE_SIZE:
+            raise ValueError("发版全量包文件数量或解压体积超过量产工具限制")
+        damaged_file = archive.testzip()
+        if damaged_file is not None:
+            raise ValueError(f"发版全量包文件损坏：{damaged_file}")
+        for item, relative in files:
+            target = destination.joinpath(*relative.parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(item, "r") as source, target.open("wb") as output:
+                shutil.copyfileobj(source, output)
+
+
+@contextmanager
+def prepared_code_source(source: Path):
+    """把源码目录或发版全量 ZIP 统一准备为可供现有同步器读取的目录。"""
+    selected = Path(source).expanduser().resolve()
+    if selected.is_dir():
+        if not (selected / "main.py").is_file():
+            raise ValueError("代码目录必须包含根目录 main.py")
+        yield selected
+        return
+    if not selected.is_file() or selected.suffix.lower() != ".zip":
+        raise ValueError("代码来源必须是包含 main.py 的目录或发版全量 ZIP 包")
+    with tempfile.TemporaryDirectory(prefix="omniwatch-production-") as temporary:
+        extracted = Path(temporary)
+        extract_code_package(selected, extracted)
+        if not (extracted / "main.py").is_file():
+            raise ValueError("发版全量 ZIP 根目录必须包含 main.py")
+        yield extracted
 
 
 def port_key(port) -> str:
@@ -87,9 +158,10 @@ def candidate_groups(ports) -> dict[str, list]:
 class ProductionWorker:
     """在后台线程中监测 USB，并确保一块设备处理完成后才处理下一块。"""
 
-    def __init__(self, source: Path, events: queue.Queue):
+    def __init__(self, source: Path, events: queue.Queue, sdk_image: Path | None = None):
         """保存不可变批次配置及线程通信队列。"""
         self.source = source
+        self.sdk_image = sdk_image
         self.events = events
         self.stop = threading.Event()
         self.log_file = None
@@ -275,67 +347,71 @@ class ProductionWorker:
 
     def run(self):
         """锁定批次固件并监测插拔；成功或失败的设备均需拔出后才再次处理。"""
+        configured_source = self.source
         try:
             from serial.tools import list_ports
-            config = select_sdk(TOOLS / "flash.sh")
+            config = select_sdk(TOOLS / "flash.sh", self.sdk_image)
             load_flasher().inspect_sdk_image(config[0])
-            if not self.source.is_dir() or not (self.source / "main.py").is_file():
-                raise ValueError("代码目录必须存在且包含 main.py")
             if not COPY_SCRIPT.is_file():
                 raise ValueError(f"找不到代码复制脚本：{COPY_SCRIPT}")
             for module in ("serial", "esptool", "mpremote"):
                 if importlib.util.find_spec(module) is None:
                     raise ValueError(f"缺少依赖：{module}")
-            logs = TOOLS / "production_logs"
-            logs.mkdir(exist_ok=True)
-            with (logs / time.strftime("%Y%m%d-%H%M%S.log")).open("a", encoding="utf-8") as self.log_file:
-                self.emit("log", f"本批 SDK：{config[0]}；代码库：{self.source}")
-                self.emit("log", "停止按钮会等待当前设备完成；不支持自动下载的板卡请按住 BOOT 插入 USB。")
-                handled = {}
-                first_seen = {}
-                result_key = None
-                self.emit("activity", "waiting")
-                self.emit("status", "监测中 · 等待下一块设备")
-                while not self.stop.is_set():
-                    groups = candidate_groups(list_ports.comports())
-                    now = time.monotonic()
-                    for key in list(handled):
-                        if key in groups:
-                            handled[key] = now
-                        elif now - handled[key] > 2:
-                            del handled[key]
-                    # 成功绿灯保留到该设备确认拔出，不能被普通监测轮询立即覆盖。
-                    if result_key is not None and result_key not in handled:
-                        result_key = None
-                        self.emit("activity", "waiting")
-                        self.emit("progress", "0")
-                        self.emit("status", "监测中 · 等待下一块设备")
-                    first_seen = {key: first_seen.get(key, now) for key in groups}
-                    for key, ports in groups.items():
-                        if self.stop.is_set():
+            with prepared_code_source(configured_source) as deployment_source:
+                self.source = deployment_source
+                logs = TOOLS / "production_logs"
+                logs.mkdir(exist_ok=True)
+                with (logs / time.strftime("%Y%m%d-%H%M%S.log")).open("a", encoding="utf-8") as self.log_file:
+                    self.emit("log", f"本批 SDK：{config[0]}；代码来源：{configured_source}")
+                    if configured_source.suffix.lower() == ".zip":
+                        self.emit("log", f"全量 ZIP 已校验并解压：{len(list(self.source.rglob('*')))} 个目录项")
+                    self.emit("log", "停止按钮会等待当前设备完成；不支持自动下载的板卡请按住 BOOT 插入 USB。")
+                    handled = {}
+                    first_seen = {}
+                    result_key = None
+                    self.emit("activity", "waiting")
+                    self.emit("status", "监测中 · 等待下一块设备")
+                    while not self.stop.is_set():
+                        groups = candidate_groups(list_ports.comports())
+                        now = time.monotonic()
+                        for key in list(handled):
+                            if key in groups:
+                                handled[key] = now
+                            elif now - handled[key] > 2:
+                                del handled[key]
+                        # 成功绿灯保留到该设备确认拔出，不能被普通监测轮询立即覆盖。
+                        if result_key is not None and result_key not in handled:
+                            result_key = None
+                            self.emit("activity", "waiting")
+                            self.emit("progress", "0")
+                            self.emit("status", "监测中 · 等待下一块设备")
+                        first_seen = {key: first_seen.get(key, now) for key in groups}
+                        for key, ports in groups.items():
+                            if self.stop.is_set():
+                                break
+                            if key in handled or now - first_seen[key] < 1.5:
+                                continue
+                            try:
+                                self.process(key, ports, config)
+                                self.emit("success", "1")
+                                self.emit("progress", "100")
+                                self.emit("activity", "complete")
+                                self.emit("status", "写入完毕 · 可拔出设备（拔出至少 3 秒后插入下一块）")
+                            except Exception as error:
+                                self.emit("log", "处理失败：" + str(error))
+                                self.emit("failure", "1")
+                                self.emit("activity", "failed")
+                                self.emit("status", "写入失败 · 请查看日志，拔出设备后重试")
+                            handled[key] = time.monotonic()
+                            result_key = key
+                            # 完成一次设备事务后重新枚举，避免处理排队期间已拔出的旧 COM。
                             break
-                        if key in handled or now - first_seen[key] < 1.5:
-                            continue
-                        try:
-                            self.process(key, ports, config)
-                            self.emit("success", "1")
-                            self.emit("progress", "100")
-                            self.emit("activity", "complete")
-                            self.emit("status", "写入完毕 · 可拔出设备（拔出至少 3 秒后插入下一块）")
-                        except Exception as error:
-                            self.emit("log", "处理失败：" + str(error))
-                            self.emit("failure", "1")
-                            self.emit("activity", "failed")
-                            self.emit("status", "写入失败 · 请查看日志，拔出设备后重试")
-                        handled[key] = time.monotonic()
-                        result_key = key
-                        # 完成一次设备事务后重新枚举，避免处理排队期间已拔出的旧 COM。
-                        break
-                    self.stop.wait(0.5)
+                        self.stop.wait(0.5)
         except Exception as error:
             self.emit("log", "启动失败：" + str(error))
             self.emit("activity", "failed")
         finally:
+            self.source = configured_source
             self.log_file = None
             self.emit("stopped", "已停止")
 
@@ -382,6 +458,7 @@ class ProductionApp:
         self.events = queue.Queue()
         self.success = self.failure = 0
         self.activity = "stopped"
+        self.sdk_override = None
         root.title("ESP32-S3 量产工具")
         root.geometry("850x640")
         root.minsize(700, 520)
@@ -395,14 +472,26 @@ class ProductionApp:
         ttk.Label(body, text="插入 USB → 识别 SDK → 自动刷写 → 同步代码", foreground="#666666").pack(anchor="w", pady=(5, 15))
         self.sdk = tk.StringVar()
         ttk.Label(body, textvariable=self.sdk, wraplength=790).pack(anchor="w")
+        sdk_row = ttk.Frame(body)
+        sdk_row.pack(fill="x", pady=(12, 0))
+        ttk.Label(sdk_row, text="SDK 镜像").pack(side="left")
+        self.sdk_source = tk.StringVar()
+        self.sdk_entry = ttk.Entry(sdk_row, textvariable=self.sdk_source, state="readonly")
+        self.sdk_entry.pack(side="left", fill="x", expand=True, padx=8)
+        self.sdk_browse = ttk.Button(sdk_row, text="选择…", command=self.choose_sdk)
+        self.sdk_browse.pack(side="left")
+        self.sdk_default = ttk.Button(sdk_row, text="恢复默认", command=self.use_default_sdk)
+        self.sdk_default.pack(side="left", padx=(8, 0))
         row = ttk.Frame(body)
         row.pack(fill="x", pady=12)
-        ttk.Label(row, text="代码目录").pack(side="left")
+        ttk.Label(row, text="代码来源").pack(side="left")
         self.source = tk.StringVar(value=str(PROJECT / "esp32-s3"))
         self.entry = ttk.Entry(row, textvariable=self.source)
         self.entry.pack(side="left", fill="x", expand=True, padx=8)
-        self.browse = ttk.Button(row, text="选择…", command=self.choose_source)
+        self.browse = ttk.Button(row, text="选择目录…", command=self.choose_source_directory)
         self.browse.pack(side="left")
+        self.package_browse = ttk.Button(row, text="选择 ZIP…", command=self.choose_source_package)
+        self.package_browse.pack(side="left", padx=(8, 0))
         controls = ttk.Frame(body)
         controls.pack(fill="x")
         self.start = ttk.Button(controls, text="开始量产", command=self.start_work)
@@ -436,10 +525,14 @@ class ProductionApp:
         root.after(100, self.pump)
 
     def refresh_sdk(self):
-        """预览当前将被选中的固件，启动批次时再次解析配置。"""
+        """预览默认最新或手动指定的 SDK，并更新只读路径。"""
         try:
-            self.sdk.set("SDK：" + select_sdk(TOOLS / "flash.sh")[0].name)
+            image = select_sdk(TOOLS / "flash.sh", self.sdk_override)[0]
+            mode = "手动选择" if self.sdk_override is not None else "自动最新"
+            self.sdk_source.set(str(image))
+            self.sdk.set(f"SDK（{mode}）：{image.name}")
         except Exception as error:
+            self.sdk_source.set("")
             self.sdk.set("SDK 配置错误：" + str(error))
 
     def set_activity(self, activity: str):
@@ -456,11 +549,48 @@ class ProductionApp:
         self.lamp.itemconfigure(self.lamp_circle, fill=color)
         self.lamp_text.set(label)
 
-    def choose_source(self):
+    def choose_sdk(self):
+        """选择本批次要刷入的 ESP32-S3 SDK 合并镜像。"""
+        initial = str(Path(self.sdk_source.get()).parent) if self.sdk_source.get() else str(TOOLS)
+        selected = filedialog.askopenfilename(
+            initialdir=initial,
+            title="选择 ESP32-S3 SDK 镜像",
+            filetypes=(("ESP32-S3 SDK 镜像", "*.bin"), ("所有文件", "*.*")),
+        )
+        if selected:
+            try:
+                image = Path(selected).resolve()
+                load_flasher().inspect_sdk_image(image)
+            except Exception as error:
+                messagebox.showerror("SDK 镜像不可用", str(error))
+                return
+            self.sdk_override = image
+            self.refresh_sdk()
+
+    def use_default_sdk(self):
+        """恢复由 flash.sh 固件系列自动选择最新 SDK 的默认方式。"""
+        self.sdk_override = None
+        self.refresh_sdk()
+
+    def choose_source_directory(self):
         """选择待刷入的本地 Python 工程目录。"""
-        folder = filedialog.askdirectory(initialdir=self.source.get())
+        current = Path(self.source.get())
+        initial = current if current.is_dir() else current.parent
+        folder = filedialog.askdirectory(initialdir=str(initial))
         if folder:
             self.source.set(folder)
+
+    def choose_source_package(self):
+        """选择 GitHub 发版流程生成的设备固件全量 ZIP 包。"""
+        current = Path(self.source.get())
+        initial = str(current.parent if current.suffix.lower() == ".zip" else current)
+        package = filedialog.askopenfilename(
+            initialdir=initial,
+            title="选择发版全量 ZIP 包",
+            filetypes=(("固件全量包", "*.zip"), ("所有文件", "*.*")),
+        )
+        if package:
+            self.source.set(package)
 
     def start_work(self):
         """启动后台量产线程并锁定当前配置。"""
@@ -470,8 +600,11 @@ class ProductionApp:
         self.set_activity("waiting")
         self.progress_value.set(0)
         self.progress_text.set("流程进度 0%")
-        self.worker = ProductionWorker(Path(self.source.get()), self.events)
-        for widget in (self.start, self.browse, self.entry):
+        self.worker = ProductionWorker(Path(self.source.get()), self.events, self.sdk_override)
+        for widget in (
+            self.start, self.sdk_browse, self.sdk_default, self.browse,
+            self.package_browse, self.entry,
+        ):
             widget.configure(state="disabled")
         self.stop_button.configure(state="normal")
         threading.Thread(target=self.worker.run, daemon=True).start()
@@ -511,7 +644,10 @@ class ProductionApp:
                 self.count.set(f"成功 {self.success}    失败 {self.failure}")
             elif kind == "stopped":
                 self.worker = None
-                for widget in (self.start, self.browse, self.entry):
+                for widget in (
+                    self.start, self.sdk_browse, self.sdk_default, self.browse,
+                    self.package_browse, self.entry,
+                ):
                     widget.configure(state="normal")
                 self.stop_button.configure(state="disabled")
                 self.status.set(value)
