@@ -1,5 +1,8 @@
 pico_monitor.py usr/lib/pico-monitor
 monitor_core usr/lib/pico-monitor
+desktop usr/lib/pico-monitor
+sdk_flash.py usr/lib/pico-monitor
+windows_update.py usr/lib/pico-monitor
 custom_data usr/lib/pico-monitor
 net usr/lib/pico-monitor
 pico_client.py usr/lib/pico-monitor

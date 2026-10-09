@@ -1,9 +1,10 @@
-"""Windows 托盘共享常量。"""
+"""保留历史导入路径，实际实现已迁入 desktop 目录。"""
 
-from pathlib import Path
+import sys
+from importlib import import_module
 
-APPLICATION_NAME = "OmniWatch"
-WINDOWS_APP_USER_MODEL_ID = "OmniWatch.USBMonitor.Tray"
-AUTOSTART_NAME = "PicoHardwareMonitor"
-MONITOR_DIRECTORY = Path(__file__).resolve().parent.parent
-LOG_EXPORT_SIZE = 1024 * 1024
+# 保持模块对象一致，让历史依赖替换和测试补丁继续作用于真实实现。
+_implementation = import_module("desktop.common.constants")
+# 兼容使用 spec.loader.exec_module 直接加载文件的历史调用者。
+globals().update({name: value for name, value in vars(_implementation).items() if not name.startswith("__")})
+sys.modules[__name__] = _implementation

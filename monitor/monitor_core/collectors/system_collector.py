@@ -27,6 +27,7 @@ from monitor_core.collectors.gpu import GpuMonitor
 from monitor_core.collectors.models import LOGGER, SENSOR_HOST_PRIORITY_TTL_SECONDS
 from monitor_core.collectors.network import NetworkMetricsMixin, PingMonitor
 from monitor_core.collectors.power import PowerMonitor
+from collectTask.tasks.mac_os.runtime import MacOsMetricsMixin
 
 try:
     from win.fps import FpsMonitor
@@ -41,7 +42,7 @@ except (ImportError, OSError):
     SensorHostManager = None
 
 
-class SystemInformationCollector(DiskMetricsMixin, NetworkMetricsMixin, CpuMetricsMixin):
+class SystemInformationCollector(MacOsMetricsMixin, DiskMetricsMixin, NetworkMetricsMixin, CpuMetricsMixin):
     """采集 CPU、内存、磁盘、网络、温度和功耗并生成协议快照。"""
 
     _windows_cpu_frequency_sampler = None
@@ -59,10 +60,25 @@ class SystemInformationCollector(DiskMetricsMixin, NetworkMetricsMixin, CpuMetri
         self.last_disk_io = None
         self.last_disk_io_time = None
         self.disk_io_histories = {}
-        self.ping_monitor = PingMonitor(ping_target)
-        self.power_monitor = PowerMonitor()
-        self.gpu_monitor = GpuMonitor()
-        self.fps_monitor = FpsMonitor(HISTORY_LENGTH) if FpsMonitor is not None else None
+        self.mac_telemetry = None
+        self.mac_disk = None
+        if platform.system() == "Darwin":
+            from collectTask.tasks.mac_os.disk import MacOsDiskMetrics
+            from collectTask.tasks.mac_os.fps import MacOsFpsMonitor
+            from collectTask.tasks.mac_os.runtime import MacOsGpuMonitor, MacOsPingMonitor, MacOsPowerMonitor
+            from collectTask.tasks.mac_os.telemetry import MacOsTelemetry
+
+            self.mac_telemetry = MacOsTelemetry()
+            self.mac_disk = MacOsDiskMetrics(self)
+            self.ping_monitor = MacOsPingMonitor(ping_target)
+            self.power_monitor = MacOsPowerMonitor(self.mac_telemetry)
+            self.gpu_monitor = MacOsGpuMonitor(self.mac_telemetry)
+            self.fps_monitor = MacOsFpsMonitor(HISTORY_LENGTH)
+        else:
+            self.ping_monitor = PingMonitor(ping_target)
+            self.power_monitor = PowerMonitor()
+            self.gpu_monitor = GpuMonitor()
+            self.fps_monitor = FpsMonitor(HISTORY_LENGTH) if FpsMonitor is not None else None
         self.sensor_host = self._create_sensor_host(sensor_host_enabled, sensor_host_path, sensor_host_pipe)
         self.sensor_host_metric_expirations = {}
         self.last_gpu_version = -1
@@ -84,6 +100,9 @@ class SystemInformationCollector(DiskMetricsMixin, NetworkMetricsMixin, CpuMetri
 
     def close(self):
         """关闭指标采集器持有的 SensorHost、FPS 外部进程、GPU 后端和 Windows PDH 查询。"""
+        if self.mac_telemetry is not None:
+            self.mac_telemetry.close()
+            self.ping_monitor.close()
         if self.sensor_host is not None:
             self.sensor_host.close()
             self.sensor_host = None
@@ -176,10 +195,10 @@ class SystemInformationCollector(DiskMetricsMixin, NetworkMetricsMixin, CpuMetri
             gpu = dict(gpu)
             gpu["history"] = list(self.gpu_history)
         stage_started = time.monotonic()
-        cpu_frequency = self._cpu_frequency_ghz()
+        cpu_frequency = self.mac_telemetry.cpu_frequency()[0] if self.mac_telemetry is not None else self._cpu_frequency_ghz()
         stage_times["CPU频率"] = time.monotonic() - stage_started
         stage_started = time.monotonic()
-        cpu_temperature = self._cpu_temperature()
+        cpu_temperature = self.mac_telemetry.snapshot()[0]["cpu_temperature_c"] if self.mac_telemetry is not None else self._cpu_temperature()
         stage_times["CPU温度"] = time.monotonic() - stage_started
         stage_started = time.monotonic()
         link_speed = self._network_link_speed(local_ip)

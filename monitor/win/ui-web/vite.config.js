@@ -6,6 +6,8 @@ export default defineConfig({
   base: './',
   plugins: [vue()],
   build: {
+    // macOS 12 的系统 WKWebView 是最低前端兼容基线，CSS 另做显式降级。
+    target: ['es2020', 'safari15', 'chrome87', 'edge88', 'firefox78'],
     outDir: 'dist',
     emptyOutDir: true,
   },

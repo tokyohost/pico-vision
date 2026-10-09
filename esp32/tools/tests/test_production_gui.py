@@ -7,6 +7,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+import zipfile
 
 
 SPEC = importlib.util.spec_from_file_location("production_gui", Path(__file__).resolve().parents[1] / "production_gui.py")
@@ -46,6 +47,56 @@ class ProductionTests(unittest.TestCase):
             script.write_text("py -m esptool --chip esp32 --baud 460800 write_flash 0x0 sdk-v1.0.bin", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "ESP32-S3"):
                 APP.select_sdk(script)
+
+    def test_manual_sdk_keeps_flash_parameters(self):
+        """手动 SDK 应覆盖自动版本，同时继续沿用已审核的芯片、波特率和地址。"""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            selected = root / "manual.bin"
+            selected.touch()
+            script = root / "flash.sh"
+            script.write_text(
+                "py -m esptool --chip esp32s3 --baud 921600 write_flash 0x0 default-v1.0.0.bin",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                APP.select_sdk(script, selected),
+                (selected.resolve(), "esp32s3", 921600, "0x0"),
+            )
+
+    def test_release_zip_is_prepared_and_cleaned(self):
+        """发版全量 ZIP 应解压为同步目录，并在批次退出后清理临时文件。"""
+        with tempfile.TemporaryDirectory() as folder:
+            package = Path(folder) / "OmniWatch-pico-full-v1.2.3.zip"
+            with zipfile.ZipFile(package, "w") as archive:
+                archive.writestr("main.py", "print('ready')\n")
+                archive.writestr("command/demo.py", "VALUE = 1\n")
+            with APP.prepared_code_source(package) as source:
+                extracted = source
+                self.assertEqual((source / "main.py").read_text(encoding="utf-8"), "print('ready')\n")
+                self.assertTrue((source / "command" / "demo.py").is_file())
+            self.assertFalse(extracted.exists())
+
+    def test_release_zip_requires_root_main(self):
+        """多包一层目录的 ZIP 不能静默部署到设备错误路径。"""
+        with tempfile.TemporaryDirectory() as folder:
+            package = Path(folder) / "wrapped.zip"
+            with zipfile.ZipFile(package, "w") as archive:
+                archive.writestr("firmware/main.py", "")
+            with self.assertRaisesRegex(ValueError, "根目录"):
+                with APP.prepared_code_source(package):
+                    pass
+
+    def test_release_zip_rejects_unsafe_path(self):
+        """全量 ZIP 在解压前必须拒绝父目录跳转。"""
+        with tempfile.TemporaryDirectory() as folder:
+            package = Path(folder) / "unsafe.zip"
+            with zipfile.ZipFile(package, "w") as archive:
+                archive.writestr("main.py", "")
+                archive.writestr("../outside.py", "")
+            with self.assertRaisesRegex(ValueError, "不安全路径"):
+                with APP.prepared_code_source(package):
+                    pass
 
     def test_dual_cdc_grouping_and_non_usb_filter(self):
         """同板双 CDC 只排队一次，普通串口不会被探测。"""

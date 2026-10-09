@@ -1,0 +1,131 @@
+"""Windows 关于应用窗口。"""
+
+import logging
+import subprocess
+import threading
+
+from build_info import MONITOR_VERSION
+
+from desktop.common.constants import APPLICATION_NAME
+from .idea_theme import IDEA_COLORS
+
+LOGGER = logging.getLogger("pico-monitor.windows-update")
+
+
+class AboutWindowMixin:
+    """为托盘应用提供独立的窗口实现。"""
+
+    def _show_about(self, icon=None, item=None):
+        """在独立线程中打开唯一的关于应用窗口。"""
+        del icon, item
+        with self.about_window_lock:
+            if self.about_window_open:
+                return
+            self.about_window_open = True
+        threading.Thread(
+            target=self._run_about_window_guarded,
+            name="关于应用窗口",
+            daemon=True,
+        ).start()
+
+    def _run_about_window_guarded(self):
+        """运行关于窗口，并在窗口退出后恢复可打开状态。"""
+        try:
+            self._run_about_window()
+        except Exception as error:
+            LOGGER.exception("打开关于应用窗口失败：%s", error)
+            if self.icon is not None:
+                self.icon.notify("无法打开关于应用窗口，请查看日志", APPLICATION_NAME)
+        finally:
+            with self.about_window_lock:
+                self.about_window_open = False
+
+    def _open_log_directory(self, parent=None):
+        """确保日志目录存在，并使用 Windows 资源管理器打开该目录。"""
+        from tkinter import messagebox
+
+        try:
+            self.data_directory.mkdir(parents=True, exist_ok=True)
+            subprocess.Popen(
+                ["explorer.exe", str(self.data_directory)],
+                creationflags=0x08000000,
+            )
+            return True
+        except OSError as error:
+            LOGGER.exception("打开日志目录失败：%s", error)
+            messagebox.showerror(
+                "打开日志目录",
+                "无法打开日志目录：{}".format(error),
+                parent=parent,
+            )
+            return False
+
+    def _run_about_window(self):
+        """显示版本、作者、联系方式和店铺二维码。"""
+        self._configure_tk_runtime()
+        import tkinter as tk
+        from PIL import Image, ImageTk
+
+        root = tk.Tk()
+        root.withdraw()
+        root.title("关于应用")
+        root.resizable(False, False)
+        root.attributes("-topmost", True)
+        self._set_tk_window_icon(root)
+        frame = tk.Frame(root, padx=24, pady=18)
+        frame.pack()
+        tk.Label(frame, text=APPLICATION_NAME, font=("Microsoft YaHei UI", 15, "bold")).pack(pady=(0, 8))
+        tk.Label(frame, text="版本号：{}".format(MONITOR_VERSION)).pack(anchor="w", pady=2)
+        tk.Label(frame, text="作者：tokyohost").pack(anchor="w", pady=2)
+        tk.Label(frame, text="微信号：hi2024FL").pack(anchor="w", pady=2)
+        developer_plan = tk.BooleanVar(master=root, value=bool(self.settings.get("developer_plan", False)))
+
+        def save_developer_plan():
+            """保存开发者计划，失败时还原开关并显示原因。"""
+            from tkinter import messagebox
+
+            updated = dict(self.settings)
+            updated["developer_plan"] = developer_plan.get()
+            try:
+                self.settings_store.save(updated)
+                self.settings = updated
+            except Exception as error:
+                developer_plan.set(bool(self.settings.get("developer_plan", False)))
+                messagebox.showerror("开发者计划", str(error), parent=root)
+
+        tk.Checkbutton(frame, text="加入开发者计划", variable=developer_plan,
+                       command=save_developer_plan).pack(anchor="w", pady=(10, 2))
+        tk.Label(frame, text="可更新 Preview 版本开发固件，但可能性能不稳定。\n关闭后不显示标签含 -preview 的新版本。",
+                 justify="left", wraplength=340).pack(anchor="w")
+        tk.Label(frame, text="咸鱼店铺二维码：").pack(anchor="w", pady=(10, 4))
+        image_path = self._resource_path("assert", "fishQr.png")
+        with Image.open(image_path) as source:
+            qr_image = source.convert("RGB").resize((220, 220), Image.Resampling.LANCZOS)
+        # 显式绑定当前窗口的 Tcl 解释器，避免其他 Tk 线程创建过默认根窗口后跨线程复用。
+        photo = ImageTk.PhotoImage(qr_image, master=root)
+        image_label = tk.Label(
+            frame,
+            image=photo,
+            background=IDEA_COLORS["panel"],
+            padx=8,
+            pady=8,
+        )
+        image_label.image = photo
+        image_label.pack()
+        button_frame = tk.Frame(frame)
+        button_frame.pack(pady=(14, 0))
+        tk.Button(
+            button_frame,
+            text="打开日志目录",
+            width=14,
+            command=lambda: self._open_log_directory(root),
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Button(
+            button_frame,
+            text="确定",
+            width=12,
+            command=root.destroy,
+        ).pack(side=tk.LEFT)
+        root.protocol("WM_DELETE_WINDOW", root.destroy)
+        self._show_centered_tk_window(root)
+        root.mainloop()

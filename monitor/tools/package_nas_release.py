@@ -21,6 +21,7 @@ ROOT_FILES = (
     "NAS_INSTALL.md",
 )
 RUNTIME_DIRECTORIES = (
+    "desktop",
     "collectTask",
     "custom_data",
     "monitor_core",

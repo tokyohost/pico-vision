@@ -65,6 +65,10 @@ install_application() {
     install -m 0644 "$script_directory/system_monitor.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/history.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/web_admin.py" "$INSTALL_ROOT/"
+    install -m 0644 "$script_directory/sdk_flash.py" "$INSTALL_ROOT/"
+    install -m 0644 "$script_directory/windows_update.py" "$INSTALL_ROOT/"
+    # 公共 HTTP 服务和 Linux 桥接已迁入 desktop，安装时同步复制源码。
+    cp -R "$script_directory/desktop" "$INSTALL_ROOT/"
     install -d -m 0755 "$INSTALL_ROOT/win/ui-web"
     cp -R "$script_directory/win/ui-web/dist" "$INSTALL_ROOT/win/ui-web/"
     install -d -m 0755 "$INSTALL_ROOT/monitor_core"

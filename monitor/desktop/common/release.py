@@ -1,0 +1,163 @@
+"""共享发布查询、下载及设备固件版本比较。"""
+
+import hashlib
+import json
+import os
+import platform
+import re
+import tempfile
+import urllib.request
+from pathlib import Path
+
+
+class ReleaseUpdater:
+    """管理发布查询、资源下载与设备固件版本比较。"""
+
+    def __init__(self, repository, current_version, include_preview=False):
+        """保存默认发布仓库和当前 Monitor 版本。"""
+        self.include_preview = bool(include_preview)
+        self.repository = str(repository or "").strip()
+        self.current_version = str(current_version or "").strip()
+
+    def default_update_url(self):
+        """返回正式构建内置的默认更新元数据地址。"""
+        if not self.repository:
+            return ""
+        return "https://api.github.com/repos/{}/releases/latest".format(self.repository)
+
+    def latest_release(self, update_url=None, include_notes=False):
+        """读取最新发布元数据，并按需返回版本、资源清单及更新说明。"""
+        url = str(update_url or self.default_update_url()).strip()
+        if not url:
+            raise RuntimeError("未配置更新地址")
+        # GitHub 的 latest 接口不返回预发布，加入计划后改用发布列表。
+        if self.include_preview and url == self.default_update_url():
+            url = url.removesuffix('/latest')
+        release = self._request_json(url)
+        releases = release if isinstance(release, list) else [release]
+        release = next((item for item in releases if not item.get("draft") and (
+            self.include_preview or "-preview" not in str(item.get("tag_name") or "").lower()
+        )), None)
+        if release is None:
+            # 隐藏受限版本的版本号、资源和说明，所有更新入口均视为无更新。
+            return (self.current_version, [], "") if include_notes else (self.current_version, [])
+        version = str(release.get("tag_name") or "").lstrip("v")
+        if not version:
+            raise RuntimeError("更新元数据缺少版本标签")
+        assets = release.get("assets") or []
+        if include_notes:
+            return version, assets, str(release.get("body") or "").strip()
+        return version, assets
+
+    def update_available(self, latest_version):
+        """判断最新 Release 是否与当前版本不同。"""
+        return str(latest_version) != self.current_version
+
+    @staticmethod
+    def firmware_update_available(current_version, latest_version):
+        """按数字版本号判断 Release 固件是否比设备当前固件更新。"""
+        def version_key(version):
+            """把常见点分版本转换为可比较的数字元组。"""
+            matched = re.match(r"^v?(\d+(?:\.\d+)*)", str(version or "").strip())
+            if matched is None:
+                return None
+            return tuple(int(part) for part in matched.group(1).split("."))
+
+        current_key = version_key(current_version)
+        latest_key = version_key(latest_version)
+        if current_key is None or latest_key is None:
+            return str(current_version or "").strip() != str(latest_version or "").strip()
+        length = max(len(current_key), len(latest_key))
+        current_key += (0,) * (length - len(current_key))
+        latest_key += (0,) * (length - len(latest_key))
+        return latest_key > current_key
+
+    def select_monitor_asset(self, assets, version):
+        """由平台适配层选择应用发布资源，公共层不猜测系统架构。"""
+        raise NotImplementedError("当前平台尚未定义应用发布资源")
+
+
+    @classmethod
+    def select_pico_asset(
+        cls, assets, version, board_model=None, lcd_device_type=None
+    ):
+        """按设备型号选择 Pico 全量固件包；未提供型号时使用默认组合。"""
+        if bool(board_model) != bool(lcd_device_type):
+            raise RuntimeError("选择设备固件时必须同时提供开发板和 LCD 型号")
+        if board_model:
+            name = "OmniWatch-pico-full-v{}-{}-{}.zip".format(
+                version, board_model, lcd_device_type
+            )
+        else:
+            name = "OmniWatch-pico-full-v{}.zip".format(version)
+        return cls._required_asset(assets, name)
+
+    def download(self, asset, suffix, progress_callback=None):
+        """下载发布资源，持续报告字节进度，并校验服务端提供的 SHA-256 摘要。"""
+        url = asset.get("browser_download_url")
+        if not url:
+            raise RuntimeError("Release 资源缺少下载地址：{}".format(asset.get("name")))
+        handle, path = tempfile.mkstemp(prefix="pico-windows-update-", suffix=suffix)
+        os.close(handle)
+        digest = hashlib.sha256()
+        try:
+            with urllib.request.urlopen(self._request(url), timeout=120) as response, open(path, "wb") as output:
+                total_bytes = self._response_content_length(response)
+                downloaded_bytes = 0
+                if progress_callback is not None:
+                    progress_callback(downloaded_bytes, total_bytes)
+                while True:
+                    chunk = response.read(64 * 1024)
+                    if not chunk:
+                        break
+                    output.write(chunk)
+                    digest.update(chunk)
+                    downloaded_bytes += len(chunk)
+                    if progress_callback is not None:
+                        progress_callback(downloaded_bytes, total_bytes)
+            expected = str(asset.get("digest") or "")
+            if expected.startswith("sha256:") and digest.hexdigest().lower() != expected[7:].lower():
+                raise RuntimeError("下载文件 SHA-256 校验失败：{}".format(asset.get("name")))
+            return Path(path)
+        except Exception:
+            self.remove_file(path)
+            raise
+
+    @staticmethod
+    def _response_content_length(response):
+        """读取响应声明的文件大小；服务端未提供有效值时返回空值。"""
+        try:
+            value = response.headers.get("Content-Length")
+            return max(0, int(value)) if value is not None else None
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _required_asset(assets, name):
+        """按完整名称获取必需的 Release 资源。"""
+        asset = next((item for item in assets if item.get("name") == name), None)
+        if asset is None:
+            raise RuntimeError("最新 Release 缺少资源：{}".format(name))
+        return asset
+
+    @staticmethod
+    def _request(url):
+        """创建带更新客户端标识的 HTTPS 请求。"""
+        return urllib.request.Request(url, headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "pico-monitor-windows-updater",
+        })
+
+    @classmethod
+    def _request_json(cls, url):
+        """读取并解析更新元数据 JSON。"""
+        with urllib.request.urlopen(cls._request(url), timeout=60) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    @staticmethod
+    def remove_file(path):
+        """尽力删除更新过程创建的临时文件。"""
+        try:
+            Path(path).unlink()
+        except OSError:
+            pass

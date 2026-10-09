@@ -54,6 +54,7 @@ class SystemCollectionStrategyRegistry:
 def create_system_collection_strategy_registry():
     """创建包含各 NAS、桌面系统和通用 Linux 策略的默认注册表。"""
     from .linux.system_strategy import LinuxCollectionStrategy
+    from .mac_os.system_strategy import MacOsCollectionStrategy
     from .qnap.system_strategy import QnapCollectionStrategy
     from .synology.system_strategy import SynologyCollectionStrategy
     from .truenas.system_strategy import TrueNasCollectionStrategy
@@ -64,6 +65,7 @@ def create_system_collection_strategy_registry():
         QnapCollectionStrategy(),
         TrueNasCollectionStrategy(),
         WindowsCollectionStrategy(),
+        MacOsCollectionStrategy(),
         LinuxCollectionStrategy(),
     ))
 

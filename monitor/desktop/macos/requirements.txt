@@ -1,0 +1,9 @@
+# 从项目根目录执行 pip install -r desktop/macos/requirements.txt。
+-r ../../requirements.txt
+PyInstaller>=6.14,<7
+Pillow==11.3.0
+pystray==0.19.5
+pywebview==5.4
+pyobjc==11.1
+esptool>=5.3,<6
+mpremote>=1.25

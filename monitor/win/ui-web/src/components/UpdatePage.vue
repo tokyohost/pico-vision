@@ -7,6 +7,7 @@ import CopyableLog from './CopyableLog.vue'
 const props = defineProps({
   device: { type: Object, required: true },
   applicationVersion: { type: String, required: true },
+  platform: { type: String, default: 'win32' },
 })
 
 const checks = reactive({
@@ -38,7 +39,7 @@ const updateItems = computed(() => [
     key: 'application',
     title: 'OmniWatch 应用更新',
     icon: 'Monitor',
-    description: '检查 Windows 桌面控制中心安装包。',
+    description: `检查 ${{ win32: 'Windows', darwin: 'macOS', linux: 'Linux' }[props.platform] || '当前平台'} 桌面控制中心安装包。`,
     current: props.applicationVersion || 'development',
     disabled: false,
   },

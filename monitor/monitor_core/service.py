@@ -740,7 +740,7 @@ class MonitorService(
         """Linux 未连接时按三十秒节流执行一次低影响局域网设备发现。"""
         if (
             self._force_usb_cdc_enabled()
-            or platform.system() != "Linux"
+            or platform.system() not in ("Linux", "Darwin")
             or self.client.is_connected
         ):
             return False

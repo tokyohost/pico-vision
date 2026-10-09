@@ -287,10 +287,12 @@ python pico_monitor.py `
 
 ## GitHub Actions 自动发布
 
-`pico-project/.github/workflows` 提供 Windows 安装包与 Linux DEB 两套工作流。手动运行工作流时只生成 Actions Artifact；推送 `v` 开头的标签时会自动创建或更新 GitHub Release，并上传以下产物：
+`pico-project/.github/workflows` 提供 Windows 安装包、Linux DEB 与 macOS 双架构工作流。手动运行通常只生成 Actions Artifact；macOS 手动构建可选择签名公证，标签发布则强制要求签名公证凭据。推送 `v` 开头的标签时会自动创建或更新 GitHub Release，并上传以下产物：
 
 - `OmniWatch-windows-x86-setup-v<版本>.exe`
 - `OmniWatch-windows-x64-setup-v<版本>.exe`
+- `OmniWatch-macos-x86_64-v<版本>.dmg` 与 `.zip`：Intel Mac
+- `OmniWatch-macos-arm64-v<版本>.dmg` 与 `.zip`：Apple Silicon Mac
 - `OmniWatch_<版本>_amd64.deb`：Intel/AMD 64 位电脑
 - `OmniWatch_<版本>_arm64.deb`：ARM 64 位设备
 - `OmniWatch_<版本>_armhf.deb`：ARM 32 位硬浮点设备
@@ -310,6 +312,33 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
+
+## macOS 指标采集
+
+`collectTask/tasks/mac_os` 提供 Darwin 专属的基础信息、CPU/内存、磁盘容量/健康、磁盘温度、磁盘 IO、网络、GPU、功耗与 FPS 共九类任务。调度频率、任务名称、历史曲线及 Pico JSON 字段沿用现有协议；Windows、Linux 和 NAS 的任务选择不变。桌面公共层、macOS 菜单栏/WKWebView、独立 spec 及签名公证构建链路见 [跨平台桌面端](desktop/README.md)；尚未完成 Mac 真机打包和硬件验收。
+
+| 指标 | 后端与边界 |
+| --- | --- |
+| CPU 占用、内存 | psutil 的 Darwin 原生接口 |
+| CPU 频率、CPU/GPU 温度 | Apple Silicon 可选 macmon；powermetrics 依设备提供实时频率和 SMC 温度；Intel 频率降级为标称值，带 `frequency_source` |
+| 磁盘容量、IO | diskutil APFS plist + psutil；System/Data/快照共享容器只计算一次，Fusion Drive 多存储按组统计 |
+| 磁盘健康、温度 | diskutil SMART 状态；可选 smartctl JSON 提供详细健康等级与温度，取决于设备和访问权限 |
+| 网络 | 活动接口的 psutil 流量计数与协商速率；Darwin Ping 使用毫秒超时 |
+| GPU | 可选 macmon、powermetrics、IOAccelerator；Apple Silicon 统一内存不冒充独立显存 |
+| 功耗 | 可选 macmon、powermetrics；笔记本放电时可退回电池电流 × 电压；`source`、`scope` 区分整机、SoC、CPU 封装和电池侧 |
+| FPS | 只读 Metal HUD 实时日志；目标应用必须启用日志；非 Metal 应用及任意前台进程的通用 FPS 不支持 |
+
+Apple Silicon 推荐自行安装可选工具 `macmon`，磁盘 SMART 可自行安装 `smartmontools`。Monitor 不自动安装工具、不启动 sudo，也不会修改目标应用或系统偏好。可执行文件通过 PATH 和 Homebrew 标准位置发现；`MONITOR_MAC_MACMON_PATH` 可指定 macmon 路径。macmon 使用私有硬件接口，macOS 升级或新芯片可能需要更新工具；旧版 `gpu_usage` 的频率缩放比例使用单独来源标识。CPU 占用始终使用 psutil，不使用缩放比例替代。
+
+普通用户没有 powermetrics 权限时，仍可采集基础指标和可用的 IOKit 数据。也可由外部具备权限的采样服务持续原子更新单份 plist 文件，再通过 `MONITOR_MAC_POWERMETRICS_FILE` 指向该文件；文件不能追加无限增长，最大 4 MiB，超过 8 秒未更新即作废。不要为了传感器读取让整个桌面程序长期以 root 运行。
+
+Metal 应用可在自身启动环境设置 `MTL_HUD_ENABLED=1` 和 `MTL_HUD_LOG_ENABLED=1`（部分旧版系统使用 `MTL_HUD_LOGGING_ENABLED=1`），或在 Xcode 的运行诊断设置启用 HUD 与日志。Monitor 不负责启动或注入应用。`MONITOR_MAC_FPS_PID` 可固定目标 PID；不设置时显示最近输出有效 HUD 日志的应用，并非保证前台应用。三秒无有效日志后 FPS 恢复空值。
+
+无法读取的温度、频率、功耗与 FPS 保留 `null`；磁盘健康不可读时沿用协议的 `0`（未知）。不会伪造零温度、零功耗或显示器刷新率；CPU 辅助指标及 GPU/功耗/FPS 附带来源与原因。macmon 的全零功耗计数器也视为不可用，避免未知芯片/系统版本的失效计数器被误报为零瓦。后台采样有超时、失败退避与过期保护，退出时关闭自身线程及日志进程。
+
+回归测试：`python -B -m unittest discover -s tests -p test_mac_os_collect_tasks.py`。跨平台模拟测试不能替代真机验证；发布前应分别验证 Intel 与 Apple Silicon、普通用户权限、APFS 与外接磁盘热插拔、Metal 日志启用/关闭及程序退出，尚未完成这些真机测试。
+
+参考：[Apple Metal HUD](https://developer.apple.com/videos/play/tech-talks/110339/)、[macmon 后端与 JSON 契约](https://github.com/vladkens/macmon)、[Apple Ping 源码手册](https://github.com/apple-oss-distributions/network_cmds/blob/main/ping.tproj/ping.8)。
 
 ### 致谢
 
