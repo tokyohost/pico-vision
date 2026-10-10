@@ -14,6 +14,7 @@ build_info.py usr/lib/pico-monitor
 constants.py usr/lib/pico-monitor
 json_ack_timing_cache.py usr/lib/pico-monitor
 usbCdcFramework.py usr/lib/pico-monitor
+usb_transfer_diagnostics.py usr/lib/pico-monitor
 qbittorrent_monitor.py usr/lib/pico-monitor
 system_monitor.py usr/lib/pico-monitor
 history.py usr/lib/pico-monitor
