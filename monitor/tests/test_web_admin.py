@@ -3,6 +3,7 @@
 import asyncio
 import socket
 import tempfile
+import threading
 import unittest
 from importlib import import_module
 from pathlib import Path
@@ -426,6 +427,8 @@ class WindowsWebViewWindowTest(unittest.TestCase):
         application._resource_path.return_value = Path(__file__)
         window = mock.Mock()
         window.events.closing = mock.MagicMock()
+        window.events.before_show = mock.MagicMock()
+        window.events.before_show.__iadd__.return_value = window.events.before_show
         fake_webview = mock.Mock()
         fake_webview.create_window.return_value = window
 
@@ -436,6 +439,91 @@ class WindowsWebViewWindowTest(unittest.TestCase):
         create_arguments = fake_webview.create_window.call_args.kwargs
         self.assertTrue(create_arguments["hidden"])
         self.assertFalse(create_arguments["minimized"])
+        window.hide.assert_not_called()
+        before_show = window.events.before_show.__iadd__.call_args.args[0]
+        before_show()
+        application._configure_windows_session_closing.assert_called_once_with(window)
+
+    def _create_session_closing_window(self):
+        """建立带真实业务关闭回调的窗口替身，并接入原生会话结束处理。"""
+        webview_module = import_module("win.ui-web-api.webview")
+        application = mock.Mock()
+        application.stopping = threading.Event()
+        application.webview_bridge = mock.Mock()
+        application._resource_path.return_value = Path(__file__)
+        window = mock.Mock()
+        window.events.closing = mock.MagicMock()
+        window.events.before_show = mock.MagicMock()
+        window.events.closing.__iadd__.return_value = window.events.closing
+        window.events.before_show.__iadd__.return_value = window.events.before_show
+        fake_webview = mock.Mock()
+        fake_webview.create_window.return_value = window
+        with mock.patch.dict("sys.modules", {"webview": fake_webview}):
+            webview_module.WebUiMixin._initialize_webview(application)
+        closing_callback = window.events.closing.__iadd__.call_args.args[0]
+
+        def original_closing(sender, event):
+            """模拟 pywebview 将业务关闭回调返回的 False 转换为取消关闭。"""
+            del sender
+            event.Cancel = closing_callback() is False
+
+        native_event = mock.MagicMock()
+        native_event.__isub__.return_value = native_event
+        native_event.__iadd__.return_value = native_event
+        native = SimpleNamespace(
+            on_closing=mock.Mock(side_effect=original_closing),
+            FormClosing=native_event,
+        )
+        window.native = native
+        forms = SimpleNamespace(
+            CloseReason=SimpleNamespace(WindowsShutDown="WindowsShutDown")
+        )
+        with mock.patch.dict("sys.modules", {"System.Windows.Forms": forms}):
+            webview_module.WebUiMixin._configure_windows_session_closing(
+                application, window
+            )
+        native_event.__isub__.assert_called_once_with(native.on_closing)
+        native_callback = native_event.__iadd__.call_args.args[0]
+        return application, window, native_callback
+
+    def test_shutdown_allows_visible_and_hidden_windows_to_close(self):
+        """确认控制中心显示、已隐藏和从未打开时均不会拒绝系统结束会话。"""
+        for state in ("visible", "hidden", "never_opened"):
+            with self.subTest(state=state):
+                application, window, native_callback = self._create_session_closing_window()
+                if state == "hidden":
+                    close_event = SimpleNamespace(CloseReason="UserClosing", Cancel=False)
+                    native_callback(window.native, close_event)
+                    self.assertTrue(close_event.Cancel)
+                    window.hide.reset_mock()
+                    window.native.on_closing.reset_mock()
+                elif state == "visible":
+                    window.show()
+                shutdown_event = SimpleNamespace(CloseReason="WindowsShutDown", Cancel=True)
+                native_callback(window.native, shutdown_event)
+                self.assertFalse(shutdown_event.Cancel)
+                self.assertFalse(application.stopping.is_set())
+                window.hide.assert_not_called()
+                window.native.on_closing.assert_not_called()
+
+    def test_cancelled_shutdown_preserves_close_to_tray(self):
+        """确认关机询问未提交时监控保持运行，之后普通关闭仍隐藏到托盘。"""
+        application, window, native_callback = self._create_session_closing_window()
+        shutdown_event = SimpleNamespace(CloseReason="WindowsShutDown", Cancel=False)
+        native_callback(window.native, shutdown_event)
+        close_event = SimpleNamespace(CloseReason="UserClosing", Cancel=False)
+        native_callback(window.native, close_event)
+        self.assertTrue(close_event.Cancel)
+        self.assertFalse(application.stopping.is_set())
+        window.hide.assert_called_once_with()
+
+    def test_explicit_exit_still_closes_window(self):
+        """确认托盘主动退出设置停止标志后，原有关闭流程允许销毁窗口。"""
+        application, window, native_callback = self._create_session_closing_window()
+        application.stopping.set()
+        close_event = SimpleNamespace(CloseReason="UserClosing", Cancel=False)
+        native_callback(window.native, close_event)
+        self.assertFalse(close_event.Cancel)
         window.hide.assert_not_called()
 
     def test_show_restores_before_showing_and_navigating(self):

@@ -153,10 +153,35 @@ class WebUiMixin:
             window.hide()
             return False
 
+        def configure_session_closing():
+            """在原生窗口首次显示前接入系统会话结束处理，覆盖隐藏启动场景。"""
+            self._configure_windows_session_closing(window)
+
         window.events.closing += hide_instead_of_closing
+        window.events.before_show += configure_session_closing
         self.webview_window = window
         self.settings_window = window
         return window
+
+    def _configure_windows_session_closing(self, window):
+        """允许 Windows 关机、重启和注销关闭窗口，保留普通关闭时的托盘行为。"""
+        from System.Windows.Forms import CloseReason
+
+        native = window.native
+        original_closing = native.on_closing
+
+        def handle_native_closing(sender, event):
+            """根据原生关闭原因放行系统会话结束，其余操作交由 pywebview 处理。"""
+            if event.CloseReason == CloseReason.WindowsShutDown:
+                # pywebview 的 closing 事件不传递关闭原因，必须在 WinForms 层
+                # 绕过“隐藏并取消关闭”的回调，否则会拒绝 WM_QUERYENDSESSION。
+                # 此时仅允许退出；其他应用可能取消关机，不能提前停止监控。
+                event.Cancel = False
+                return
+            original_closing(sender, event)
+
+        native.FormClosing -= original_closing
+        native.FormClosing += handle_native_closing
 
     def _apply_http_admin_settings(self):
         """按照当前 Windows 设置启动、停止或重建 HTTP 管理服务。"""
