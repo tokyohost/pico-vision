@@ -9,6 +9,7 @@ from unittest import mock
 
 from collectTask.tasks.win.sensor_host import SensorHostTask
 from collectTask.tasks.win.windows_disk_space import WindowsDiskSpaceTask
+from collectTask.tasks.disk_rate import DiskRateTask
 
 
 def load_sensor_host_manager():
@@ -93,6 +94,55 @@ class SensorHostTaskTest(unittest.TestCase):
         self.assertNotIn("used_bytes", fragment["disks"][0])
         self.assertNotIn("total_bytes", fragment["disks"][0])
         collector.mark_sensor_host_metric_available.assert_any_call("disk_space_percent")
+
+    @mock.patch("monitor_core.collectors.disk.psutil.disk_io_counters")
+    @mock.patch("monitor_core.collectors.disk.time.monotonic", return_value=10.0)
+    def test_disk_rates_fall_back_when_sensor_host_rates_are_null(self, monotonic, counters):
+        """确认磁盘传感器空值可由系统计数器补齐，恢复后重新采用 SensorHost 速率。"""
+        from monitor_core.collectors.system_collector import SystemInformationCollector
+
+        del monotonic
+        collector = SystemInformationCollector.__new__(SystemInformationCollector)
+        collector.sensor_host = mock.Mock()
+        collector._cpu_frequency_ghz = mock.Mock(return_value=None)
+        collector.sensor_host_metric_expirations = {}
+        collector.disk_io_histories = {}
+        collector.last_disk_io_time = 8.0
+        collector.last_disk_io = {"PhysicalDrive0": SimpleNamespace(read_bytes=1000, write_bytes=2000)}
+        counters.return_value = {"PhysicalDrive0": SimpleNamespace(read_bytes=5000, write_bytes=8000)}
+        collector.sensor_host.snapshot.return_value = {
+            "disks": [{
+                "name": "DISK0", "temperature_c": 45,
+                "used_space_percent": None, "health_percent": None,
+                "read_bytes_per_second": None, "write_bytes_per_second": None,
+            }],
+        }
+        sensor_task = SensorHostTask(collector)
+        rate_task = DiskRateTask(collector)
+
+        sensor_task.collect()
+        self.assertFalse(collector.is_sensor_host_metric_available("disk_rate"))
+        fragment = rate_task.collect()
+
+        for field in ("disks", "physical_disks"):
+            self.assertEqual(fragment[field][0]["read_bps"], 2000)
+            self.assertEqual(fragment[field][0]["write_bps"], 3000)
+            self.assertEqual(len(fragment[field][0]["read_history"]), 24)
+            self.assertEqual(len(fragment[field][0]["write_history"]), 24)
+        self.assertIsNone(fragment["disks"][0]["percent"])
+        self.assertIsNone(fragment["disks"][0]["health"])
+        self.assertEqual(fragment["physical_disks"][0]["temperature_c"], 45)
+
+        collector.sensor_host.snapshot.return_value["disks"][0].update({
+            "read_bytes_per_second": 1024, "write_bytes_per_second": 2048,
+        })
+        restored = sensor_task.collect()
+
+        self.assertEqual(restored["physical_disks"][0]["read_bps"], 1024)
+        self.assertEqual(restored["physical_disks"][0]["write_bps"], 2048)
+        self.assertTrue(collector.is_sensor_host_metric_available("disk_rate"))
+        self.assertEqual(rate_task.collect(), {})
+        self.assertEqual(counters.call_count, 1)
 
     def test_cpu_frequency_uses_cores_average_clock_sensor(self):
         """确认 CPU 频率字段缺失时会从 Cores (Average) 时钟传感器补齐。"""

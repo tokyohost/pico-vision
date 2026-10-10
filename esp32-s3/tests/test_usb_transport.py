@@ -14,6 +14,7 @@ if str(ESP32_ROOT) not in sys.path:
 import usb_transport
 from protocol import JsonProtocol
 from net.usb_cdc import UsbCdcTransport
+from net.manager import TransportManager
 from usb import dedicated_cdc
 from usb.buffer_policy import normalize_rx_buffer_size
 from usb.native_cdc import NativeCdcStream
@@ -141,6 +142,35 @@ class FakeCompleteFrameTransport:
 
 class UsbTransportTest(unittest.TestCase):
     """确认 ESP32-S3 使用固件原生 CDC，并保留能力回退路径。"""
+
+    def test_native_large_response_uses_bulk_chunks_through_manager(self):
+        """大型回复经管理器采用原生块大小，完整输出且不逐 63 字节等待。"""
+        chunks = []
+
+        def write(data):
+            """记录原生后端收到的块，模拟 C 层完整消费发送数据。"""
+            chunks.append(bytes(data))
+            return len(data)
+
+        backend = types.SimpleNamespace(
+            api_version=lambda: 2, init=lambda: None, any=lambda: 0,
+            write=write, flush=lambda: None, is_open=lambda: True,
+        )
+        manager = TransportManager(usb_stream=NativeCdcStream(backend), wifi_enabled=False)
+        protocol = JsonProtocol(stream=manager)
+        packet = JsonProtocol._build_frame("PONG", b"x" * 5000)
+        with mock.patch("protocol.time.sleep") as sleeper:
+            protocol._write_raw(packet)
+
+        self.assertEqual(packet, b"".join(chunks))
+        self.assertEqual(1023, len(chunks[0]))
+        self.assertLessEqual(len(chunks), 6)
+        self.assertEqual(len(chunks) - 1, sleeper.call_count)
+
+    def test_console_response_keeps_endpoint_safe_write_size(self):
+        """控制台回退仍保留 63 字节写入，避免把原生批量策略用于 REPL。"""
+        manager = TransportManager(usb_stream=FakeStream(opened=True), wifi_enabled=False)
+        self.assertEqual(63, manager.preferred_write_size())
 
     def test_firmware_uses_two_builtin_tinyusb_cdc_instances(self):
         """板级固件必须启用第二路 CDC 及独立的接口和端点。"""
@@ -325,6 +355,27 @@ class UsbTransportTest(unittest.TestCase):
         self.assertEqual(0, stream.raw_read_count)
         self.assertIn(b"FRAME_TIMEOUT", stream.written)
 
+    def test_protocol_keeps_complete_frame_when_later_partial_times_out(self):
+        """C 层半帧超时在读取中途到达时，不得丢弃此前已取出的完整请求。"""
+        stream = FakeCompleteFrameTransport((JsonProtocol._build_frame("PING", b""),))
+        original_read = stream.read_frame
+
+        def read_frame_then_report_timeout():
+            """模拟完整帧已取出后，后台 C 任务上报后续另一帧的半帧超时。"""
+            frame = original_read()
+            stream.receive_error = b"FRAME_TIMEOUT"
+            return frame
+
+        stream.read_frame = read_frame_then_report_timeout
+        protocol = JsonProtocol(stream=stream)
+        protocol._write_pong = mock.Mock()
+
+        protocol.poll()
+
+        protocol._write_pong.assert_called_once_with()
+        self.assertIn(b"FRAME_TIMEOUT", stream.written)
+        self.assertEqual(0, stream.raw_read_count)
+
     def test_receive_buffer_holds_two_maximum_frames(self):
         """独立 CDC 接收队列必须能覆盖业务阻塞期间的双帧突发。"""
         self.assertEqual(32768, normalize_rx_buffer_size(4096, 16384))
@@ -334,7 +385,7 @@ class UsbTransportTest(unittest.TestCase):
         """传输层应直接返回 CDC 缓冲区的可读字节数。"""
         stream = FakeStream(opened=True)
         stream.data.extend(b"x" * 3904)
-        with mock.patch("net.usb_cdc.select.poll", FakePoll):
+        with mock.patch("net.usb_cdc.select.poll", FakePoll, create=True):
             transport = UsbCdcTransport(stream)
         self.assertEqual(3904, transport.available())
 
@@ -343,7 +394,10 @@ class UsbTransportTest(unittest.TestCase):
         console_input = FakeConsoleInput()
         console_output = FakeConsoleOutput()
         console_input.data.extend(b"P")
-        with mock.patch("usb.console.select.poll", FakePoll), mock.patch.object(
+        # Windows select 没有 poll/POLLIN，测试显式补齐 MicroPython 的轮询接口。
+        with mock.patch("usb.console.select.poll", FakePoll, create=True), mock.patch(
+            "usb.console.select.POLLIN", 1, create=True,
+        ), mock.patch.object(
             usb_transport,
             "create_dedicated_cdc",
         ) as create_cdc:

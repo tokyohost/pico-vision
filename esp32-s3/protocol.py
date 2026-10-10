@@ -305,10 +305,8 @@ class JsonProtocol:
         while read_count < SERIAL_READ_BUDGET and self._input_available():
             receive_error = error_reader() if callable(error_reader) else None
             if receive_error:
-                self._buffer = bytearray()
-                self._last_byte_ms = None
-                self._frame_started_ms = None
-                self._frame_read_calls = 0
+                # 半帧由 C 任务清理；这里的缓冲只包含已经取出的完整帧。
+                # 后续帧的异步超时不能丢弃此前完整请求，否则会继续制造 ACK 超时。
                 self._write_frame("ERR", bytes(receive_error))
                 continue
             frame = reader() if callable(reader) else None

@@ -48,10 +48,12 @@ from pico_snapshot import (
     split_snapshot_payloads,
     wire_snapshot,
 )
-from usbCdcFramework import UsbCdcFramework
+from usbCdcFramework import UsbCdcFramework, UsbCdcFrameReader
+from usb_transfer_diagnostics import UsbTransferDiagnostics
 
 
 JSON_ACK_TIMEOUT = 8.0
+HANDSHAKE_RESPONSE_TIMEOUT = 5.0
 JSON_PROGRESS_GRACE_SECONDS = 2.0
 SERIAL_SLOW_SEND_WARNING_MS = 200.0
 SERIAL_WRITE_CHUNK_SIZE = 511
@@ -109,7 +111,9 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
         self._json_ack_errors = {}
         self._snapshot_send_lock = threading.Lock()
         self.transport = None
+        self._handshake_reader = None
         self.event_callback = None
+        self._usb_transfer_diagnostics = UsbTransferDiagnostics()
 
     @property
     def is_connected(self):
@@ -355,6 +359,8 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
             error_callback=self._handle_cdc_error,
             write_chunk_size=write_chunk_size,
             write_chunk_pause_seconds=write_chunk_pause_seconds,
+            frame_reader=self._handshake_reader,
+            update_write_timeout=isinstance(self.serial, WebSocketDevice),
         )
         self.transport.start()
 
@@ -386,9 +392,22 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
             or payload in ("FRAME_TIMEOUT", "FRAME_TOO_LARGE", "JSONB_TIMEOUT")
         ):
             LOGGER.warning("[JSON 帧错误][%s] %s", self.port_name, payload)
+            if payload == "FRAME_TIMEOUT" and self._uses_usb_transfer_diagnostics():
+                self._usb_transfer_diagnostics.record_frame_timeout(
+                    self.port_name, firmware_version=self.firmware_version, sdk_version=self.sdk_version,
+                )
             self._notify_json_frame_error(payload)
             return True
         return False
+
+    def _uses_usb_transfer_diagnostics(self):
+        """仅为已打开的 USB 串口记录线材排查指标，排除 WebSocket 连接。"""
+        return self.serial is not None and not self.websocket_url and not isinstance(self.serial, WebSocketDevice)
+
+    def _record_usb_write_diagnostics(self, label, timing):
+        """把统一写入耗时交给 USB 诊断器，确保两种串口发送路径都有吞吐记录。"""
+        if self._uses_usb_transfer_diagnostics():
+            self._usb_transfer_diagnostics.record_write(self.port_name, label, timing)
 
     @staticmethod
     def available_ports():
@@ -397,6 +416,8 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
 
     def _handshake(self, device):
         """发送设备发现命令并验证 Pico 固件响应。"""
+        reader = UsbCdcFrameReader(device)
+        self._handshake_reader = None
         self.board_model = None
         self.device_id = None
         self.lcd_device_type = None
@@ -444,11 +465,13 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
                 written,
                 len(wire_ping),
             )
-            deadline = time.monotonic() + 1.2
+            # PONG 会扫描内置和自定义样式，大型目录在 ESP32-S3 上可耗时数秒。
+            # 等待完整回复后再重试，避免重复 PING/PONG 排队挤占首个 JSON ACK。
+            deadline = time.monotonic() + HANDSHAKE_RESPONSE_TIMEOUT
             while time.monotonic() < deadline:
                 if self.cancellation_event is not None and self.cancellation_event.is_set():
                     return False
-                raw_message = device.readline()
+                raw_message = reader.readline()
                 message = raw_message.decode("utf-8", errors="replace").strip()
                 if message:
                     LOGGER.debug("[Pico -> Monitor][%s][握手响应] %s", device.port, message)
@@ -459,6 +482,8 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
                     continue
                 if frame and frame[0] == "PONG":
                     self._parse_pong_payload(frame[1])
+                    # 将握手读到的后续回复移交读线程，不丢弃同一次 USB 读取中的帧。
+                    self._handshake_reader = reader
                     return True
         return False
 
@@ -534,6 +559,7 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
                     else max(1.0, float(timeout if timeout is not None else JSON_ACK_TIMEOUT))
                 ),
             )
+            self._record_usb_write_diagnostics(label, timing)
             total_elapsed_ms = build_elapsed_ms + timing["send_elapsed_ms"]
             LOGGER.debug(
                 "[协议耗时][%s][%s 写入汇总] 构帧=%.1f ms，write合计=%.1f ms，最慢write=%.1f ms，flush=%.1f ms，发送阶段=%.1f ms，总写入=%d/%d 字节，共%d块",
@@ -585,12 +611,14 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
             write_started = time.monotonic()
             device = self.serial
             previous_timeout = getattr(device, "write_timeout", None)
-            if deadline is not None and hasattr(device, "write_timeout"):
+            # USB 的固定写入超时不逐块重设，避免控制回调清空设备尚未消费的帧字节。
+            update_write_timeout = deadline is not None and isinstance(device, WebSocketDevice)
+            if update_write_timeout:
                 device.write_timeout = max(0.0, deadline - time.monotonic())
             try:
                 written = device.write(chunk)
             finally:
-                if deadline is not None and hasattr(device, "write_timeout"):
+                if update_write_timeout:
                     device.write_timeout = previous_timeout
             chunk_elapsed_ms = (time.monotonic() - write_started) * 1000
             write_elapsed_ms += chunk_elapsed_ms
@@ -658,12 +686,16 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
                 len(packet),
                 chunk_count,
             )
-        return {
+        timing = {
             "build_elapsed_ms": build_elapsed_ms,
             "send_started": send_started,
             "send_finished": send_started + send_elapsed_ms / 1000,
             "send_elapsed_ms": send_elapsed_ms,
+            "total_written": total_written,
+            "slowest_write_ms": slowest_write_ms,
         }
+        self._record_usb_write_diagnostics(label, timing)
+        return timing
 
     def _read_protocol_frame(self, label):
         """读取并解析一条 Pico 返回帧，同时输出原始响应日志。"""
@@ -852,6 +884,7 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
                 LOGGER.exception("[串口异常] 关闭 %s 失败", device.port)
         elif transport is not None:
             transport.close(wait=True)
+        self._usb_transfer_diagnostics.reset()
 
 
 REBOOT_COMMAND = PicoJsonClient.build_command_packet("reboot", request_id="reboot")

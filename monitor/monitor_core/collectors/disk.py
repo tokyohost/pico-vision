@@ -81,21 +81,27 @@ class DiskMetricsMixin:
     @staticmethod
     def _physical_disk_statistics(disks):
         """从磁盘明细生成发送给 Pico 的物理磁盘容量、温度和读写速度统计。"""
+        def nullable_number(value, converter):
+            """保留传感器未就绪的空值，并规范化已经采集到的数值。"""
+            return None if value is None else converter(value)
+
+        # SensorHost 显式返回 None 时，字典默认值不会生效；未知速率和占用率保留为空。
+        # 容量、健康等级和序列沿用缺字段时的协议默认值，避免单块磁盘中断整次采集。
         return [
             {
                 "name": disk.get("name", "DISK"),
-                "devices": list(disk.get("devices", ())),
-                "mountpoints": list(disk.get("mountpoints", ())),
-                "used_bytes": int(disk.get("used_bytes", 0)),
-                "total_bytes": int(disk.get("total_bytes", 0)),
-                "free_bytes": int(disk.get("free_bytes", 0)),
-                "percent": float(disk.get("percent", 0)),
+                "devices": list(disk.get("devices") or ()),
+                "mountpoints": list(disk.get("mountpoints") or ()),
+                "used_bytes": int(disk.get("used_bytes") or 0),
+                "total_bytes": int(disk.get("total_bytes") or 0),
+                "free_bytes": int(disk.get("free_bytes") or 0),
+                "percent": nullable_number(disk.get("percent", 0), float),
                 "temperature_c": disk.get("temperature_c"),
-                "health": int(disk.get("health", DISK_HEALTH_UNKNOWN)),
-                "read_bps": int(disk.get("read_bps", 0)),
-                "write_bps": int(disk.get("write_bps", 0)),
-                "read_history": list(disk.get("read_history", ())),
-                "write_history": list(disk.get("write_history", ())),
+                "health": int(disk.get("health") or DISK_HEALTH_UNKNOWN),
+                "read_bps": nullable_number(disk.get("read_bps", 0), int),
+                "write_bps": nullable_number(disk.get("write_bps", 0), int),
+                "read_history": list(disk.get("read_history") or ()),
+                "write_history": list(disk.get("write_history") or ()),
             }
             for disk in disks
         ]

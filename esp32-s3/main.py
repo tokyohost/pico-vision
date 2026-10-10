@@ -645,7 +645,7 @@ class Application:
         return True
 
     def _monitor_timed_out(self, now):
-        """判断 Monitor 是否已连续超过配置周期没有发送有效消息。"""
+        """按 Monitor 实际 JSON 发送间隔判断是否已连续多个周期没有有效消息。"""
         if not self._monitor_connected:
             return False
         last_message_ms = self._protocol.last_message_ms()
@@ -685,6 +685,12 @@ class Application:
     def _return_to_waiting_page(self):
         """切换到系统启动等待页，并保留现有 USB CDC 等待主机重连。"""
         self._monitor_connected = False
+        self._idle_active = False
+        self._idle_wait_started_ms = time.ticks_ms()
+        # 旧按键提示到期后会重新提交其快照，必须同时取消，避免覆盖等待页。
+        self._button_hint_until_ms = None
+        self._button_hint_snapshot = None
+        self._button_hint_label = None
         self._cache.clear()
         self._renderer.set_style("boot")
         self._rendering_version = -1
@@ -733,6 +739,11 @@ class Application:
                 self._idle_active = False
             self._led.update()
             now = time.ticks_ms()
+            # 禁止待机只关闭待机样式，不应让通信中断后仍显示失效的监控数据。
+            # 在读取本轮快照及接收忙状态判断之前清理，避免旧快照再次覆盖等待页，
+            # 也防止残留半帧或未完成的渲染长期阻止页面切换。
+            if not self._idle_enabled and self._monitor_timed_out(now):
+                self._return_to_waiting_page()
             snapshot, version = self._cache.latest()
             idle_refresh_due = (
                 time.ticks_diff(now, self._next_clock_render) >= 0
@@ -801,16 +812,18 @@ class Application:
             ):
                 display = snapshot.get("display", {}) if snapshot else {}
                 self._dev_mode = bool(display.get("dev"))
-                requested_interval_ms = display.get(
+                # 此协议字段沿用旧名称，Monitor 实际下发的是 JSON 发送间隔，
+                # 包含 ACK 自适应调整；各数据采集任务的周期不参与通信超时计算。
+                requested_send_interval_ms = display.get(
                     "collection_interval_ms", self._monitor_interval_ms
                 )
                 try:
-                    requested_interval_ms = int(requested_interval_ms)
+                    requested_send_interval_ms = int(requested_send_interval_ms)
                 except (TypeError, ValueError):
-                    requested_interval_ms = self._monitor_interval_ms
+                    requested_send_interval_ms = self._monitor_interval_ms
                 # 与 Monitor 的自适应发送下限保持一致，避免异常快照把断线判定
                 # 周期压缩到 300ms 以下并造成不必要的会话抖动。
-                self._monitor_interval_ms = max(300, requested_interval_ms)
+                self._monitor_interval_ms = max(300, requested_send_interval_ms)
                 self._monitor_connected = True
                 self._idle_enabled = bool(display.get("idle_enabled", True))
                 self._idle_style = str(display.get("idle_style", self._idle_style) or "idle")

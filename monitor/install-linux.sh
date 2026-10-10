@@ -53,6 +53,7 @@ install_application() {
     install -m 0644 "$script_directory/constants.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/json_ack_timing_cache.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/usbCdcFramework.py" "$INSTALL_ROOT/"
+    install -m 0644 "$script_directory/usb_transfer_diagnostics.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/pico_client.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/pico_ack.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/pico_commands.py" "$INSTALL_ROOT/"

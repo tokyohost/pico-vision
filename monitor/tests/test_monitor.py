@@ -1985,6 +1985,37 @@ class SystemCollectorTest(unittest.TestCase):
         self.assertEqual(statistics[0]["read_bps"], 0)
         self.assertEqual(statistics[0]["write_history"], [])
 
+    def test_physical_disk_statistics_preserves_unavailable_rates(self):
+        """确认 SensorHost 返回空读写速率时不会转换失败，也不会误报磁盘空闲。"""
+        for read_bps, write_bps in ((None, None), (None, 4096), (2048, None), (0, 0)):
+            with self.subTest(read_bps=read_bps, write_bps=write_bps):
+                disk = {"name": "NVME0", "read_bps": read_bps, "write_bps": write_bps}
+
+                statistics = SystemInformationCollector._physical_disk_statistics([disk])[0]
+
+                self.assertEqual(statistics["read_bps"], read_bps)
+                self.assertEqual(statistics["write_bps"], write_bps)
+                self.assertEqual(disk, {"name": "NVME0", "read_bps": read_bps, "write_bps": write_bps})
+
+    def test_physical_disk_statistics_handles_nullable_sensor_fields(self):
+        """确认只有温度的磁盘快照可安全转换，并保留未采集到的占用率。"""
+        disk = {"name": "DISK0", "temperature_c": 45.0}
+        for field in (
+            "devices", "mountpoints", "used_bytes", "total_bytes", "free_bytes",
+            "percent", "health", "read_bps", "write_bps", "read_history", "write_history",
+        ):
+            disk[field] = None
+
+        statistics = SystemInformationCollector._physical_disk_statistics([disk])[0]
+
+        for field in ("used_bytes", "total_bytes", "free_bytes", "health"):
+            self.assertEqual(statistics[field], 0)
+        for field in ("percent", "read_bps", "write_bps"):
+            self.assertIsNone(statistics[field])
+        for field in ("devices", "mountpoints", "read_history", "write_history"):
+            self.assertEqual(statistics[field], [])
+        self.assertEqual(statistics["temperature_c"], 45.0)
+
     def test_smart_health_classification_uses_overall_status_and_attributes(self):
         """验证 SMART 总体失败和坏块指标会映射到约定的健康等级。"""
         self.assertEqual(
