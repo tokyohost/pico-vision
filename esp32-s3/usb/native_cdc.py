@@ -49,6 +49,11 @@ class NativeCdcStream:
         """独立数据 CDC 不经过 REPL 控制字符处理，可承载原始 JSONB。"""
         return True
 
+    def preferred_write_size(self):
+        """原生 C 后端自行处理 FIFO 背压，使用约 1 KiB 短包提高回复吞吐。"""
+        # 避免沿用 REPL 每 63 字节等待一次的策略；保留非 64 整倍数的短包边界。
+        return 1023
+
     def readinto(self, buffer):
         """从旧版 C 环形缓冲区批量读取数据。"""
         return self._backend.readinto(buffer)

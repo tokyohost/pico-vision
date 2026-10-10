@@ -16,6 +16,40 @@ CDC_WRITE_CHUNK_PAUSE_SECONDS = 0.0
 # PV1 每个数据包都以换行结束；完整帧交给串口驱动后已经按顺序排队，
 # 不应再调用 Windows pyserial.flush() 等待硬件队列清空。
 CDC_FLUSH_UNFRAMED_ONLY = True
+CDC_MAX_RESPONSE_SIZE = 16 * 1024 + 64
+
+
+class UsbCdcFrameReader:
+    """批量读取 USB 回复并跨读取超时保留半帧，避免逐字节 Windows I/O。"""
+
+    def __init__(self, device):
+        """绑定打开的串口并初始化未完成回复缓冲。"""
+        self.device = device
+        self._pending = bytearray()
+
+    def readline(self):
+        """返回一条完整回复；读取超时或尚未收到帧尾时保留已有字节。"""
+        newline = self._pending.find(b"\n")
+        if newline < 0:
+            reader = getattr(self.device, "read", None)
+            if callable(reader) and hasattr(self.device, "in_waiting"):
+                # pyserial.readline 逐字节调用 Windows ReadFile，大型 PONG/COMMAND
+                # 可耗尽业务等待窗口；先取驱动已缓存的数据，无数据时只等待首字节。
+                size = max(1, min(int(self.device.in_waiting), 4096))
+                raw = reader(size)
+            else:
+                # WebSocket 已提供消息边界，旧传输与测试替身继续使用原读取接口。
+                raw = self.device.readline()
+            self._pending.extend(raw)
+            newline = self._pending.find(b"\n")
+        frame_size = newline + 1 if newline >= 0 else len(self._pending)
+        if frame_size > CDC_MAX_RESPONSE_SIZE:
+            raise RuntimeError("Pico 回复超过 PV1 帧长度上限")
+        if newline < 0:
+            return b""
+        response = bytes(self._pending[:newline + 1])
+        del self._pending[:newline + 1]
+        return response
 
 
 class UsbCdcFrameworkClosed(RuntimeError):
@@ -92,6 +126,8 @@ class UsbCdcFramework:
             write_chunk_pause_seconds=CDC_WRITE_CHUNK_PAUSE_SECONDS,
             incoming_limit=256,
             write_limit=4,
+            frame_reader=None,
+            update_write_timeout=False,
     ):
         """绑定已握手串口并准备有界读写队列。"""
         self.device = device
@@ -101,6 +137,8 @@ class UsbCdcFramework:
         self.error_callback = error_callback
         self.write_chunk_size = int(write_chunk_size)
         self.write_chunk_pause_seconds = max(0.0, float(write_chunk_pause_seconds))
+        # 仅 WebSocket 的纯 Python 超时字段允许逐块更新；USB 禁止重新配置控制线。
+        self.update_write_timeout = bool(update_write_timeout)
         self._incoming_queue = queue.Queue(maxsize=max(1, int(incoming_limit)))
         self._write_queue = queue.Queue(maxsize=max(1, int(write_limit)))
         self._stopping = threading.Event()
@@ -111,6 +149,7 @@ class UsbCdcFramework:
         self._last_error = None
         self._reader_thread = None
         self._writer_thread = None
+        self._frame_reader = frame_reader or UsbCdcFrameReader(device)
 
     def start(self):
         """启动 USB CDC 读线程和写线程。"""
@@ -196,6 +235,14 @@ class UsbCdcFramework:
                 .format(job.label, job.timeout, job.stage, job.position, len(job.packet))
             )
             self._record_error(serial.SerialTimeoutException(detail))
+            # 不通过修改 write_timeout 打断写入：Windows 会重新提交 DTR/RTS
+            # 配置，旧 SDK 可能因此清空正在接收的半帧。预算到期时直接取消 I/O。
+            cancel_write = getattr(self.device, "cancel_write", None)
+            if callable(cancel_write):
+                try:
+                    cancel_write()
+                except (OSError, serial.SerialException):
+                    LOGGER.debug("[串口写入] 取消超时写入失败：%s", self.port_name, exc_info=True)
             raise serial.SerialTimeoutException(
                 detail
             )
@@ -224,7 +271,7 @@ class UsbCdcFramework:
         """持续读取 Pico 响应，避免 ACK/ERR/EVENT 堆积在系统 CDC 缓冲中。"""
         while not self._stopping.is_set():
             try:
-                raw = self.device.readline()
+                raw = self._frame_reader.readline()
             except TypeError as error:
                 if not getattr(self.device, "is_open", False):
                     self._record_error(serial.SerialException("读取 Pico 响应时串口已关闭"))
@@ -234,6 +281,9 @@ class UsbCdcFramework:
             except (OSError, serial.SerialException) as error:
                 if not self._stopping.is_set():
                     self._record_error(error)
+                return
+            except RuntimeError as error:
+                self._record_error(error)
                 return
             if not raw:
                 time.sleep(CDC_READ_IDLE_SECONDS)
@@ -299,14 +349,16 @@ class UsbCdcFramework:
             write_started = time.monotonic()
             job.stage = "write"
             job.position = position
+            # 沿用打开串口时的固定超时，整帧截止时间由等待线程和取消 I/O 保证。
+            # 逐块修改超时会触发 Windows SetCommState，可能清空设备半帧或 ACK。
+            # 抛出超时时可能已有部分字节落线，不能盲目重发整个块。
             previous_timeout = getattr(self.device, "write_timeout", None)
-            if hasattr(self.device, "write_timeout"):
+            if self.update_write_timeout:
                 self.device.write_timeout = max(0.0, deadline - time.monotonic())
             try:
-                # 抛出超时时可能已有部分字节落线，不能盲目重发整个块。
                 written = self.device.write(chunk)
             finally:
-                if hasattr(self.device, "write_timeout"):
+                if self.update_write_timeout:
                     self.device.write_timeout = previous_timeout
             chunk_elapsed_ms = (time.monotonic() - write_started) * 1000
             result.write_elapsed_ms += chunk_elapsed_ms

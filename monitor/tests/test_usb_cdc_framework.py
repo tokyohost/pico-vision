@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import serial
 
 from pico_client import JsonFrameRejectedError, PicoJsonClient, build_frame, parse_frame
-from usbCdcFramework import UsbCdcFramework
+from usbCdcFramework import UsbCdcFramework, UsbCdcFrameReader
 
 
 class ThreadedSerial:
@@ -89,8 +89,160 @@ class BlockingWriteSerial(ThreadedSerial):
         self.write_released.set()
 
 
+class ReconfiguringSerial(ThreadedSerial):
+    """模拟串口重新配置触发设备控制回调并清除尚未组帧的数据。"""
+
+    def __init__(self):
+        """初始化固定写入超时及串口重新配置计数。"""
+        super().__init__()
+        self._write_timeout = 10.0
+        self.reconfigure_count = 0
+
+    @property
+    def write_timeout(self):
+        """返回打开串口时设置的写入超时。"""
+        return self._write_timeout
+
+    @write_timeout.setter
+    def write_timeout(self, value):
+        """模拟 Windows SetCommState 导致设备接收缓冲被清空。"""
+        self._write_timeout = value
+        self.reconfigure_count += 1
+        self.written.clear()
+
+
+class CancellableWriteSerial(BlockingWriteSerial):
+    """模拟支持取消挂起 Windows 写入的串口。"""
+
+    def __init__(self):
+        """初始化取消通知，区分取消写入和关闭句柄。"""
+        super().__init__()
+        self.write_cancelled = threading.Event()
+
+    def write(self, data):
+        """等待取消或关闭；取消后不继续写入剩余半帧。"""
+        self.write_started.set()
+        self.write_released.wait(2.0)
+        if self.write_cancelled.is_set():
+            raise serial.SerialException("写入已取消")
+        return super().write(data)
+
+    def cancel_write(self):
+        """模拟 CancelIoEx 解除正在等待的写入。"""
+        self.write_cancelled.set()
+        self.write_released.set()
+
+
 class UsbCdcFrameworkTest(unittest.TestCase):
     """验证 CDC 框架的读写线程和响应分流行为。"""
+
+    def test_reader_preserves_partial_response_across_timeouts(self):
+        """串口分段或临时返回空数据时，半帧不得被当作坏帧丢弃。"""
+        packet = build_frame("COMMAND", b'{"status":"ok"}')
+        device = ThreadedSerial([packet[:10], b"", packet[10:25], packet[25:]])
+        framework = UsbCdcFramework(device, parse_frame)
+        framework.start()
+        try:
+            self.assertEqual(("COMMAND", b'{"status":"ok"}'), framework.read_frame("查询", timeout=1.0))
+            self.assertTrue(framework.is_alive)
+        finally:
+            framework.close()
+
+    def test_reader_uses_bulk_reads_and_retains_following_frames(self):
+        """驱动缓存中的大型回复批量读取，同批次后续 ACK 留给下一次读取。"""
+        packet = build_frame("PONG", b"x" * 5000)
+        ack = build_frame("ACK", b"JSON:1")
+        received = bytearray(packet + ack)
+        device = ThreadedSerial()
+
+        def read(size):
+            """按请求块大小移出模拟驱动缓存中的数据。"""
+            data = bytes(received[:size])
+            del received[:size]
+            return data
+
+        device.read = mock.Mock(side_effect=read)
+        device.in_waiting = len(received)
+        reader = UsbCdcFrameReader(device)
+        self.assertEqual(b"", reader.readline())
+        self.assertEqual(packet, reader.readline())
+        self.assertEqual(ack, reader.readline())
+        self.assertEqual(2, device.read.call_count)
+
+    def test_handshake_waits_for_slow_style_catalog_without_duplicate_ping(self):
+        """样式扫描超过旧的 1.2 秒窗口时，应等待原 PONG 而不是重复发送 PING。"""
+        pong = build_frame("PONG", b'{"board_model":"esp32-s3"}')
+        device = ThreadedSerial([b"", pong])
+        client = PicoJsonClient(probe_interval=0)
+        with mock.patch("pico_client.time.monotonic", side_effect=[0.0, 0.0, 2.6]):
+            self.assertTrue(client._handshake(device))
+        self.assertEqual(1, bytes(device.written).count(b"PV1:PING:"))
+
+    def test_handshake_hands_following_frame_to_cdc_reader(self):
+        """PONG 与后续事件同时到达时，握手移交缓冲且读线程保留后续事件。"""
+        pong = build_frame("PONG", b'{"board_model":"esp32-s3"}')
+        event = build_frame("EVENT", b"READY")
+        device = ThreadedSerial([pong + event])
+        client = PicoJsonClient(probe_interval=0)
+        self.assertTrue(client._handshake(device))
+        client.serial = device
+        client._start_cdc_framework()
+        try:
+            self.assertEqual(("EVENT", b"READY"), client.transport.read_frame("启动", timeout=1.0))
+        finally:
+            client.close()
+
+    def test_multiblock_frame_does_not_reconfigure_open_serial(self):
+        """多块帧发送期间不得重新配置串口，否则设备半帧可能被清空。"""
+        from usbCdcFramework import _UsbCdcWriteJob
+        device = ReconfiguringSerial()
+        packet = build_frame("JSONB", bytes(range(256)) * 8)
+        framework = UsbCdcFramework(device, parse_frame)
+
+        result = framework._perform_write(_UsbCdcWriteJob(packet, "JSONB#1", 0, 1.0))
+
+        self.assertGreater(result.chunk_count, 1)
+        self.assertEqual(packet, bytes(device.written))
+        self.assertEqual(0, device.reconfigure_count)
+        self.assertEqual(10.0, device.write_timeout)
+
+    def test_network_transport_keeps_independent_write_budget(self):
+        """网络连接保留独立发送预算，不能被较短的默认读取超时截断。"""
+        from usbCdcFramework import _UsbCdcWriteJob
+        device = ThreadedSerial()
+        device.write_timeout = 0.05
+        observed = []
+        original_write = device.write
+
+        def write(data):
+            """记录发送时实际使用的网络等待预算。"""
+            observed.append(device.write_timeout)
+            return original_write(data)
+
+        device.write = write
+        framework = UsbCdcFramework(device, parse_frame, update_write_timeout=True)
+        framework._perform_write(_UsbCdcWriteJob(b"abc\n", "网络快照", 0, 1.0))
+        self.assertGreater(observed[0], 0.5)
+        self.assertEqual(0.05, device.write_timeout)
+
+    def test_deadline_cancels_blocking_write_without_reconfiguring_serial(self):
+        """固定串口配置仍须按整帧预算取消挂起写入，且不补发半帧。"""
+        device = CancellableWriteSerial()
+        framework = UsbCdcFramework(device, parse_frame)
+        framework.start()
+        started = time.monotonic()
+        try:
+            with self.assertRaises(serial.SerialTimeoutException):
+                framework.write_packet(b"abcdef", "超时帧", timeout=0.05)
+            self.assertTrue(device.write_started.is_set())
+            self.assertTrue(device.write_cancelled.wait(0.2))
+            framework._writer_thread.join(timeout=0.3)
+            self.assertFalse(framework._writer_thread.is_alive())
+            self.assertFalse(framework.is_alive)
+            self.assertEqual(b"", device.written)
+            self.assertLess(time.monotonic() - started, 0.5)
+        finally:
+            framework.close()
 
     def test_snapshot_survives_startup_backpressure(self):
         """JSONB 首片背压超过旧的 400ms 限制后仍可完整发送。"""

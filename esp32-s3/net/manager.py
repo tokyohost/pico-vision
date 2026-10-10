@@ -137,7 +137,11 @@ class TransportManager:
 
     def preferred_write_size(self):
         """返回活动策略适合的单次写入大小。"""
-        return 65535 if self.active_mode() == "wifi" else 63
+        if self.active_mode() == "wifi":
+            return 65535
+        # 原生 CDC 由 C 后端推进发送，不应使用控制台逐 63 字节让步的节奏。
+        preferred = getattr(self._active, "preferred_write_size", None)
+        return preferred() if callable(preferred) else 63
 
     def supports_binary_frames(self):
         """返回当前活动传输是否能无损承载原始二进制帧。"""

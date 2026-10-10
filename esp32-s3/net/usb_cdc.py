@@ -69,6 +69,11 @@ class UsbCdcTransport(TransportStrategy):
         """向 CDC 接口写入数据。"""
         return self._stream.write(data)
 
+    def preferred_write_size(self):
+        """采用底层原生 CDC 的块大小，控制台回退仍使用 63 字节短包。"""
+        preferred = getattr(self._stream, "preferred_write_size", None)
+        return preferred() if callable(preferred) else 63
+
     def flush(self):
         """刷新 CDC 发送缓冲区。"""
         flush = getattr(self._stream, "flush", None)

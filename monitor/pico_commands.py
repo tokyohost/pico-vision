@@ -157,7 +157,7 @@ class PicoCommandMixin:
             return metadata, pixels
         raise RuntimeError("等待 Pico 截图响应超时")
 
-    def request_style_catalog_info(self, timeout=5.0):
+    def request_style_catalog_info(self, timeout=10.0):
         """请求 Pico 返回自定义样式清单及 Flash 空间信息。"""
         if not self.is_connected:
             raise RuntimeError("Pico 串口尚未连接")
@@ -185,7 +185,7 @@ class PicoCommandMixin:
             },
         }
 
-    def request_style_catalog(self, timeout=5.0):
+    def request_style_catalog(self, timeout=10.0):
         """请求 Pico 返回自定义样式清单并保持原有列表返回格式。"""
         return self.request_style_catalog_info(timeout)["styles"]
 
