@@ -2,6 +2,7 @@
 
 import json
 import logging
+import sys
 
 from desktop.common.constants import APPLICATION_NAME
 from .bridge import WebViewBridge
@@ -52,7 +53,13 @@ class WebUiMixin:
             window.hide()
             return False
 
+        def configure_session_closing():
+            """在 Windows 原生窗口首次显示前接入会话结束处理，覆盖隐藏启动场景。"""
+            if sys.platform == "win32":
+                self._configure_windows_session_closing(window)
+
         window.events.closing += hide_instead_of_closing
+        window.events.before_show += configure_session_closing
         self.webview_window = window
         self.settings_window = window
         return window

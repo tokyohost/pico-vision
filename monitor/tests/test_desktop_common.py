@@ -163,7 +163,7 @@ class DesktopCommonTest(unittest.TestCase):
         application._resource_path = mock.Mock(return_value=Path(__file__))
         application.webview_bridge = mock.Mock()
         window = mock.Mock()
-        window.events = types.SimpleNamespace(closing=EventHook())
+        window.events = types.SimpleNamespace(closing=EventHook(), before_show=EventHook())
         webview = mock.Mock()
         webview.create_window.return_value = window
         with mock.patch.dict(sys.modules, {"webview": webview}):
@@ -177,6 +177,27 @@ class DesktopCommonTest(unittest.TestCase):
         self.assertTrue(window.events.closing.callback())
         application._stop_worker.assert_called_once()
         window.destroy.assert_called_once()
+
+    def test_posix_windows_do_not_install_windows_session_handler(self):
+        """确认 macOS 和 Linux 首次显示窗口时不访问 Windows 关机接口。"""
+        for platform in ("darwin", "linux"):
+            with self.subTest(platform=platform):
+                application = mock.Mock()
+                application.stopping = threading.Event()
+                application._resource_path.return_value = Path(__file__)
+                window = mock.Mock()
+                window.events = types.SimpleNamespace(
+                    closing=EventHook(), before_show=EventHook()
+                )
+                webview = mock.Mock()
+                webview.create_window.return_value = window
+                with mock.patch("desktop.common.ui_api.webview.sys.platform", platform), \
+                        mock.patch.dict(sys.modules, {"webview": webview, "System.Windows.Forms": None}):
+                    WebUiMixin._initialize_webview(application)
+                    window.events.before_show.callback()
+                application._configure_windows_session_closing.assert_not_called()
+                self.assertFalse(window.events.closing.callback())
+                window.hide.assert_called_once_with()
 
     def test_clipboard_action_is_controlled(self):
         """剪贴板只允许受限文本，不暴露原生平台对象。"""
