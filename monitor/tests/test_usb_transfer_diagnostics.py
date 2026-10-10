@@ -2,6 +2,7 @@
 
 import time
 import unittest
+from itertools import count
 from types import SimpleNamespace
 from unittest import mock
 
@@ -139,12 +140,32 @@ class UsbTransferDiagnosticsIntegrationTest(unittest.TestCase):
         client.serial = ConfigurationCountingSerial()
         packet = b"x" * 2047 + b"\n"
 
-        timing = client._write_packet(packet, "JSONB#1", deadline=time.monotonic() + 5)
+        # 快速内存写入在 Windows 上可能落在同一时钟刻度，使用递增时钟保证吞吐可计算。
+        with mock.patch("pico_client.time.monotonic", side_effect=count(100.0, 0.001)):
+            timing = client._write_packet(packet, "JSONB#1", deadline=time.monotonic() + 5)
 
         self.assertEqual(packet, bytes(client.serial.written))
         self.assertEqual(0, client.serial.configuration_count)
         self.assertEqual(2048, timing["total_written"])
+        self.assertGreater(timing["send_elapsed_ms"], 0)
         self.assertIsNotNone(client._usb_transfer_diagnostics._last_write)
+        self.assertEqual("JSONB#1", client._usb_transfer_diagnostics._last_write[1])
+
+    def test_direct_usb_write_with_zero_duration_skips_throughput(self):
+        """同一时钟刻度内完成的 USB 写入应完整发送，但不生成无依据的吞吐记录。"""
+        client = PicoJsonClient()
+        client.serial = ConfigurationCountingSerial()
+        packet = b"x" * 2047 + b"\n"
+
+        # 固定时钟模拟计时精度不足，确认不会为了吞吐统计虚构耗时或重配置串口。
+        with mock.patch("pico_client.time.monotonic", return_value=100.0):
+            timing = client._write_packet(packet, "JSONB#1", deadline=time.monotonic() + 5)
+
+        self.assertEqual(packet, bytes(client.serial.written))
+        self.assertEqual(0, client.serial.configuration_count)
+        self.assertEqual(2048, timing["total_written"])
+        self.assertEqual(0, timing["send_elapsed_ms"])
+        self.assertIsNone(client._usb_transfer_diagnostics._last_write)
 
     def test_framework_write_records_completed_frame_throughput(self):
         """CDC 后台写线程的完成结果进入诊断器，速率以该次实际写入字节计算。"""
