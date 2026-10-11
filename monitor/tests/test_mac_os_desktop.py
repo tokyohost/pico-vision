@@ -502,6 +502,10 @@ class MacOsDesktopTest(unittest.TestCase):
         for name in ("MACOS_CERTIFICATE_P12_BASE64", "MACOS_CERTIFICATE_PASSWORD", "MACOS_SIGNING_IDENTITY", "MACOS_APPLE_ID", "MACOS_APP_PASSWORD", "MACOS_TEAM_ID", "OMNIWATCH_DOC_TOKEN"):
             self.assertIn("secrets." + name, content)
         self.assertIn("--managed-python 3.13.5", content)
+        self.assertIn('uv venv --seed --python "$runtime_python"', content)
+        self.assertIn('uv pip install --python "$build_environment/bin/python"', content)
+        self.assertIn('"$MONITOR_BUILD_PYTHON" -B tools/run_isolated_tests.py', content)
+        self.assertIn('"$MONITOR_BUILD_PYTHON" -B -m desktop.macos.build', content)
         self.assertIn("tools/run_isolated_tests.py", content)
         self.assertEqual("build", values["jobs"]["release"]["needs"])
 

@@ -71,11 +71,17 @@ jobs:
       - name: 安装依赖与独立插件运行时
         run: |
           set -euo pipefail
-          python -m pip install -r desktop/macos/requirements.txt "uv==0.8.22"
+          python -m pip install "uv==0.8.22"
           uv python install 3.13.5
           runtime_python="$(uv python find --managed-python 3.13.5)"
           runtime_root="$("$runtime_python" -I -c 'import sys; print(sys.prefix)')"
+          # setup-python 的解释器可能链接 runner 上仅兼容新系统的 Homebrew OpenSSL。
+          # 冻结构建与插件使用同一可迁移 Python，最低系统仍由原生依赖审计强制检查。
+          build_environment="$RUNNER_TEMP/omniwatch-build-venv"
+          uv venv --seed --python "$runtime_python" "$build_environment"
+          uv pip install --python "$build_environment/bin/python" -r desktop/macos/requirements.txt
           printf 'MONITOR_PLUGIN_RUNTIME=%s\n' "$runtime_root" >> "$GITHUB_ENV"
+          printf 'MONITOR_BUILD_PYTHON=%s/bin/python\n' "$build_environment" >> "$GITHUB_ENV"
 
       - name: 构建共享 Vue 界面
         run: |
@@ -85,7 +91,7 @@ jobs:
       - name: 写入标签版本
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          python - <<'PY'
+          "$MONITOR_BUILD_PYTHON" - <<'PY'
           import os, re
           from pathlib import Path
           version = os.environ["GITHUB_REF_NAME"][1:]
@@ -102,7 +108,7 @@ jobs:
           set -euo pipefail
           # 固件与桌面含同名模块，每个测试文件必须在独立进程运行。
           # Windows 原生注册表测试在 Windows 回归执行，不在 Mac 伪造系统 API。
-          python -B tools/run_isolated_tests.py --report dist/macos-test-results.json
+          "$MONITOR_BUILD_PYTHON" -B tools/run_isolated_tests.py --report dist/macos-test-results.json
 
       - name: 导入证书与公证凭据
         if: env.SIGN_RELEASE == 'true'
@@ -137,7 +143,7 @@ jobs:
           set -euo pipefail
           arguments=(--architecture "${{ matrix.architecture }}" --runtime "$MONITOR_PLUGIN_RUNTIME" --output dist/macos)
           if [[ "$SIGN_RELEASE" != true ]]; then arguments+=(--unsigned); fi
-          python -B -m desktop.macos.build "${arguments[@]}"
+          "$MONITOR_BUILD_PYTHON" -B -m desktop.macos.build "${arguments[@]}"
 
       - name: 上传对应架构 ZIP 与 DMG
         uses: actions/upload-artifact@v7
