@@ -4,6 +4,7 @@ import logging
 from importlib import import_module
 import os
 import sys
+import threading
 from pathlib import Path
 
 from desktop.common.constants import MONITOR_DIRECTORY
@@ -58,16 +59,39 @@ class MacOsDesktopApplication(PosixDesktopApplication):
                 os.environ["PYWEBVIEW_GUI"] = previous_backend
 
     def _show_web_page(self, page="settings"):
-        """显示共享 Vue 页面，并激活菜单栏应用的控制中心。"""
-        super()._show_web_page(page)
+        """原生窗口操作留在主线程，JavaScript 等待不得阻塞 Cocoa 消息循环。"""
+        if self.stopping.is_set():
+            return
+        window = getattr(self, "webview_window", None)
+        if window is None:
+            return super()._show_web_page(page)
         from AppKit import NSApplication
         from PyObjCTools.AppHelper import callAfter
 
-        def activate():
-            """从主线程将隐藏 Dock 图标的控制中心激活到前台。"""
-            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        def navigate():
+            """后台等待 WKWebView 结果，回调仍由 Cocoa 主线程正常执行。"""
+            if self.stopping.is_set():
+                return
+            try:
+                self._navigate_web_page(window, page)
+            except Exception:
+                LOGGER.exception("macOS Vue 页面导航失败：%s", page)
 
-        callAfter(activate)
+        def show():
+            """在主队列恢复、显示和激活窗口，再异步发送公共 Vue 导航事件。"""
+            if self.stopping.is_set():
+                return
+            try:
+                window.restore()
+                window.show()
+                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+                # pywebview 5.4 的 evaluate_js 会投递主队列任务并等待信号量。
+                # 从菜单的主线程直接调用会死锁；原生 restore 则必须留在主线程。
+                threading.Thread(target=navigate, name="macOS Vue 页面导航", daemon=True).start()
+            except Exception:
+                LOGGER.exception("恢复 macOS Web 界面失败")
+
+        callAfter(show)
 
     def _start_platform_services(self):
         """注册系统唤醒监听，并在 GUI 循环就绪后请求通知授权。"""

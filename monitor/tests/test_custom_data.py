@@ -51,6 +51,50 @@ class CustomDataTaskTest(unittest.TestCase):
             "无第三方依赖", encoding="utf-8", newline="\n"
         )
 
+    def test_macos_environment_bootstrap_preserves_signed_runtime(self):
+        """macOS 分离 venv 与 ensurepip，所有引导 Python 禁止缓存，其他平台逻辑不变。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manager = custom_data.CustomDataManager(root / "customData", root / "envs")
+            definition = manager.import_plugin(self._create_plugin(root / "source"))
+
+            def create_environment(command, callback=None):
+                """模拟环境目录创建，记录真实命令结构而不调用外部安装器。"""
+                del callback
+                if "venv" in command:
+                    executable = definition.environment_directory / "bin/python"
+                    executable.parent.mkdir(parents=True)
+                    executable.write_bytes(b"test")
+
+            try:
+                with mock.patch("custom_data.manager.sys.platform", "darwin"), \
+                     mock.patch("custom_data.manager.get_runtime_python", return_value=Path(sys.executable)), \
+                     mock.patch.object(manager, "_run_install_command", side_effect=create_environment) as execute:
+                    self.assertEqual(manager.install_dependencies(definition.name), "环境就绪")
+                commands = [call.args[0] for call in execute.call_args_list]
+                self.assertEqual(len(commands), 2)
+                self.assertIn("--without-pip", commands[0])
+                self.assertIn("ensurepip", commands[1])
+                self.assertIn("-B", commands[1])
+                self.assertIn("-s", commands[1])
+                self.assertNotIn("-I", commands[1])
+            finally:
+                manager.close()
+
+    def test_macos_install_child_disables_cache_and_external_python_paths(self):
+        """pip 安装子进程不能生成签名运行时缓存或被外部 Python 路径替换。"""
+        manager = custom_data.CustomDataManager.__new__(custom_data.CustomDataManager)
+        process = mock.Mock(stdout=io.StringIO("安装完成\n"), wait=mock.Mock(return_value=0))
+        with mock.patch("custom_data.manager.sys.platform", "darwin"), \
+             mock.patch("custom_data.manager.subprocess.Popen", return_value=process) as execute:
+            manager._run_install_command(["python", "-m", "pip", "--version"])
+        self.assertIn("-B", execute.call_args.args[0])
+        environment = execute.call_args.kwargs["env"]
+        self.assertEqual(environment["PYTHONDONTWRITEBYTECODE"], "1")
+        self.assertEqual(environment["PYTHONNOUSERSITE"], "1")
+        self.assertNotIn("PYTHONHOME", environment)
+        self.assertNotIn("PYTHONPATH", environment)
+
     def test_plugin_data_mode_defaults_and_validation(self):
         """绑定插件默认按样式发送，纯数据默认全发，非法模式明确拒绝。"""
         from custom_data.support import _load_definition, CustomDataError

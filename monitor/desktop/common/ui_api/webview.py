@@ -153,14 +153,19 @@ class WebUiMixin:
             # 后续恢复只会留下任务栏图标而不会把窗口带到前台。
             window.restore()
             window.show()
-            window.evaluate_js(
-                "window.dispatchEvent(new CustomEvent('omniwatch:navigate',"
-                " {detail: %s}))" % json.dumps(page)
-            )
+            WebUiMixin._navigate_web_page(window, page)
         except Exception as error:
             LOGGER.exception("恢复 Web 界面失败：%s", error)
             if self.icon is not None:
                 self.icon.notify("界面恢复失败：{}".format(error), APPLICATION_NAME)
+
+    @staticmethod
+    def _navigate_web_page(window, page):
+        """复用 Vue 页面导航协议，调用方负责选择原生后端允许的执行线程。"""
+        window.evaluate_js(
+            "window.dispatchEvent(new CustomEvent('omniwatch:navigate',"
+            " {detail: %s}))" % json.dumps(page)
+        )
 
     def _show_settings(self, icon=None, item=None):
         """打开 Web 设置页。"""

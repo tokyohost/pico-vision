@@ -96,7 +96,8 @@ def _merge_items(current_items, update_items, fields, replace=False):
     """按磁盘名称合并指定字段，并保留其他任务已经发布的数据。"""
     merged = {item.get("name"): dict(item) for item in current_items if item.get("name")}
     update_names = [item.get("name") for item in update_items or () if item.get("name")]
-    order = update_names if replace else [item.get("name") for item in current_items if item.get("name")]
+    # 替换时名称已预先加入顺序；新磁盘不能再次追加，否则首次容量采集会重复发布。
+    order = list(dict.fromkeys(update_names if replace else [item.get("name") for item in current_items if item.get("name")]))
     if replace:
         merged = {name: merged[name] for name in update_names if name in merged}
     for update in update_items or ():
@@ -107,7 +108,8 @@ def _merge_items(current_items, update_items, fields, replace=False):
         if item is None:
             item = {"name": name}
             merged[name] = item
-            order.append(name)
+            if name not in order:
+                order.append(name)
         for field in fields:
             if field in update:
                 item[field] = update[field]

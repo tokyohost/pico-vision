@@ -73,11 +73,11 @@ class DeviceApiMixin:
         if path.endswith("/market"):
             path = path[:-len("/market")]
         if not path:
-            # 开发版由 Vite 的 /dev-api 代理，正式发布版由 Web 服务器的
-            # /prod-api 反向代理到 Java 服务。
+            # 只有本机开发服务器提供 Vite 的 /dev-api 代理。未指定 API 路径的
+            # 远程市场地址始终使用 /prod-api，不能按桌面构建版本误选 HTML 页面。
             path = (
                 "/dev-api"
-                if MONITOR_VERSION == "development"
+                if MONITOR_VERSION == "development" and parsed.hostname in ("localhost", "127.0.0.1", "::1")
                 else "/prod-api"
             )
         return "{}://{}{}".format(parsed.scheme, parsed.netloc, path)

@@ -2,7 +2,11 @@ name: 构建 macOS 双架构应用
 
 on:
   push:
+    branches: ["mac_os_support"]
     tags: ["v*"]
+    paths:
+      - "monitor/**"
+      - ".github/workflows/build-macos-dmg.yml"
   workflow_dispatch:
     inputs:
       sign_and_notarize:
@@ -40,13 +44,18 @@ jobs:
       PYTHONDONTWRITEBYTECODE: "1"
       MACOSX_DEPLOYMENT_TARGET: "12.0"
       SIGN_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.sign_and_notarize == true }}
-      UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/omniwatch-python
       MONITOR_MAC_NOTARY_PROFILE: omniwatch-notary
-      MONITOR_MAC_NOTARY_KEYCHAIN: ${{ runner.temp }}/omniwatch-signing.keychain-db
       MONITOR_MAC_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v6
+
+      - name: 初始化构建临时路径
+        run: |
+          set -euo pipefail
+          # job 级 env 不允许 runner 上下文；在分配 runner 后写入步骤环境。
+          printf 'UV_PYTHON_INSTALL_DIR=%s/omniwatch-python\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'MONITOR_MAC_NOTARY_KEYCHAIN=%s/omniwatch-signing.keychain-db\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: 安装原生 Python
         uses: actions/setup-python@v6
@@ -88,12 +97,12 @@ jobs:
               + 'GITHUB_REPOSITORY = "tokyohost/omniwatch-doc"\n', encoding="utf-8")
           PY
 
-      - name: 验证公共层与 macOS 契约
+      - name: 隔离执行全部适用回归测试
         run: |
           set -euo pipefail
-          for module in test_desktop_common.py test_mac_os_desktop.py test_mac_os_collect_tasks.py test_web_admin.py test_monitor.py test_custom_data.py; do
-            python -B -m unittest discover -s tests -p "$module" -v
-          done
+          # 固件与桌面含同名模块，每个测试文件必须在独立进程运行。
+          # Windows 原生注册表测试在 Windows 回归执行，不在 Mac 伪造系统 API。
+          python -B tools/run_isolated_tests.py --report dist/macos-test-results.json
 
       - name: 导入证书与公证凭据
         if: env.SIGN_RELEASE == 'true'
@@ -139,6 +148,14 @@ jobs:
             monitor/dist/macos/*.dmg
           if-no-files-found: error
           compression-level: 0
+
+      - name: 保留回归测试报告
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tests-macos-${{ matrix.architecture }}
+          path: monitor/dist/macos-test-results.json
+          if-no-files-found: warn
 
       - name: 清理临时证书与钥匙串
         if: always() && env.SIGN_RELEASE == 'true'

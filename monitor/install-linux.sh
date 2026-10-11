@@ -55,6 +55,7 @@ install_application() {
     install -m 0644 "$script_directory/usbCdcFramework.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/usb_transfer_diagnostics.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/pico_client.py" "$INSTALL_ROOT/"
+    install -m 0644 "$script_directory/serial_port_discovery.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/pico_ack.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/pico_commands.py" "$INSTALL_ROOT/"
     install -m 0644 "$script_directory/pico_protocol.py" "$INSTALL_ROOT/"

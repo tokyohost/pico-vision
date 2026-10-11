@@ -26,8 +26,9 @@ datas = [
     (str(MONITOR_ROOT / "assert"), "assert"),
     (str(MONITOR_ROOT / "custom_data/runner.py"), "custom_data"),
     (str(MONITOR_ROOT.parent / "tools/mpremote_stream_copy.py"), "tools"),
-    (str(runtime_root), "plugin-runtime"),
 ]
+# 完整插件 Python 由构建器在 BUNDLE 完成后原样复制，再单独签名并验证。
+# 不交给 Analysis 重写它的 Mach-O 路径，避免破坏自包含布局或耗尽解释器头部空间。
 for module in ("webview", "esptool"):
     datas.extend(collect_data_files(module))
 analysis = Analysis(

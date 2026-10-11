@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import platform
+import plistlib
 import re
 import shutil
 import subprocess
@@ -43,6 +44,15 @@ def deployment_versions(output):
     return versions
 
 
+def copy_plugin_runtime(source, destination):
+    """创建应用私有运行时副本，保留原 uv 环境的管理标记与全部文件。"""
+    # 副本交由应用构建器管理，不再是 uv 的安装目录；不携带原管理器的
+    # PEP 668 标记，才能在暂存副本中离线初始化 pip。原环境绝不改动，
+    # 最终插件仍使用独立 venv，不向系统 Python 或签名后的应用写依赖。
+    shutil.copytree(Path(source).resolve(), destination, symlinks=True,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "EXTERNALLY-MANAGED"))
+
+
 def audit_native_dependencies(directory, architecture, minimum=(12, 0)):
     """拒绝架构不匹配或最低系统高于 macOS 12 的任何原生依赖。"""
     binaries = list(macho_files(directory))
@@ -62,9 +72,11 @@ def validate_runtime(runtime, expected_architecture=None, initialize_pip=False):
     """验证完整 Python、pip、虚拟环境及安装位置可迁移性，不把冻结入口当 Python。"""
     runtime = Path(runtime).resolve()
     python = runtime / "bin" / "python3"
+    environment_variables = {key: value for key, value in os.environ.items() if key not in ("PYTHONHOME", "PYTHONPATH")}
+    environment_variables.update(PYTHONDONTWRITEBYTECODE="1", PYTHONNOUSERSITE="1")
     if not python.is_file():
         raise RuntimeError("插件运行时缺少 bin/python3")
-    result = run([python, "-B", "-I", "-c", "import json,platform,sys; print(json.dumps({'prefix':sys.prefix,'architecture':platform.machine()}))"], capture_output=True, text=True)
+    result = run([python, "-B", "-I", "-c", "import json,platform,sys; print(json.dumps({'prefix':sys.prefix,'architecture':platform.machine()}))"], capture_output=True, text=True, env=environment_variables)
     values = json.loads(result.stdout)
     prefixes = {runtime}
     if runtime.parent.name in ("Resources", "Frameworks") and runtime.parent.parent.name == "Contents":
@@ -77,25 +89,31 @@ def validate_runtime(runtime, expected_architecture=None, initialize_pip=False):
         raise RuntimeError("插件 Python 架构与应用不一致")
     if initialize_pip:
         # 只初始化构建暂存副本；签名完成后的 .app 必须保持只读。
-        run([python, "-B", "-I", "-m", "ensurepip", "--upgrade"], capture_output=True)
-    run([python, "-B", "-I", "-m", "pip", "--version"], capture_output=True)
+        run([python, "-B", "-s", "-m", "ensurepip", "--upgrade"], capture_output=True, env=environment_variables)
+    run([python, "-B", "-I", "-m", "pip", "--version"], capture_output=True, env=environment_variables)
     with tempfile.TemporaryDirectory(prefix="omniwatch-runtime-check-") as directory:
         environment = Path(directory) / "environment"
-        run([python, "-B", "-I", "-m", "venv", environment], capture_output=True)
-        run([environment / "bin/python", "-B", "-I", "-m", "pip", "--version"], capture_output=True)
+        # venv 默认用不带 -B 的隔离子进程调用 ensurepip，可能写入共享的签名标准库。
+        # 拆开创建和 pip 初始化，让每一层 Python 都明确禁止缓存，pip 只写临时环境。
+        run([python, "-B", "-I", "-m", "venv", "--without-pip", environment], capture_output=True, env=environment_variables)
+        # ensurepip 会传播 -I 却不会传播 -B，子进程因此忽略缓存禁用环境变量。
+        # 仅此引导步骤改用 -s，并清除 PYTHONHOME/PYTHONPATH，兼顾隔离和只读运行时。
+        run([environment / "bin/python", "-B", "-s", "-m", "ensurepip", "--upgrade"], capture_output=True, env=environment_variables)
+        run([environment / "bin/python", "-B", "-I", "-m", "pip", "--version"], capture_output=True, env=environment_variables)
 
 
 def sign_plugin_runtime(application, identity):
-    """仅插件解释器放宽库验证，主应用保持独立的最小权限签名。"""
+    """逐层签名完整插件运行时，开发包使用 adhoc，正式发行保持安全签名。"""
     entitlements = MONITOR_ROOT / "desktop/macos/plugin-entitlements.plist"
+    signing_options = [] if identity == "-" else ["--options", "runtime", "--timestamp"]
     for path in macho_files(application):
         if "plugin-runtime" not in path.parts:
             continue
-        command = ["/usr/bin/codesign", "--force", "--options", "runtime", "--timestamp", "--sign", identity]
+        command = ["/usr/bin/codesign", "--force", *signing_options, "--sign", identity]
         if "bin" in path.parts:
             command.extend(["--entitlements", entitlements])
         run([*command, path], capture_output=True)
-    run(["/usr/bin/codesign", "--force", "--options", "runtime", "--timestamp", "--sign", identity,
+    run(["/usr/bin/codesign", "--force", *signing_options, "--sign", identity,
          "--entitlements", MONITOR_ROOT / "desktop/macos/entitlements.plist", application], capture_output=True)
     run(["/usr/bin/codesign", "--verify", "--deep", "--strict", application], capture_output=True)
 
@@ -117,6 +135,21 @@ def zip_application(application, output):
     run(["/usr/bin/ditto", "-c", "-k", "--keepParent", application, output], capture_output=True)
 
 
+def verify_dmg_signature(dmg):
+    """只读挂载最终 DMG 并检查应用签名，失败时仍卸载本次创建的挂载卷。"""
+    run(["/usr/bin/hdiutil", "verify", dmg], capture_output=True)
+    attachment = run(["/usr/bin/hdiutil", "attach", "-readonly", "-nobrowse", "-plist", dmg], capture_output=True)
+    mounts = [Path(item["mount-point"]) for item in plistlib.loads(attachment.stdout)["system-entities"]
+              if "mount-point" in item]
+    try:
+        if len(mounts) != 1:
+            raise RuntimeError("最终 DMG 没有唯一挂载卷")
+        run(["/usr/bin/codesign", "--verify", "--deep", "--strict", mounts[0] / "OmniWatch.app"], capture_output=True)
+    finally:
+        for mount in mounts:
+            run(["/usr/bin/hdiutil", "detach", mount], capture_output=True)
+
+
 def build(options):
     """执行构建、依赖审计、运行时验证、签名、公证和 DMG 生成。"""
     if sys.platform != "darwin" or platform.machine() != options.architecture:
@@ -131,8 +164,7 @@ def build(options):
     with tempfile.TemporaryDirectory(prefix="omniwatch-macos-build-") as temporary:
         temporary = Path(temporary)
         runtime = temporary / "plugin-runtime"
-        shutil.copytree(Path(options.runtime).resolve(), runtime, symlinks=True,
-                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        copy_plugin_runtime(options.runtime, runtime)
         validate_runtime(runtime, options.architecture, initialize_pip=True)
         environment = os.environ.copy()
         environment.update({"MONITOR_MAC_ARCH": options.architecture,
@@ -143,10 +175,12 @@ def build(options):
         run([sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", "--workpath", temporary / "work",
              "--distpath", temporary / "dist", MONITOR_ROOT / "pico_monitor_macos.spec"], cwd=MONITOR_ROOT, env=environment)
         application = temporary / "dist/OmniWatch.app"
-        audit_native_dependencies(application, options.architecture)
-        if not options.unsigned:
-            sign_plugin_runtime(application, identity)
+        # 私有解释器保留已验证的相对动态库布局；不进入 PyInstaller 二进制路径改写。
+        # 复制完成后仍审计所有原生文件、重新签名外层应用并验证完整运行时。
         bundle_runtime = application / "Contents/Resources/plugin-runtime"
+        copy_plugin_runtime(runtime, bundle_runtime)
+        audit_native_dependencies(application, options.architecture)
+        sign_plugin_runtime(application, "-" if options.unsigned else identity)
         validate_runtime(bundle_runtime, options.architecture)
         executable = application / "Contents/MacOS/pico-monitor"
         run([executable, "--help"], capture_output=True, env={**environment, "PYINSTALLER_RESET_ENVIRONMENT": "1"})
@@ -154,6 +188,8 @@ def build(options):
                      env={**environment, "PYINSTALLER_RESET_ENVIRONMENT": "1"})
         if "pico-monitor" not in result.stdout:
             raise RuntimeError("冻结程序标准输出验证失败")
+        # 所有运行检查结束后再次验证，不能仅相信检查前的签名成功。
+        run(["/usr/bin/codesign", "--verify", "--deep", "--strict", application], capture_output=True)
         from build_info import MONITOR_VERSION
         if not options.unsigned:
             notarization_zip = temporary / "notarization.zip"
@@ -172,6 +208,7 @@ def build(options):
         dmg = output_root / (name + ".dmg")
         run(["/usr/bin/hdiutil", "create", "-volname", "OmniWatch", "-srcfolder", volume,
              "-ov", "-format", "UDZO", dmg], capture_output=True)
+        verify_dmg_signature(dmg)
         if not options.unsigned:
             run(["/usr/bin/codesign", "--sign", identity, "--timestamp", dmg], capture_output=True)
             notarize(dmg, options.notary_profile, options.notary_keychain)
