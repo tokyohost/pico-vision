@@ -155,6 +155,7 @@ class WindowsPackagingTest(unittest.TestCase):
 
         self.assertIn('("assert/fishQr.png", "assert")', specification)
         self.assertIn('("assert/qqgroup.png", "assert")', specification)
+        self.assertIn("if not tcltk_info.available:", specification)
 
     def test_device_page_exposes_port_package_and_full_update_mode(self):
         """确认设备管理固件更新可选择串口、ZIP 包和全量覆盖模式。"""
@@ -163,7 +164,7 @@ class WindowsPackagingTest(unittest.TestCase):
             / "DevicePage.vue"
         ).read_text(encoding="utf-8")
         bridge = (
-            MONITOR_ROOT / "win" / "ui-web-api" / "bridge.py"
+            MONITOR_ROOT / "desktop" / "common" / "ui_api" / "bridge.py"
         ).read_text(encoding="utf-8")
 
         self.assertIn("device.firmware.select", page)
@@ -181,9 +182,9 @@ class WindowsPackagingTest(unittest.TestCase):
 
     def test_full_firmware_update_forwards_mpremote_force_flag(self):
         """确认全量更新会向 mpremote 复制进程追加 force 参数。"""
-        tray = (MONITOR_ROOT / "win" / "tray.py").read_text(encoding="utf-8")
+        tray = (MONITOR_ROOT / "desktop" / "common" / "application.py").read_text(encoding="utf-8")
         device_api = (
-            MONITOR_ROOT / "win" / "ui-web-api" / "device_api.py"
+            MONITOR_ROOT / "desktop" / "common" / "ui_api" / "device_api.py"
         ).read_text(encoding="utf-8")
 
         self.assertIn('command.append("--force")', tray)
@@ -196,7 +197,7 @@ class WindowsPackagingTest(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("navigator.clipboard.writeText(props.content)", copyable_log)
+        self.assertIn("copyText(props.content)", copyable_log)
         self.assertIn('aria-label="复制全部日志"', copyable_log)
         for component_name in (
             "CustomDataPage.vue",

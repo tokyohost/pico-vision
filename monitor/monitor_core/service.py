@@ -578,6 +578,14 @@ class MonitorService(
 
     def close(self):
         """释放采集器持有的原生资源及其启动的外部子进程。"""
+        stopping = getattr(self, "stopping", None)
+        if stopping is not None:
+            stopping.set()
+        collection_thread = getattr(self, "_collection_thread", None)
+        if (collection_thread is not None and collection_thread.is_alive()
+                and collection_thread is not threading.current_thread()):
+            # 异常退出也必须先停止调度线程，再关闭线程池，避免并发提交到已关闭的池。
+            collection_thread.join()
         self._stop_thread_diagnostics()
         coordinator = getattr(self, "_collection_coordinator", None)
         if coordinator is not None:
@@ -740,7 +748,7 @@ class MonitorService(
         """Linux 未连接时按三十秒节流执行一次低影响局域网设备发现。"""
         if (
             self._force_usb_cdc_enabled()
-            or platform.system() != "Linux"
+            or platform.system() not in ("Linux", "Darwin")
             or self.client.is_connected
         ):
             return False
@@ -953,7 +961,18 @@ class MonitorService(
                         and active_probe_requested.is_set()
                     ):
                         active_probe_requested.clear()
-                        self._connect_for_active_probe()
+                        try:
+                            self._connect_for_active_probe()
+                        except (OSError, RuntimeError, serial.SerialException):
+                            if not self.arguments.dev:
+                                raise
+                            # 首次主动探测也必须遵循开发模式约定；没有设备时
+                            # 继续输出真实采集 JSON，而不是无限等待 USB 插入。
+                            self.client.close()
+                            result = self._run_development_loop()
+                            if result is not None:
+                                return result
+                            continue
                     else:
                         try:
                             if preferred_usb_port:

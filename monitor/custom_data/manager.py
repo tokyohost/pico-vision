@@ -4,6 +4,7 @@
 import hashlib
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -233,9 +234,13 @@ class CustomDataManager:
             if progress_callback:
                 progress_callback("正在创建插件独立虚拟环境：{}".format(definition.environment_directory))
             self._run_install_command(
-                [str(runtime_python), "-m", "venv", str(definition.environment_directory)],
+                [str(runtime_python), "-B", "-I", "-m", "venv", "--without-pip", str(definition.environment_directory)]
+                if sys.platform == "darwin" else [str(runtime_python), "-m", "venv", str(definition.environment_directory)],
                 progress_callback,
             )
+            if sys.platform == "darwin":
+                # 默认 venv 引导会在签名的共享标准库创建缓存；显式控制所有 Python 子进程。
+                self._run_install_command([str(environment_python), "-B", "-s", "-m", "ensurepip", "--upgrade"], progress_callback)
             if progress_callback:
                 progress_callback("独立虚拟环境创建完成。")
         elif progress_callback:
@@ -316,6 +321,11 @@ class CustomDataManager:
 
     def _run_install_command(self, command, progress_callback=None):
         """执行环境创建或 pip 安装命令，并逐行回传安装日志。"""
+        options = {}
+        if sys.platform == "darwin":
+            command = [command[0], "-B", *command[1:]] if "-B" not in command[1:] else command
+            options["env"] = {**{key: value for key, value in os.environ.items() if key not in ("PYTHONHOME", "PYTHONPATH")},
+                              "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1"}
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
@@ -324,6 +334,7 @@ class CustomDataManager:
             encoding="utf-8",
             errors="replace",
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            **options,
         )
         lines = []
         try:

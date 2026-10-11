@@ -1,6 +1,7 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { copyText } from '../bridge'
 
 const props = defineProps({
   content: { type: String, default: '' },
@@ -12,6 +13,20 @@ const emit = defineEmits(['scroll'])
 const logElement = ref(null)
 
 /**
+ * 规范化 Vue 动态类名，避免依赖早期 macOS 12 WebKit 不支持的 :has。
+ */
+function classTokens(value) {
+  if (typeof value === 'string') return value.split(/\s+/)
+  if (Array.isArray(value)) return value.flatMap(classTokens)
+  return Object.keys(value || {}).filter((key) => value[key])
+}
+const needsSpacing = computed(() => {
+  const tokens = classTokens(props.preClass)
+  return tokens.includes('global-loading-logs') || (tokens.includes('terminal') &&
+    !tokens.some((token) => ['device-log-view', 'probe-log-view', 'log-view', 'plugin-test-result'].includes(token)))
+})
+
+/**
  * 将当前日志框的全部原始内容复制到系统剪贴板。
  */
 async function copyAllLogs() {
@@ -20,7 +35,7 @@ async function copyAllLogs() {
     return
   }
   try {
-    await navigator.clipboard.writeText(props.content)
+    await copyText(props.content)
     ElMessage.success(props.copySuccessText)
   } catch (error) {
     ElMessage.error(error?.message || '复制日志失败')
@@ -47,7 +62,7 @@ defineExpose({ isNearBottom, scrollToBottom })
 </script>
 
 <template>
-  <div class="copyable-log-container">
+  <div class="copyable-log-container" :class="{ 'copyable-log-spaced': needsSpacing }">
     <el-tooltip content="复制全部日志" placement="left">
       <el-button
         class="copyable-log-button"

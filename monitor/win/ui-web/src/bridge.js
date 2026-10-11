@@ -40,3 +40,16 @@ export async function invoke(action, payload = {}) {
   }
   return result.data ?? result
 }
+
+/**
+ * 优先使用浏览器剪贴板，桌面环境失败后通过受控原生桥接兜底。
+ */
+export async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(String(text))
+    return
+  } catch (error) {
+    if (isHttpBridge()) throw error
+    await invoke('system.copyText', { text: String(text) })
+  }
+}

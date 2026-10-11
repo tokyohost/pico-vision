@@ -222,6 +222,15 @@ def get_runtime_python():
     configured = os.environ.get("PICO_MONITOR_PLUGIN_PYTHON")
     if configured:
         return Path(configured)
+    if sys.platform == "darwin" and getattr(sys, "frozen", False):
+        # 冻结入口不是完整 Python，插件必须使用单独打包的可迁移运行时。
+        executable = Path(sys.executable).resolve()
+        contents = executable.parent.parent
+        for base in (contents / "Resources", contents / "Frameworks", Path(getattr(sys, "_MEIPASS", contents))):
+            bundled = base / "plugin-runtime" / "bin" / "python3"
+            if bundled.is_file():
+                return bundled
+        raise CustomDataError("macOS 应用缺少插件 Python Runtime，请重新安装完整发行包，或设置 PICO_MONITOR_PLUGIN_PYTHON")
     if sys.platform == "win32":
         executable_directory = Path(sys.executable).resolve().parent
         for bundled in (

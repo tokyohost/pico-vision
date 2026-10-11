@@ -50,6 +50,7 @@ from pico_snapshot import (
 )
 from usbCdcFramework import UsbCdcFramework, UsbCdcFrameReader
 from usb_transfer_diagnostics import UsbTransferDiagnostics
+from serial_port_discovery import enumerate_serial_ports
 
 
 JSON_ACK_TIMEOUT = 8.0
@@ -198,7 +199,7 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
             candidates = [self.configured_port]
         else:
             # 复合 USB 设备优先探测专用数据 CDC，避免先打开 REPL 控制台。
-            ports = list(list_ports.comports())
+            ports = enumerate_serial_ports()
             ports.sort(key=self._serial_port_priority)
             candidates = [item.device for item in ports]
         if not self.configured_port and preferred_port is None and len(candidates) > 1:
@@ -412,7 +413,7 @@ class PicoJsonClient(PicoCommandMixin, PicoJsonAckMixin):
     @staticmethod
     def available_ports():
         """返回当前系统可见串口的稳定快照。"""
-        return frozenset(item.device for item in list_ports.comports())
+        return frozenset(item.device for item in enumerate_serial_ports())
 
     def _handshake(self, device):
         """发送设备发现命令并验证 Pico 固件响应。"""

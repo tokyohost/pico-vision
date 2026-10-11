@@ -1,0 +1,47 @@
+name: 桌面公共层跨平台回归
+
+on:
+  pull_request:
+    paths: ["monitor/**", ".github/workflows/desktop-regression.yml"]
+  push:
+    branches: [main, master]
+    paths: ["monitor/**", ".github/workflows/desktop-regression.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    name: ${{ matrix.runner }} 公共层与无界面入口
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: monitor
+    env:
+      PYTHONUTF8: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+      - name: 安装 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: 安装无界面基础依赖
+        run: |
+          python -m pip install -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: 隔离执行回归测试
+        run: |
+          # Linux 基础依赖不安装 GUI，确保默认入口不强制桌面依赖。
+          $modules = @("test_desktop_common.py", "test_mac_os_desktop.py", "test_mac_os_collect_tasks.py", "test_monitor.py", "test_web_admin.py", "test_custom_data.py", "test_linux_packaging.py", "test_windows_update.py")
+          foreach ($module in $modules) {
+            python -B -m unittest discover -s tests -p $module -v
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }

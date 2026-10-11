@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: pico-monitor-release-${{ github.ref }}
+  group: pico-monitor-windows-release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:

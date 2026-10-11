@@ -130,12 +130,20 @@ class LinuxPackagingTest(unittest.TestCase):
                 self.assertIn('collectTask/tasks/{}"'.format(target), installer)
 
     def test_linux_installers_include_runtime_package_directories(self):
-        """确认 DEB 与通用脚本安装自定义数据和网络运行包。"""
+        """确认 DEB、通用脚本及发布压缩包覆盖重构后的全部公共运行包。"""
         installer = (MONITOR_ROOT / "install-linux.sh").read_text(encoding="utf-8-sig")
         manifest = (MONITOR_ROOT / "debian" / "install").read_text(encoding="utf-8-sig")
-        for package_name in ("custom_data", "net"):
+        workflow = (MONITOR_ROOT.parent / ".github/workflows/build-linux-deb.yml").read_text(encoding="utf-8")
+        package_copy = next(line.strip() for line in workflow.splitlines()
+                            if line.strip().startswith("cp -r collectTask "))
+        for package_name in ("custom_data", "monitor_core", "desktop", "net"):
             with self.subTest(package=package_name):
-                self.assertIn('"$INSTALL_ROOT/{}"'.format(package_name), installer)
+                self.assertIn(package_name, package_copy.split())
+                if package_name == "desktop":
+                    # desktop 按完整目录复制到安装根目录，其余包先创建各自目录。
+                    self.assertIn('cp -R "$script_directory/desktop" "$INSTALL_ROOT/"', installer)
+                else:
+                    self.assertIn('"$INSTALL_ROOT/{}"'.format(package_name), installer)
                 self.assertIn(
                     "{} usr/lib/pico-monitor".format(package_name),
                     manifest,

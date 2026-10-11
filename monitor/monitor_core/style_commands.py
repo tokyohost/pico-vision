@@ -44,7 +44,8 @@ class StyleCommandMixin:
         } or {"idle"}
         settings_path = os.getenv("PICO_MONITOR_SETTINGS_PATH")
         if settings_path:
-            from win.settings import TraySettingsStore
+            # 样式配置属于公共桌面层，Mac/Linux 冻结包不能依赖被排除的 win 兼容入口。
+            from desktop.common.settings import TraySettingsStore
 
             normalized = normalize_style_catalog(catalog)
             if normalized:

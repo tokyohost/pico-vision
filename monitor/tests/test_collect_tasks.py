@@ -367,6 +367,29 @@ class CollectionCoordinatorTest(unittest.TestCase):
         self.assertEqual(replaced["disks"][0]["temperature_c"], 42.0)
         self.assertEqual(replaced["disks"][0]["used_bytes"], 60)
 
+    def test_replacing_disk_snapshot_does_not_duplicate_new_disks(self):
+        """确认首次容量采集、重复名称和新增磁盘不会重复发布，并保留其他任务字段。"""
+        collector = types.SimpleNamespace()
+        first = publish_disk_snapshot(
+            collector,
+            physical_disks=[{"name": "disk1", "health": 1}, {"name": "disk0", "health": 2},
+                            {"name": "disk1", "health": 3}],
+            physical_fields=DISK_CAPACITY_HEALTH_FIELDS,
+            replace_physical_disks=True,
+        )
+        self.assertEqual([item["name"] for item in first["physical_disks"]], ["disk1", "disk0"])
+        self.assertEqual(first["physical_disks"][0]["health"], 3)
+        publish_disk_snapshot(
+            collector, physical_disks=[{"name": "disk1", "temperature_c": 42}],
+            physical_fields=DISK_TEMPERATURE_FIELDS,
+        )
+        replaced = publish_disk_snapshot(
+            collector, physical_disks=[{"name": "disk2", "health": 1}, {"name": "disk1", "health": 2}],
+            physical_fields=DISK_CAPACITY_HEALTH_FIELDS, replace_physical_disks=True,
+        )
+        self.assertEqual([item["name"] for item in replaced["physical_disks"]], ["disk2", "disk1"])
+        self.assertEqual(replaced["physical_disks"][1]["temperature_c"], 42)
+
     def test_shared_disk_details_reuses_single_slow_refresh(self):
         """确认同一调度窗口内多个磁盘任务只触发一次慢速磁盘明细采集。"""
         collector = types.SimpleNamespace(

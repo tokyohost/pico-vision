@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { invoke, isHttpBridge, uploadFile } from '../bridge'
+import { invoke, isHttpBridge, uploadFile, copyText } from '../bridge'
 import CopyableLog from './CopyableLog.vue'
 
 const props = defineProps({
@@ -49,7 +49,7 @@ async function copyDeviceUuid() {
     ElMessage.warning('当前设备没有可复制的UUID')
     return
   }
-  await navigator.clipboard.writeText(uuid)
+  await copyText(uuid)
   ElMessage.success('设备UUID已复制')
 }
 
@@ -349,7 +349,7 @@ async function startSdkFlash(force = false) {
     return
   }
   if (force && !sdk.selectedPort) {
-    ElMessage.warning('请先选择强刷目标 COM 口')
+    ElMessage.warning('请先选择强刷目标串口')
     return
   }
   const target = force ? `目标串口：${sdk.selectedPort}\n` : `当前 SDK：${currentDevice.value.sdk_version || '未知'}\n`
@@ -514,7 +514,7 @@ onBeforeUnmount(() => {
       <el-select
         v-model="sdk.selectedPort"
         :disabled="sdk.busy"
-        placeholder="强刷目标 COM 口"
+        placeholder="强刷目标串口"
         class="sdk-port-select"
         @visible-change="(visible) => visible && loadSdkPorts()"
       >

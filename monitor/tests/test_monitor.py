@@ -1293,6 +1293,40 @@ class PicoClientTest(unittest.TestCase):
         service.client.connect.assert_called_once_with()
         service._run_development_loop.assert_called_once_with()
 
+    def test_development_mode_handles_initial_active_probe_failure(self):
+        """确认真实启动的主动探测失败在各平台进入开发采集而非等待设备。"""
+        for system in ("Windows", "Linux", "Darwin"):
+            for force_usb in (False, True):
+                with self.subTest(system=system, force_usb=force_usb):
+                    service = MonitorService.__new__(MonitorService)
+                    service.arguments = SimpleNamespace(
+                        port=None, ping_target="127.0.0.1", interval=1.0,
+                        reconnect_interval=3.0, screen_rotation=0,
+                        network_unit="MB", lcd_style="horizontal_disk", dev=True,
+                        force_usb_cdc=force_usb,
+                    )
+                    service.stopping = mock.Mock()
+                    service.stopping.is_set.return_value = False
+                    service.client = mock.Mock()
+                    service.client.is_connected = False
+                    service.client.available_ports.return_value = frozenset()
+                    service.active_probe_requested = threading.Event()
+                    service.active_probe_requested.set()
+                    service.runtime_reconnect_requested = threading.Event()
+                    service._collection_thread = mock.Mock()
+                    service._collection_thread.is_alive.return_value = True
+                    service._connect_for_active_probe = mock.Mock(
+                        side_effect=RuntimeError("首次主动探测未发现设备"))
+                    service._run_development_loop = mock.Mock(return_value=0)
+                    service._wait_for_usb_reconnect = mock.Mock()
+                    with mock.patch("monitor_core.service.platform.system", return_value=system):
+                        self.assertEqual(service.run(), 0)
+                    self.assertFalse(service.active_probe_requested.is_set())
+                    service._connect_for_active_probe.assert_called_once_with()
+                    service._run_development_loop.assert_called_once_with()
+                    service._wait_for_usb_reconnect.assert_not_called()
+                    service.client.close.assert_called_once_with()
+
     def test_connection_failure_waits_for_usb_addition_before_retry(self):
         """确认首次探测失败后不会按固定间隔反复扫描现有 COM 口。"""
         service = MonitorService.__new__(MonitorService)
@@ -1907,7 +1941,8 @@ class SystemCollectorTest(unittest.TestCase):
                 self.assertEqual(collector._network_rates("192.168.1.2")[:2], (600, 900))
 
     @mock.patch("system_monitor.platform.system", return_value="Linux")
-    @mock.patch("system_monitor.psutil.cpu_freq")
+    # 本用例模拟 Linux 的接口契约，不要求 Apple Silicon 测试机提供此接口。
+    @mock.patch("system_monitor.psutil.cpu_freq", create=True)
     def test_cpu_frequency_averages_current_core_speeds(self, cpu_freq, system):
         """确认 CPU GHz 根据各逻辑处理器的实时 MHz 平均值计算。"""
         del system
@@ -2311,6 +2346,52 @@ class SystemCollectorTest(unittest.TestCase):
         paths = list(PowerMonitor._iter_energy_paths(root))
 
         self.assertEqual(paths, ["真实区域/energy_uj"])
+
+
+class MonitorServiceCleanupOrderTest(unittest.TestCase):
+    """验证异常退出时先停止采集调度，再释放采集线程池。"""
+
+    def test_close_joins_collection_before_closing_pool(self):
+        """采集线程退出以后才能关闭线程池，防止拔插异常引发二次提交错误。"""
+        service = MonitorService.__new__(MonitorService)
+        service.stopping = threading.Event()
+        events = []
+
+        def collect():
+            """模拟等待停止信号的后台采集调度线程。"""
+            service.stopping.wait(3)
+            events.append("collection_stopped")
+
+        service._collection_thread = threading.Thread(target=collect)
+        service._collection_coordinator = mock.Mock()
+        service._collection_coordinator.close.side_effect = lambda **kwargs: events.append("pool_closed")
+        service._stop_thread_diagnostics = mock.Mock()
+        service.close_custom_data = mock.Mock()
+        service._stop_transmit_worker = mock.Mock()
+        service.collector = mock.Mock()
+        service._collection_thread.start()
+        try:
+            service.close()
+        finally:
+            service.stopping.set()
+            service._collection_thread.join(timeout=3)
+        self.assertEqual(events, ["collection_stopped", "pool_closed"])
+        self.assertFalse(service._collection_thread.is_alive())
+        service._collection_coordinator.close.assert_called_once_with(wait=True)
+        service.collector.close.assert_called_once_with()
+
+    def test_close_accepts_unstarted_collection_thread(self):
+        """启动阶段失败时未启动的线程不应触发 join 异常。"""
+        service = MonitorService.__new__(MonitorService)
+        service.stopping = threading.Event()
+        service._collection_thread = threading.Thread()
+        service._stop_thread_diagnostics = mock.Mock()
+        service.close_custom_data = mock.Mock()
+        service._stop_transmit_worker = mock.Mock()
+        service.collector = mock.Mock()
+        service.close()
+        self.assertTrue(service.stopping.is_set())
+        service.collector.close.assert_called_once_with()
 
 
 if __name__ == "__main__":

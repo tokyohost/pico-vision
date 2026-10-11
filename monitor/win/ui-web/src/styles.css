@@ -642,8 +642,7 @@ body {
 }
 .copyable-log-container > pre { width: 100%; }
 .copyable-log-container > .terminal { margin-top: 0; }
-.copyable-log-container:has(> .global-loading-logs),
-.copyable-log-container:has(> .terminal:not(.device-log-view):not(.probe-log-view):not(.log-view):not(.plugin-test-result)) {
+.copyable-log-container.copyable-log-spaced {
   margin-top: 18px;
 }
 .copyable-log-button {

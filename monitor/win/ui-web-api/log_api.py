@@ -1,41 +1,10 @@
-"""Web 界面的日志和数据目录接口。"""
+"""保留历史导入路径，实际实现已迁入 desktop 目录。"""
 
-import subprocess
+import sys
+from importlib import import_module
 
-
-class LogApiMixin:
-    """处理日志读取、清理、导出和数据目录打开动作。"""
-
-    __slots__ = ()
-
-    def _read_log(self, payload):
-        """读取最近日志并按 UTF-8 解码。"""
-        maximum = min(max(int(payload.get("maximum", 300000)), 1000), 1048576)
-        return {
-            "content": self._application._read_recent_log(maximum).decode(
-                "utf-8", errors="replace"
-            )
-        }
-
-    def _clear_log(self, payload):
-        """清空应用运行日志。"""
-        del payload
-        self._application._clear_log()
-        return {"cleared": True}
-
-    def _export_log(self, payload):
-        """导出包含脱敏配置快照的日志。"""
-        del payload
-        path = self._application._export_log(self._application.icon)
-        return {"path": str(path)}
-
-    def _open_data_directory(self, payload):
-        """使用资源管理器打开用户数据目录。"""
-        del payload
-        self._application.data_directory.mkdir(parents=True, exist_ok=True)
-        subprocess.Popen(
-            ["explorer.exe", str(self._application.data_directory)],
-            creationflags=0x08000000,
-        )
-        return {"opened": True}
-
+# 保持模块对象一致，让历史依赖替换和测试补丁继续作用于真实实现。
+_implementation = import_module("desktop.common.ui_api.log_api")
+# 兼容使用 spec.loader.exec_module 直接加载文件的历史调用者。
+globals().update({name: value for name, value in vars(_implementation).items() if not name.startswith("__")})
+sys.modules[__name__] = _implementation

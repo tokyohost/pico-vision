@@ -89,6 +89,7 @@ def create_argument_parser(config=None):
     parser.add_argument("--once", action="store_true", help="仅成功发送一次数据")
     parser.add_argument("--pico-info", action="store_true", help="连接 Pico，显示开发板型号、屏幕方案和固件版本后退出")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--desktop", action="store_true", help="显式启动桌面控制中心；Linux 默认保持无桌面服务模式")
     parser.add_argument("--upgrade-pico", action="store_true", help="下载当前 Monitor 版本的 Pico 全量固件包并执行更新")
     parser.add_argument("--upgrade-url", default=config_value(config, "PICO_MONITOR_UPGRADE_URL") or None, help="覆盖 Pico 全量固件包下载地址")
     parser.add_argument("--upgrade-sha256", default=config_value(config, "PICO_MONITOR_UPGRADE_SHA256") or None, help="可选的全量固件包 SHA-256 摘要")

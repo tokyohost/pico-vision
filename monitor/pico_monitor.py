@@ -37,6 +37,7 @@ from monitor_core.device import format_pico_information
 from monitor_core.service import BUILTIN_LCD_STYLES, MonitorService
 from monitor_core.tray_commands import start_tray_command_listener
 from pico_client import PicoJsonClient
+from desktop.common.entry import desktop_requested, start_desktop
 
 LOGGER = logging.getLogger("pico-monitor")
 
@@ -107,6 +108,9 @@ def show_pico_information(port=None, websocket_url=None):
 def main():
     """校验参数并按当前平台启动后台工作进程或 Windows 托盘。"""
     _configure_standard_streams()
+    if len(sys.argv) > 1 and sys.argv[1] == "--apply-macos-update":
+        from desktop.macos.update import run_update_helper
+        return run_update_helper(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "--mpremote-cli":
         from mpremote import main as mpremote_main
 
@@ -130,22 +134,24 @@ def main():
     if sys.platform == "win32" and not is_windows_administrator():
         show_admin_required_message()
         return 1
-    if (
-        sys.platform == "win32"
-        and getattr(sys, "frozen", False)
-        and not arguments.worker
-        and not arguments.pico_info
-        and not arguments.upgrade_pico
-        and not arguments.update
-    ):
-        from windows_tray import WindowsTrayApplication
-
-        return WindowsTrayApplication.start([*sys.argv[1:], "--worker"])
+    if desktop_requested(arguments):
+        return start_desktop([*sys.argv[1:], "--worker"])
     configure_logging("DEBUG" if arguments.dev else arguments.log_level)
     log_monitor_version()
     if arguments.pico_info:
         return show_pico_information(arguments.port, arguments.websocket_url)
     if arguments.update:
+        if sys.platform == "darwin":
+            from desktop.macos.update import MacOsReleaseUpdater, prepare_update
+            updater = MacOsReleaseUpdater(GITHUB_REPOSITORY, MONITOR_VERSION)
+            version, assets = updater.latest_release()
+            if updater.update_available(version):
+                package = updater.download(updater.select_monitor_asset(assets, version), ".zip")
+                try:
+                    prepare_update(package, expected_version=version)
+                finally:
+                    updater.remove_file(package)
+            return 0
         LinuxDebUpdater(GITHUB_REPOSITORY, MONITOR_VERSION).update()
         return 0
     service = MonitorService(arguments)

@@ -1,0 +1,180 @@
+name: 构建 macOS 双架构开发验证包
+
+on:
+  push:
+    branches: ["mac_os_support"]
+    tags: ["v*"]
+    paths:
+      - "monitor/**"
+      - ".github/workflows/build-macos-dmg.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pico-monitor-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: macOS ${{ matrix.architecture }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            architecture: x86_64
+            python_architecture: x64
+          - runner: macos-15
+            architecture: arm64
+            python_architecture: arm64
+    defaults:
+      run:
+        shell: bash
+        working-directory: monitor
+    env:
+      PYTHONUTF8: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 初始化构建临时路径
+        run: |
+          set -euo pipefail
+          # job 级 env 不允许 runner 上下文；在分配 runner 后写入步骤环境。
+          printf 'UV_PYTHON_INSTALL_DIR=%s/omniwatch-python\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
+      - name: 安装原生 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13.5"
+          architecture: ${{ matrix.python_architecture }}
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: 构建 Intel 静态 OpenSSL
+        if: matrix.architecture == 'x86_64'
+        run: |
+          set -euo pipefail
+          # cryptography 49 起不再提供 Intel macOS wheel；从源码构建时不链接
+          # runner 的 Homebrew 动态库，保留新版安全修复与 macOS 12 部署目标。
+          source_root="$RUNNER_TEMP/omniwatch-openssl-source"
+          openssl_root="$RUNNER_TEMP/omniwatch-openssl"
+          mkdir -p "$source_root"
+          archive="$source_root/openssl-4.0.3.tar.gz"
+          curl --fail --location --retry 3 --output "$archive" https://github.com/openssl/openssl/releases/download/openssl-4.0.3/openssl-4.0.3.tar.gz
+          # 摘要固定为 OpenSSL 官方发布制品，下载或校验失败必须终止。
+          printf '325b5c806167c13b40b1ffeadfe0248197c00eccc4cf123ec1e28d2d2fd216d9  %s\n' "$archive" | shasum -a 256 -c -
+          tar -xzf "$archive" -C "$source_root"
+          (
+            cd "$source_root/openssl-4.0.3"
+            ./Configure darwin64-x86_64-cc no-shared no-tests --prefix="$openssl_root" --libdir=lib -mmacosx-version-min=12.0
+            make -j"$(sysctl -n hw.ncpu)"
+            make install_sw
+          )
+          printf 'OPENSSL_DIR=%s\n' "$openssl_root" >> "$GITHUB_ENV"
+          printf 'OPENSSL_STATIC=1\n' >> "$GITHUB_ENV"
+
+      - name: 安装依赖与独立插件运行时
+        run: |
+          set -euo pipefail
+          python -m pip install "uv==0.8.22"
+          uv python install 3.13.5
+          runtime_python="$(uv python find --managed-python 3.13.5)"
+          runtime_root="$("$runtime_python" -I -c 'import sys; print(sys.prefix)')"
+          # setup-python 的解释器可能链接 runner 上仅兼容新系统的 Homebrew OpenSSL。
+          # 冻结构建与插件使用同一可迁移 Python，最低系统仍由原生依赖审计强制检查。
+          build_environment="$RUNNER_TEMP/omniwatch-build-venv"
+          uv venv --seed --python "$runtime_python" "$build_environment"
+          dependency_options=(--only-binary cryptography)
+          if [[ "${{ matrix.architecture }}" == x86_64 ]]; then
+            dependency_options=(--no-binary cryptography)
+          fi
+          uv pip install --python "$build_environment/bin/python" "${dependency_options[@]}" -r desktop/macos/requirements.txt
+          printf 'MONITOR_PLUGIN_RUNTIME=%s\n' "$runtime_root" >> "$GITHUB_ENV"
+          printf 'MONITOR_BUILD_PYTHON=%s/bin/python\n' "$build_environment" >> "$GITHUB_ENV"
+
+      - name: 构建共享 Vue 界面
+        run: |
+          npm ci --prefix win/ui-web
+          npm run build --prefix win/ui-web
+
+      - name: 写入标签版本
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          "$MONITOR_BUILD_PYTHON" - <<'PY'
+          import os, re
+          from pathlib import Path
+          version = os.environ["GITHUB_REF_NAME"][1:]
+          if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", version):
+              raise SystemExit("发布标签必须是 v 开头的语义化版本")
+          Path("build_info.py").write_text(
+              '"""保存 CI 写入的发布版本与更新仓库。"""\n'
+              + 'MONITOR_VERSION = ' + repr(version) + '\n'
+              + 'GITHUB_REPOSITORY = "tokyohost/omniwatch-doc"\n', encoding="utf-8")
+          PY
+
+      - name: 隔离执行全部适用回归测试
+        run: |
+          set -euo pipefail
+          # 固件与桌面含同名模块，每个测试文件必须在独立进程运行。
+          # Windows 原生注册表测试在 Windows 回归执行，不在 Mac 伪造系统 API。
+          "$MONITOR_BUILD_PYTHON" -B tools/run_isolated_tests.py --report dist/macos-test-results.json
+
+      - name: 构建开发验证应用、审计依赖并制作 DMG
+        run: |
+          set -euo pipefail
+          # 手动运行与标签发布统一使用开发模式，不需要 Developer ID 证书或公证凭据。
+          arguments=(--architecture "${{ matrix.architecture }}" --runtime "$MONITOR_PLUGIN_RUNTIME" --output dist/macos --unsigned)
+          "$MONITOR_BUILD_PYTHON" -B -m desktop.macos.build "${arguments[@]}"
+
+      - name: 上传对应架构 ZIP 与 DMG
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-${{ matrix.architecture }}
+          path: |
+            monitor/dist/macos/*.zip
+            monitor/dist/macos/*.dmg
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: 保留回归测试报告
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tests-macos-${{ matrix.architecture }}
+          path: monitor/dist/macos-test-results.json
+          if-no-files-found: warn
+
+  release:
+    name: 发布 macOS 开发验证制品
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+      - name: 下载双架构制品
+        uses: actions/download-artifact@v5
+        with:
+          pattern: macos-*
+          path: release-assets
+          merge-multiple: true
+      - name: 发布本仓库 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "$GITHUB_REF_NAME" --notes "macOS 双架构开发验证包（文件名含 -dev），使用本地 adhoc 签名，未经 Apple 公证，仅供人工安装验证，不用于自动更新。首次打开被拦截时，请确认来源后在系统设置的隐私与安全性中选择仍要打开。" || gh release view "$GITHUB_REF_NAME" >/dev/null
+          gh release upload "$GITHUB_REF_NAME" release-assets/*.zip release-assets/*.dmg --clobber

@@ -441,7 +441,8 @@ class WindowsWebViewWindowTest(unittest.TestCase):
         self.assertFalse(create_arguments["minimized"])
         window.hide.assert_not_called()
         before_show = window.events.before_show.__iadd__.call_args.args[0]
-        before_show()
+        with mock.patch.object(webview_module.sys, "platform", "win32"):
+            before_show()
         application._configure_windows_session_closing.assert_called_once_with(window)
 
     def _create_session_closing_window(self):
@@ -479,7 +480,8 @@ class WindowsWebViewWindowTest(unittest.TestCase):
             CloseReason=SimpleNamespace(WindowsShutDown="WindowsShutDown")
         )
         with mock.patch.dict("sys.modules", {"System.Windows.Forms": forms}):
-            webview_module.WebUiMixin._configure_windows_session_closing(
+            windows_webview = import_module("desktop.win.webview")
+            windows_webview.WindowsWebUiMixin._configure_windows_session_closing(
                 application, window
             )
         native_event.__isub__.assert_called_once_with(native.on_closing)

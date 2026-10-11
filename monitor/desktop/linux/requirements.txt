@@ -1,0 +1,6 @@
+# 可选桌面依赖；Linux 服务和 NAS 安装不默认安装 GTK 桌面。
+Pillow>=10.0
+pystray>=0.19
+pywebview[gtk]>=5.4,<6
+esptool>=5.3,<6
+mpremote>=1.25

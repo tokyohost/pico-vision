@@ -19,6 +19,7 @@ const saving = ref(false)
 const activePage = ref('settings')
 const metadata = reactive({
   applicationName: 'OmniWatch',
+  platform: '',
   version: 'development',
   styles: [],
   taskNames: {},
@@ -214,7 +215,7 @@ onBeforeUnmount(() => {
           :application-version="metadata.version"
           :configured-url="settings.market_url"
         />
-        <UpdatePage v-else-if="activePage === 'update'" :device="device" :application-version="metadata.version" />
+        <UpdatePage v-else-if="activePage === 'update'" :device="device" :application-version="metadata.version" :platform="metadata.platform" />
         <LogsPage v-else-if="activePage === 'logs'" />
         <AboutPage v-else :metadata="metadata" :settings="settings" />
       </el-main>

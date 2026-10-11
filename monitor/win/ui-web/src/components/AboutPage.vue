@@ -1,7 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { invoke } from '../bridge'
+import { invoke, copyText } from '../bridge'
 
 const props = defineProps({
   metadata: { type: Object, required: true },
@@ -44,7 +44,7 @@ async function openDataDirectory() {
 async function copyQqGroupNumber() {
   const groupNumber = props.metadata.about.qqGroup || qqGroupNumber
   try {
-    await navigator.clipboard.writeText(groupNumber)
+    await copyText(groupNumber)
     ElMessage.success('QQ群号已复制')
   } catch (error) {
     ElMessage.error(error?.message || 'QQ群号复制失败')

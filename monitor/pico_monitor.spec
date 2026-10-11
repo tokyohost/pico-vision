@@ -3,9 +3,13 @@
 
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks.tcl_tk import tcltk_info
 
 
 MONITOR_ROOT = Path.cwd()
+if not tcltk_info.available:
+    # 不能让 PyInstaller 静默丢弃旧 Tk 窗口而生成缺少兼容功能的 EXE。
+    raise RuntimeError("Windows 构建需要完整 Tcl/Tk 运行时；请检查 Python 安装或 TCL_LIBRARY/TK_LIBRARY 配置")
 optional_fps_binaries = []
 for binary_name in ("PresentMon.exe", "adlx_fps_bridge.dll"):
     binary_path = Path("win/fps/bin") / binary_name
@@ -19,11 +23,11 @@ analysis = Analysis(
     pathex=[],
     binaries=optional_fps_binaries,
     datas=optional_datas,
-    hiddenimports=["psutil", "serial", "serial.tools.list_ports", "websocket", "net.websocket_transport", "custom_data", "collectTask", "collectTask.coordinator", "collectTask.executor", "collectTask.result_store", "collectTask.system_tasks", "aiohttp", "web_admin", "tkinter", "tkinter.filedialog", "tkinter.messagebox", "tkinter.scrolledtext", "tkinter.ttk", "pystray._win32", "PIL.Image", "PIL.ImageTk", "pico_upgrade", "sdk_flash", "build_info", "windows_update", "win.sensor_host", "win32api", "win32con", "win32file", "win32job", "win32pipe"] + collect_submodules("collectTask.tasks") + collect_submodules("esptool") + collect_submodules("mpremote") + collect_submodules("webview") + collect_submodules("win.ui-web-api") + collect_submodules("aiohttp"),
+    hiddenimports=["psutil", "serial", "serial.tools.list_ports", "websocket", "net.websocket_transport", "custom_data", "collectTask", "collectTask.coordinator", "collectTask.executor", "collectTask.result_store", "collectTask.system_tasks", "aiohttp", "web_admin", "tkinter", "tkinter.filedialog", "tkinter.messagebox", "tkinter.scrolledtext", "tkinter.ttk", "pystray._win32", "PIL.Image", "PIL.ImageTk", "pico_upgrade", "sdk_flash", "build_info", "windows_update", "win.sensor_host", "win32api", "win32con", "win32file", "win32job", "win32pipe"] + collect_submodules("collectTask.tasks") + collect_submodules("esptool") + collect_submodules("mpremote") + collect_submodules("webview") + collect_submodules("win.ui-web-api") + collect_submodules("aiohttp") + collect_submodules("desktop.common") + collect_submodules("desktop.win"),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=["desktop.macos", "desktop.linux.application"],
     noarchive=False,
     optimize=0,
 )

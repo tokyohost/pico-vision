@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -40,8 +41,13 @@ class CustomDataWorker:
         process_environment = os.environ.copy()
         process_environment["PYTHONIOENCODING"] = "utf-8"
         process_environment["PYTHONUTF8"] = "1"
+        python_options = []
+        if sys.platform == "darwin":
+            # 插件标准库由签名应用共享，缓存只能不写，不能改变 .app 的资源封印。
+            python_options = ["-B"]
+            process_environment["PYTHONDONTWRITEBYTECODE"] = "1"
         self.process = subprocess.Popen(
-            [str(python_path), str(_runner_path()), str(self.definition.path)],
+            [str(python_path), *python_options, str(_runner_path()), str(self.definition.path)],
             cwd=str(self.definition.plugin_directory), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1,
             env=process_environment,
