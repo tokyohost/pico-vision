@@ -270,10 +270,10 @@ class DiskMetricsMixin:
         name = cls._linux_block_device_name(device)
         if os.path.dirname(str(device)) == "/dev/mapper" and not re.fullmatch(r"dm-\d+", name):
             return name
-        match = re.match(r"^(nvme\d+n\d+|mmcblk\d+)p\d+$", name)
+        match = re.fullmatch(r"(nvme\d+n\d+|mmcblk\d+)(?:p\d+)?", name)
         if match:
             return match.group(1)
-        if re.fullmatch(r"(?:dm-|md)\d+", name):
+        if re.fullmatch(r"(?:dm-|md|nvme)\d+", name):
             return name
         match = re.match(r"^(.+?)\d+$", name)
         return match.group(1) if match else name
@@ -344,6 +344,17 @@ class DiskMetricsMixin:
         except (OSError, subprocess.TimeoutExpired, ValueError):
             return {}
         devices = {}
+        namespaces = {}
+        # 控制器不是块设备；先收集实际命名空间，避免扫描顺序导致重复或虚构 n1。
+        namespace_names = [os.path.basename(str(item.get("name", ""))) for item in payload.get("devices", ())]
+        try:
+            namespace_names.extend(path.name for path in Path("/sys/class/block").glob("nvme*"))
+        except OSError:
+            pass
+        for name in namespace_names:
+            match = re.fullmatch(r"(nvme\d+)n\d+", name)
+            if match:
+                namespaces.setdefault(match.group(1), set()).add(name)
         for device in payload.get("devices", ()):
             device_path = str(device.get("name", "")).strip()
             device_type = str(device.get("type", "")).strip() or None
@@ -351,12 +362,15 @@ class DiskMetricsMixin:
                 continue
             path_name = os.path.basename(device_path)
             if re.fullmatch(r"nvme\d+", path_name):
-                disk_name = path_name + "n1"
+                for disk_name in sorted(namespaces.get(path_name, {path_name + "n1"}), key=cls._natural_sort_key):
+                    devices.setdefault(disk_name, (device_path, device_type))
+                continue
             elif path_name.isdigit() and device_type:
                 disk_name = "".join(re.findall(r"[A-Za-z0-9]+", device_type)) or "disk" + path_name
             else:
                 disk_name = cls._linux_physical_disk(device_path)
             if disk_name:
+                # 显式命名空间优先于控制器路径，反向扫描也不能覆盖已选择的块设备。
                 devices[disk_name] = (device_path, device_type)
         return devices
 
@@ -442,10 +456,14 @@ class DiskMetricsMixin:
         last_time = getattr(self, "disk_health_time", 0.0)
         if last_time and now - last_time < DISK_HEALTH_CACHE_SECONDS:
             return getattr(self, "disk_health_cache", {})
-        health = {
-            name: self._read_smart_health(device, device_type)
-            for name, device, device_type in descriptors
-        }
+        health = {}
+        for name, device, device_type in descriptors:
+            status = self._read_smart_health(device, device_type)
+            namespace = re.fullmatch(r"/dev/(nvme\d+)n\d+", str(device))
+            if status == DISK_HEALTH_UNKNOWN and namespace:
+                # 部分驱动只允许通过控制器读取 SMART；仅未知状态需要回退。
+                status = self._read_smart_health("/dev/" + namespace.group(1), device_type or "nvme")
+            health[name] = status
         for name, status in health.items():
             if status >= DISK_HEALTH_NOTICE:
                 LOGGER.warning("磁盘 SMART 健康告警：磁盘=%s，health=%d", name, status)

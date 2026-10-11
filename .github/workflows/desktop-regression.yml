@@ -40,7 +40,7 @@ jobs:
       - name: 隔离执行回归测试
         run: |
           # Linux 基础依赖不安装 GUI，确保默认入口不强制桌面依赖。
-          $modules = @("test_desktop_common.py", "test_mac_os_desktop.py", "test_mac_os_collect_tasks.py", "test_monitor.py", "test_web_admin.py", "test_custom_data.py", "test_linux_packaging.py", "test_windows_update.py")
+          $modules = @("test_desktop_common.py", "test_mac_os_desktop.py", "test_mac_os_collect_tasks.py", "test_monitor.py", "test_collect_tasks.py", "test_linux_lvm_disks.py", "test_linux_nvme_disks.py", "test_web_admin.py", "test_custom_data.py", "test_linux_packaging.py", "test_windows_update.py")
           foreach ($module in $modules) {
             python -B -m unittest discover -s tests -p $module -v
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
