@@ -32,6 +32,22 @@ MONITOR_ROOT = Path(__file__).resolve().parents[1]
 class MacOsDesktopTest(unittest.TestCase):
     """通过平台替身验证 macOS 行为，不把 mock 测试当成 Mac 真机验收。"""
 
+    @unittest.skipUnless(sys.platform == "darwin", "需要 macOS 原生构建依赖")
+    def test_native_crypto_supports_device_encryption_and_signing(self):
+        """实际执行 AES 加解密与 RSA 签名，验证 Intel 静态库和 ARM wheel 均可用。"""
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import padding, rsa
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        payload = "macOS 设备加密验收".encode("utf-8")
+        cipher = AESGCM(AESGCM.generate_key(bit_length=256))
+        nonce = bytes(12)
+        encrypted = cipher.encrypt(nonce, payload, None)
+        self.assertEqual(cipher.decrypt(nonce, encrypted, None), payload)
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        signature = private_key.sign(payload, padding.PKCS1v15(), hashes.SHA256())
+        private_key.public_key().verify(signature, payload, padding.PKCS1v15(), hashes.SHA256())
+
     def test_runtime_copy_keeps_source_managed_and_initializes_private_copy(self):
         """只在新运行时副本省略 uv 标记，保留原环境、标准库和内部链接。"""
         with tempfile.TemporaryDirectory() as directory:
@@ -504,6 +520,16 @@ class MacOsDesktopTest(unittest.TestCase):
         self.assertIn("--managed-python 3.13.5", content)
         self.assertIn('uv venv --seed --python "$runtime_python"', content)
         self.assertIn('uv pip install --python "$build_environment/bin/python"', content)
+        openssl_step = next(step for step in values["jobs"]["build"]["steps"]
+                            if step["name"] == "构建 Intel 静态 OpenSSL")
+        self.assertEqual(openssl_step["if"], "matrix.architecture == 'x86_64'")
+        self.assertIn("no-shared no-tests", openssl_step["run"])
+        self.assertIn("-mmacosx-version-min=12.0", openssl_step["run"])
+        self.assertIn("shasum -a 256 -c -", openssl_step["run"])
+        self.assertIn("OPENSSL_STATIC=1", openssl_step["run"])
+        self.assertIn("--no-binary cryptography", content)
+        self.assertIn("--only-binary cryptography", content)
+        self.assertIn("cryptography==50.0.2", (MONITOR_ROOT / "desktop/macos/requirements.txt").read_text(encoding="utf-8"))
         self.assertIn('"$MONITOR_BUILD_PYTHON" -B tools/run_isolated_tests.py', content)
         self.assertIn('"$MONITOR_BUILD_PYTHON" -B -m desktop.macos.build', content)
         self.assertIn("tools/run_isolated_tests.py", content)

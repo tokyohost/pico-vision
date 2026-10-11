@@ -68,6 +68,29 @@ jobs:
         with:
           node-version: "22"
 
+      - name: 构建 Intel 静态 OpenSSL
+        if: matrix.architecture == 'x86_64'
+        run: |
+          set -euo pipefail
+          # cryptography 49 起不再提供 Intel macOS wheel；从源码构建时不链接
+          # runner 的 Homebrew 动态库，保留新版安全修复与 macOS 12 部署目标。
+          source_root="$RUNNER_TEMP/omniwatch-openssl-source"
+          openssl_root="$RUNNER_TEMP/omniwatch-openssl"
+          mkdir -p "$source_root"
+          archive="$source_root/openssl-4.0.3.tar.gz"
+          curl --fail --location --retry 3 --output "$archive" https://github.com/openssl/openssl/releases/download/openssl-4.0.3/openssl-4.0.3.tar.gz
+          # 摘要固定为 OpenSSL 官方发布制品，下载或校验失败必须终止。
+          printf '325b5c806167c13b40b1ffeadfe0248197c00eccc4cf123ec1e28d2d2fd216d9  %s\n' "$archive" | shasum -a 256 -c -
+          tar -xzf "$archive" -C "$source_root"
+          (
+            cd "$source_root/openssl-4.0.3"
+            ./Configure darwin64-x86_64-cc no-shared no-tests --prefix="$openssl_root" --libdir=lib -mmacosx-version-min=12.0
+            make -j"$(sysctl -n hw.ncpu)"
+            make install_sw
+          )
+          printf 'OPENSSL_DIR=%s\n' "$openssl_root" >> "$GITHUB_ENV"
+          printf 'OPENSSL_STATIC=1\n' >> "$GITHUB_ENV"
+
       - name: 安装依赖与独立插件运行时
         run: |
           set -euo pipefail
@@ -79,7 +102,11 @@ jobs:
           # 冻结构建与插件使用同一可迁移 Python，最低系统仍由原生依赖审计强制检查。
           build_environment="$RUNNER_TEMP/omniwatch-build-venv"
           uv venv --seed --python "$runtime_python" "$build_environment"
-          uv pip install --python "$build_environment/bin/python" -r desktop/macos/requirements.txt
+          dependency_options=(--only-binary cryptography)
+          if [[ "${{ matrix.architecture }}" == x86_64 ]]; then
+            dependency_options=(--no-binary cryptography)
+          fi
+          uv pip install --python "$build_environment/bin/python" "${dependency_options[@]}" -r desktop/macos/requirements.txt
           printf 'MONITOR_PLUGIN_RUNTIME=%s\n' "$runtime_root" >> "$GITHUB_ENV"
           printf 'MONITOR_BUILD_PYTHON=%s/bin/python\n' "$build_environment" >> "$GITHUB_ENV"
 
