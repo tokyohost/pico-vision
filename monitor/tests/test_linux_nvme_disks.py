@@ -83,6 +83,38 @@ class LinuxNvmeDiskTests(unittest.TestCase):
             self.assertEqual(collector._disk_health([("nvme0n1", "/dev/nvme0n1", "nvme")]), {"nvme0n1": 5})
         reader.assert_called_once_with("/dev/nvme0n1", "nvme")
 
+    def test_snapshot_keeps_one_namespace_with_valid_smart_health(self):
+        """确认重复扫描和命名空间 SMART 失败时，最终快照仍只有健康的两块盘。"""
+        paths = []
+        partitions = []
+        for index in (0, 1):
+            name = "nvme" + str(index) + "n1"
+            self._namespace(name)
+            paths.extend(["/dev/nvme" + str(index), "/dev/" + name])
+            partitions.append(SimpleNamespace(device="/dev/" + name, mountpoint="/data" + str(index),
+                                              opts="rw", fstype="ext4"))
+
+        def smartctl(command, **kwargs):
+            """模拟报告中的重复扫描和控制器有效 SMART JSON，保留真实健康分类。"""
+            del kwargs
+            if "--scan-open" in command:
+                payload = {"devices": [{"name": path, "type": "nvme"} for path in paths]}
+            else:
+                payload = {"smart_status": {"passed": True}} if command[-1] in ("/dev/nvme0", "/dev/nvme1") else {}
+            return SimpleNamespace(stdout=json.dumps(payload))
+
+        collector = DiskMetricsMixin()
+        collector.disk_temperature_cache = {}
+        collector.disk_temperature_time = 0.0
+        with mock.patch.object(disk_module.subprocess, "run", side_effect=smartctl), \
+                mock.patch.object(disk_module.psutil, "disk_partitions", return_value=partitions), \
+                mock.patch.object(disk_module.psutil, "disk_usage", return_value=SimpleNamespace(total=1000, used=100)), \
+                mock.patch.object(collector, "_read_linux_disk_temperature", return_value=43.0), \
+                mock.patch.object(collector, "_read_unassigned_disk_temperatures", return_value=[]):
+            disks = collector._disk_details()
+        self.assertEqual([(disk["name"], disk["health"], disk["total_bytes"]) for disk in disks],
+                         [("nvme0n1", 1, 1000), ("nvme1n1", 1, 1000)])
+
 
 if __name__ == "__main__":
     unittest.main()
