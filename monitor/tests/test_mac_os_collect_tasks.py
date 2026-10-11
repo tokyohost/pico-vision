@@ -217,8 +217,16 @@ class MacOsTelemetryTest(unittest.TestCase):
     def test_intel_nominal_frequency_is_explicit(self):
         """Intel psutil 降级频率明确标为标称值。"""
         telemetry = MacOsTelemetry()
-        with mock.patch("collectTask.tasks.mac_os.telemetry.psutil.cpu_freq", return_value=SimpleNamespace(current=2400)):
+        # Apple Silicon 的 psutil 没有此接口；该用例模拟 Intel，允许显式创建替身。
+        with mock.patch("collectTask.tasks.mac_os.telemetry.psutil.cpu_freq", return_value=SimpleNamespace(current=2400), create=True):
             self.assertEqual(telemetry.cpu_frequency(), (2.4, "psutil_nominal"))
+
+    def test_missing_cpu_frequency_api_remains_unavailable(self):
+        """Apple Silicon 缺少 psutil 频率接口时保留不可用状态，不伪造零值。"""
+        telemetry = MacOsTelemetry()
+        telemetry._nominal_frequency = None
+        with mock.patch("collectTask.tasks.mac_os.telemetry.psutil", spec=[]):
+            self.assertEqual(telemetry.cpu_frequency(), (None, "unavailable"))
 
     def test_older_macmon_scaled_ratio_and_per_core_arrays(self):
         """旧版 JSON 的比例显式标为缩放负载，核心数组仍可计算平均频率。"""

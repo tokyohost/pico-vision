@@ -1941,7 +1941,8 @@ class SystemCollectorTest(unittest.TestCase):
                 self.assertEqual(collector._network_rates("192.168.1.2")[:2], (600, 900))
 
     @mock.patch("system_monitor.platform.system", return_value="Linux")
-    @mock.patch("system_monitor.psutil.cpu_freq")
+    # 本用例模拟 Linux 的接口契约，不要求 Apple Silicon 测试机提供此接口。
+    @mock.patch("system_monitor.psutil.cpu_freq", create=True)
     def test_cpu_frequency_averages_current_core_speeds(self, cpu_freq, system):
         """确认 CPU GHz 根据各逻辑处理器的实时 MHz 平均值计算。"""
         del system
