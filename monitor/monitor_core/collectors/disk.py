@@ -245,9 +245,31 @@ class DiskMetricsMixin:
         return None
 
     @staticmethod
-    def _linux_physical_disk(device):
+    def _linux_block_device_name(device):
+        """解析块设备名称，在 udev 别名缺失时通过 sysfs 查找 LVM 内核设备。"""
+        device = str(device)
+        name = os.path.basename(os.path.realpath(device))
+        if os.path.dirname(device) != "/dev/mapper" or re.fullmatch(r"dm-\d+", name):
+            return name
+        # NAS 和容器可能只保留 mapper/control；dm/name 仍保存完整且已转义的卷名。
+        try:
+            for block_path in Path("/sys/class/block").glob("dm-*"):
+                try:
+                    mapper_name = (block_path / "dm" / "name").read_text(encoding="utf-8").strip()
+                except OSError:
+                    continue
+                if mapper_name == name:
+                    return block_path.name
+        except OSError:
+            pass
+        return name
+
+    @classmethod
+    def _linux_physical_disk(cls, device):
         """将 Linux 分区设备名称转换为对应的物理块设备名称。"""
-        name = os.path.basename(os.path.realpath(str(device)))
+        name = cls._linux_block_device_name(device)
+        if os.path.dirname(str(device)) == "/dev/mapper" and not re.fullmatch(r"dm-\d+", name):
+            return name
         match = re.match(r"^(nvme\d+n\d+|mmcblk\d+)p\d+$", name)
         if match:
             return match.group(1)
@@ -652,8 +674,28 @@ class DiskMetricsMixin:
                 if device_number is not None:
                     sensor = {"name": "DISK" + str(device_number), "temperature_c": None, "health": DISK_HEALTH_UNKNOWN}
             disk_sensors = sensor.get("physical_disks") or [sensor]
-            if platform.system() == "Linux" and not sensor:
-                continue
+            if platform.system() == "Linux":
+                block_name = self._linux_block_device_name(device)
+                is_logical_volume = (
+                    os.path.dirname(device) == "/dev/mapper"
+                    or re.fullmatch(r"(?:dm-|md)\d+", block_name)
+                    or len(disk_sensors) > 1
+                )
+                if is_logical_volume:
+                    # 一个卷只记录一份文件系统容量，不能向每块 RAID 成员盘重复分配。
+                    # 同一组物理盘上的不同逻辑卷也必须各自保留挂载点与占用率。
+                    disk_sensors = [{
+                        "name": block_name or device,
+                        "temperature_c": max(
+                            (item["temperature_c"] for item in disk_sensors if item.get("temperature_c") is not None),
+                            default=None,
+                        ),
+                        "health": max((item.get("health", DISK_HEALTH_UNKNOWN) for item in disk_sensors),
+                                      default=DISK_HEALTH_UNKNOWN),
+                    }]
+                elif not sensor:
+                    # 容量来自可读挂载点，温度或 SMART 缺失不应使容量一起丢失。
+                    disk_sensors = [{"name": self._linux_physical_disk(device) or device}]
             for disk_sensor in disk_sensors:
                 name = disk_sensor.get("name") or device
                 current = grouped.get(name)
