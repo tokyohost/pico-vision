@@ -497,7 +497,7 @@ class MacOsDesktopTest(unittest.TestCase):
         self.assertNotIn('(str(runtime_root), "plugin-runtime")', specification)
 
     def test_ci_uses_native_architecture_and_separate_dev_packages(self):
-        """CI 分别使用 Intel/ARM 原生 runner，正式标签强制签名公证。"""
+        """CI 分别使用 Intel/ARM 原生 runner，标签发布无公证的开发验证包。"""
         workflow = MONITOR_ROOT.parent / ".github/workflows/build-macos-dmg.yml"
         content = workflow.read_text(encoding="utf-8")
         values = yaml.safe_load(content)
@@ -514,9 +514,23 @@ class MacOsDesktopTest(unittest.TestCase):
                               if step["name"] == "初始化构建临时路径")
         self.assertIn("$RUNNER_TEMP", initialization["run"])
         self.assertIn("$GITHUB_ENV", initialization["run"])
-        self.assertIn("startsWith(github.ref, 'refs/tags/v')", environment["SIGN_RELEASE"])
+        self.assertNotIn("SIGN_RELEASE", environment)
+        self.assertIsNone(trigger["workflow_dispatch"])
+        build_step = next(step for step in values["jobs"]["build"]["steps"]
+                          if step["name"] == "构建开发验证应用、审计依赖并制作 DMG")
+        self.assertIn("--unsigned", build_step["run"])
+        self.assertNotIn("if", build_step)
         for name in ("MACOS_CERTIFICATE_P12_BASE64", "MACOS_CERTIFICATE_PASSWORD", "MACOS_SIGNING_IDENTITY", "MACOS_APPLE_ID", "MACOS_APP_PASSWORD", "MACOS_TEAM_ID", "OMNIWATCH_DOC_TOKEN"):
-            self.assertIn("secrets." + name, content)
+            self.assertNotIn("secrets." + name, content)
+        self.assertNotIn("notarytool", content)
+        self.assertNotIn("security create-keychain", content)
+        release = values["jobs"]["release"]
+        self.assertEqual("startsWith(github.ref, 'refs/tags/v')", release["if"])
+        release_step = next(step for step in release["steps"] if step["name"] == "发布本仓库 Release")
+        self.assertEqual("${{ github.repository }}", release_step["env"]["GH_REPO"])
+        self.assertIn("macOS 双架构开发验证包", release_step["run"])
+        self.assertIn("release-assets/*.zip release-assets/*.dmg", release_step["run"])
+        self.assertFalse(any(step["name"] == "同步到现有自动更新仓库" for step in release["steps"]))
         self.assertIn("--managed-python 3.13.5", content)
         self.assertIn('uv venv --seed --python "$runtime_python"', content)
         self.assertIn('uv pip install --python "$build_environment/bin/python"', content)

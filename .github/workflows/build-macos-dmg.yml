@@ -1,4 +1,4 @@
-name: 构建 macOS 双架构应用
+name: 构建 macOS 双架构开发验证包
 
 on:
   push:
@@ -8,11 +8,6 @@ on:
       - "monitor/**"
       - ".github/workflows/build-macos-dmg.yml"
   workflow_dispatch:
-    inputs:
-      sign_and_notarize:
-        description: 使用 Developer ID 签名并公证（需要配置 Secrets）
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -43,9 +38,6 @@ jobs:
       PYTHONUTF8: "1"
       PYTHONDONTWRITEBYTECODE: "1"
       MACOSX_DEPLOYMENT_TARGET: "12.0"
-      SIGN_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.sign_and_notarize == true }}
-      MONITOR_MAC_NOTARY_PROFILE: omniwatch-notary
-      MONITOR_MAC_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v6
@@ -55,7 +47,6 @@ jobs:
           set -euo pipefail
           # job 级 env 不允许 runner 上下文；在分配 runner 后写入步骤环境。
           printf 'UV_PYTHON_INSTALL_DIR=%s/omniwatch-python\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
-          printf 'MONITOR_MAC_NOTARY_KEYCHAIN=%s/omniwatch-signing.keychain-db\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: 安装原生 Python
         uses: actions/setup-python@v6
@@ -137,39 +128,11 @@ jobs:
           # Windows 原生注册表测试在 Windows 回归执行，不在 Mac 伪造系统 API。
           "$MONITOR_BUILD_PYTHON" -B tools/run_isolated_tests.py --report dist/macos-test-results.json
 
-      - name: 导入证书与公证凭据
-        if: env.SIGN_RELEASE == 'true'
-        env:
-          CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.MACOS_APPLE_ID }}
-          APP_PASSWORD: ${{ secrets.MACOS_APP_PASSWORD }}
-          TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+      - name: 构建开发验证应用、审计依赖并制作 DMG
         run: |
           set -euo pipefail
-          # 标签发布缺少凭据时直接失败，不降级成未公证包。
-          for value in CERTIFICATE_BASE64 CERTIFICATE_PASSWORD MONITOR_MAC_SIGNING_IDENTITY APPLE_ID APP_PASSWORD TEAM_ID; do
-            if [[ -z "${!value}" ]]; then echo "缺少 Secret：$value"; exit 1; fi
-          done
-          certificate="$RUNNER_TEMP/omniwatch-certificate.p12"
-          printf '%s' "$CERTIFICATE_BASE64" | /usr/bin/base64 --decode > "$certificate"
-          chmod 600 "$certificate"
-          keychain_password="$(openssl rand -hex 32)"
-          echo "::add-mask::$keychain_password"
-          security create-keychain -p "$keychain_password" "$MONITOR_MAC_NOTARY_KEYCHAIN"
-          security set-keychain-settings -lut 21600 "$MONITOR_MAC_NOTARY_KEYCHAIN"
-          security unlock-keychain -p "$keychain_password" "$MONITOR_MAC_NOTARY_KEYCHAIN"
-          security import "$certificate" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$MONITOR_MAC_NOTARY_KEYCHAIN"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$MONITOR_MAC_NOTARY_KEYCHAIN"
-          security list-keychains -d user -s "$MONITOR_MAC_NOTARY_KEYCHAIN" "$HOME/Library/Keychains/login.keychain-db"
-          xcrun notarytool store-credentials "$MONITOR_MAC_NOTARY_PROFILE" --apple-id "$APPLE_ID" --password "$APP_PASSWORD" --team-id "$TEAM_ID" --keychain "$MONITOR_MAC_NOTARY_KEYCHAIN"
-          rm -f "$certificate"
-
-      - name: 构建应用、审计依赖并制作 DMG
-        run: |
-          set -euo pipefail
-          arguments=(--architecture "${{ matrix.architecture }}" --runtime "$MONITOR_PLUGIN_RUNTIME" --output dist/macos)
-          if [[ "$SIGN_RELEASE" != true ]]; then arguments+=(--unsigned); fi
+          # 手动运行与标签发布统一使用开发模式，不需要 Developer ID 证书或公证凭据。
+          arguments=(--architecture "${{ matrix.architecture }}" --runtime "$MONITOR_PLUGIN_RUNTIME" --output dist/macos --unsigned)
           "$MONITOR_BUILD_PYTHON" -B -m desktop.macos.build "${arguments[@]}"
 
       - name: 上传对应架构 ZIP 与 DMG
@@ -190,14 +153,8 @@ jobs:
           path: monitor/dist/macos-test-results.json
           if-no-files-found: warn
 
-      - name: 清理临时证书与钥匙串
-        if: always() && env.SIGN_RELEASE == 'true'
-        run: |
-          security delete-keychain "$MONITOR_MAC_NOTARY_KEYCHAIN" || true
-          rm -f "$RUNNER_TEMP/omniwatch-certificate.p12"
-
   release:
-    name: 发布正式 macOS 制品
+    name: 发布 macOS 开发验证制品
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
@@ -219,14 +176,5 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "$GITHUB_REF_NAME" || gh release view "$GITHUB_REF_NAME" >/dev/null
-          gh release upload "$GITHUB_REF_NAME" release-assets/*.zip release-assets/*.dmg --clobber
-      - name: 同步到现有自动更新仓库
-        env:
-          GH_TOKEN: ${{ secrets.OMNIWATCH_DOC_TOKEN }}
-          GH_REPO: tokyohost/omniwatch-doc
-        run: |
-          set -euo pipefail
-          if [[ -z "$GH_TOKEN" ]]; then echo "缺少 OMNIWATCH_DOC_TOKEN，无法同步自动更新资源"; exit 1; fi
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --target main --title "$GITHUB_REF_NAME" --notes "macOS 双架构签名发行包" || gh release view "$GITHUB_REF_NAME" >/dev/null
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "$GITHUB_REF_NAME" --notes "macOS 双架构开发验证包（文件名含 -dev），使用本地 adhoc 签名，未经 Apple 公证，仅供人工安装验证，不用于自动更新。首次打开被拦截时，请确认来源后在系统设置的隐私与安全性中选择仍要打开。" || gh release view "$GITHUB_REF_NAME" >/dev/null
           gh release upload "$GITHUB_REF_NAME" release-assets/*.zip release-assets/*.dmg --clobber

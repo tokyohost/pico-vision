@@ -76,21 +76,11 @@ python3 -B -m desktop.macos.build --architecture arm64 --runtime "$runtime_root"
 
 ## GitHub Actions
 
-新增 `build-macos-dmg.yml`，使用 `macos-15-intel` 构建 x86_64、`macos-15` 构建 arm64。手动运行默认只生成开发 Artifact；勾选签名公证时生成正式 Artifact；`v` 开头标签强制签名、公证，并发布两个架构的 ZIP/DMG。Runner 不等于 macOS 12 验收环境。另有 `desktop-regression.yml` 在 Windows 与 Ubuntu 隔离执行公共层和无界面入口回归。
+`build-macos-dmg.yml` 使用 `macos-15-intel` 构建 x86_64、`macos-15` 构建 arm64。手动运行、`mac_os_support` 分支推送和 `v` 开头标签均使用 `--unsigned` 生成开发验证包，不需要 Apple 开发者会员、Developer ID 证书或公证凭据。手动和分支构建上传 Artifact；标签构建还将两个架构的 ZIP/DMG 发布到当前仓库的 Release。Runner 不等于 macOS 12 验收环境。另有 `desktop-regression.yml` 在 Windows 与 Ubuntu 隔离执行公共层和无界面入口回归。
 
-仓库 Secrets：
+该工作流无需配置签名、公证或跨仓库同步 Secrets，发布当前仓库时使用 GitHub 自动提供的令牌。制品名为 `OmniWatch-macos-<架构>-dev-v<版本>.zip` 和 `.dmg`，保留本地 adhoc 签名校验、依赖审计与运行时验证，跳过 Apple 公证。开发包只供人工安装验证，不同步到自动更新仓库，也不参与正式自动更新。
 
-| 名称 | 用途 |
-| --- | --- |
-| `MACOS_CERTIFICATE_P12_BASE64` | Developer ID Application 私钥证书 P12 的 Base64 |
-| `MACOS_CERTIFICATE_PASSWORD` | P12 密码 |
-| `MACOS_SIGNING_IDENTITY` | 完整 Developer ID Application 签名身份 |
-| `MACOS_APPLE_ID` | 公证账户 |
-| `MACOS_APP_PASSWORD` | App-specific password，不是 Apple ID 登录密码 |
-| `MACOS_TEAM_ID` | Apple Developer 团队 ID |
-| `OMNIWATCH_DOC_TOKEN` | 同步当前自动更新仓库 `tokyohost/omniwatch-doc` 的令牌 |
-
-临时证书和钥匙串在任务结束时清理。没有凭据时正式发布会失败，不会悄悄发布未公证包。添加工作流不会自动配置 Secrets，也不会立即执行或发布制品。
+首次打开应用被 macOS 拦截时，确认下载来源可信后，到“系统设置 → 隐私与安全性 → 仍要打开”放行。需要签名公证发行包时，仍可按上节命令在 Mac 上配置凭据并执行本地构建。
 
 ## 应用自动更新边界
 
