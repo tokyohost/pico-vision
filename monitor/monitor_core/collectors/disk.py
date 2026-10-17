@@ -669,25 +669,35 @@ class DiskMetricsMixin:
         self.disk_temperature_time = now
         return temperatures
 
+    @staticmethod
+    def _mountpoint_rank(partition):
+        """完整匹配 NAS 卷根路径，优先选择数字较小的 /volumeN 挂载点。"""
+        mountpoint = str(getattr(partition, "mountpoint", "") or "")
+        match = re.fullmatch(r"/volume(\d+)/?", mountpoint)
+        return (0, int(match.group(1))) if match else (1, 0)
+
     def _disk_details(self):
-        """采集已挂载文件系统用量，以及未挂载物理盘的设备容量和传感器数据。"""
-        partitions = []
-        visited_devices = set()
+        """采集所有有效本地磁盘分区的容量、占用率和温度。"""
+        selected_partitions = {}
         for partition in psutil.disk_partitions(all=False):
             options = set(str(partition.opts).lower().split(","))
             if "cdrom" in options:
                 continue
             device = str(partition.device or partition.mountpoint)
             device_key = os.path.normcase(device)
-            if device_key in visited_devices:
-                continue
+            current = selected_partitions.get(device_key)
+            # 完整匹配避免 overlay 子目录冒充卷根；同优先级保留首项与设备顺序。
+            if current is None or self._mountpoint_rank(partition) < self._mountpoint_rank(current[0]):
+                selected_partitions[device_key] = (partition, device)
+        partitions = []
+        # 先选定每个设备的代表挂载点，淘汰的重复路径不触发容量查询。
+        for device_key, (partition, device) in selected_partitions.items():
             try:
                 usage = psutil.disk_usage(partition.mountpoint)
             except (OSError, PermissionError):
                 continue
             if usage.total <= 0:
                 continue
-            visited_devices.add(device_key)
             partitions.append((partition, usage, device, device_key))
         if not partitions:
             mountpoint = os.path.abspath(os.sep)
