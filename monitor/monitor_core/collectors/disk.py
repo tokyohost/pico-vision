@@ -337,6 +337,17 @@ class DiskMetricsMixin:
                 names.update(cls._linux_backing_disks(disk_name))
         return tuple(sorted(names, key=cls._natural_sort_key))
 
+    @staticmethod
+    def _read_linux_disk_capacity(disk_name):
+        """通过 sysfs 读取物理块设备总容量，无需挂载点、设备节点或 SMART 权限。"""
+        try:
+            # size 始终使用 512 字节扇区；4Kn 设备也不能乘逻辑扇区大小。
+            sector_count = int((Path("/sys/class/block") / disk_name / "size").read_text(encoding="ascii").strip())
+        except (OSError, ValueError):
+            # 热拔出、权限不足或内核未提供容量时，保留传感器条目并沿用未知值。
+            return 0
+        return max(0, sector_count) * 512
+
     @classmethod
     def _scan_linux_smart_devices(cls):
         """使用 smartctl 自动发现 SATA、NVMe、SCSI 与 RAID 控制器磁盘。"""
@@ -665,25 +676,35 @@ class DiskMetricsMixin:
         self.disk_temperature_time = now
         return temperatures
 
+    @staticmethod
+    def _mountpoint_rank(partition):
+        """完整匹配 NAS 卷根路径，优先选择数字较小的 /volumeN 挂载点。"""
+        mountpoint = str(getattr(partition, "mountpoint", "") or "")
+        match = re.fullmatch(r"/volume(\d+)/?", mountpoint)
+        return (0, int(match.group(1))) if match else (1, 0)
+
     def _disk_details(self):
         """采集所有有效本地磁盘分区的容量、占用率和温度。"""
-        partitions = []
-        visited_devices = set()
+        selected_partitions = {}
         for partition in psutil.disk_partitions(all=False):
             options = set(str(partition.opts).lower().split(","))
             if "cdrom" in options:
                 continue
             device = str(partition.device or partition.mountpoint)
             device_key = os.path.normcase(device)
-            if device_key in visited_devices:
-                continue
+            current = selected_partitions.get(device_key)
+            # 完整匹配避免 overlay 子目录冒充卷根；同优先级保留首项与设备顺序。
+            if current is None or self._mountpoint_rank(partition) < self._mountpoint_rank(current[0]):
+                selected_partitions[device_key] = (partition, device)
+        partitions = []
+        # 先选定每个设备的代表挂载点，淘汰的重复路径不触发容量查询。
+        for device_key, (partition, device) in selected_partitions.items():
             try:
                 usage = psutil.disk_usage(partition.mountpoint)
             except (OSError, PermissionError):
                 continue
             if usage.total <= 0:
                 continue
-            visited_devices.add(device_key)
             partitions.append((partition, usage, device, device_key))
         if not partitions:
             mountpoint = os.path.abspath(os.sep)
@@ -757,6 +778,8 @@ class DiskMetricsMixin:
         for sensor in temperatures.get("__physical_disks__", ()):
             if sensor["name"] in mounted_names:
                 continue
+            # SMART 可能使用 /dev/nvme1 控制器路径，容量必须按 nvme1n1 命名空间读取。
+            total_bytes = self._read_linux_disk_capacity(sensor["name"]) if platform.system() == "Linux" else 0
             details.append({
                 "name": sensor["name"],
                 "label": sensor["name"],
@@ -764,7 +787,9 @@ class DiskMetricsMixin:
                 "mountpoints": [],
                 "filesystems": [],
                 "used_bytes": 0,
-                "total_bytes": 0,
+                "total_bytes": total_bytes,
+                # 未挂载不代表空盘；文件系统已用与剩余空间无法由设备大小推断。
+                "free_bytes": 0,
                 "percent": 0,
                 "temperature_c": sensor["temperature_c"],
                 "health": sensor.get("health", DISK_HEALTH_UNKNOWN),
@@ -773,10 +798,12 @@ class DiskMetricsMixin:
 
     @staticmethod
     def _disk_usage(disks=None):
-        """汇总有效本地磁盘明细中的已用空间和总空间。"""
+        """汇总已挂载文件系统用量，排除裸盘及 LVM/RAID 成员盘的设备容量。"""
         if disks is not None:
-            total_bytes = sum(item["total_bytes"] for item in disks)
-            used_bytes = sum(item["used_bytes"] for item in disks)
+            # 缺少挂载点字段的旧调用方仍按原有方式累计；明确无挂载点的仅供明细展示。
+            mounted_disks = [item for item in disks if item.get("mountpoints") or "mountpoints" not in item]
+            total_bytes = sum(item["total_bytes"] for item in mounted_disks)
+            used_bytes = sum(item["used_bytes"] for item in mounted_disks)
             percent = used_bytes * 100 / total_bytes if total_bytes else 0
             return used_bytes, total_bytes, round(percent, 1)
         total_bytes = 0
