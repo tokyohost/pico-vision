@@ -5,6 +5,7 @@ import time
 
 
 DISK_CAPACITY_HEALTH_FIELDS = (
+    "label",
     "devices",
     "mountpoints",
     "filesystems",
@@ -14,8 +15,9 @@ DISK_CAPACITY_HEALTH_FIELDS = (
     "percent",
     "health",
 )
-DISK_TEMPERATURE_FIELDS = ("temperature_c",)
-DISK_RATE_FIELDS = ("read_bps", "write_bps", "read_history", "write_history")
+# 温度、速率任务也可能先于容量任务完成，首次发布时就应提供可引用的标签。
+DISK_TEMPERATURE_FIELDS = ("label", "temperature_c")
+DISK_RATE_FIELDS = ("label", "read_bps", "write_bps", "read_history", "write_history")
 DISK_DETAILS_SHARED_CACHE_SECONDS = 2.0
 
 

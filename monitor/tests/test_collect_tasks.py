@@ -404,6 +404,30 @@ class CollectionCoordinatorTest(unittest.TestCase):
         self.assertEqual(collector._disk_details.call_count, 1)
         self.assertEqual(collector._refresh_disk_hardware_state.call_count, 2)
 
+    def test_disk_label_survives_task_order_and_mount_change(self):
+        """确认温度或速率先发布也有标签，容量任务可按原设备名更新挂载标签。"""
+        for initial_fields in (DISK_TEMPERATURE_FIELDS, DISK_RATE_FIELDS):
+            with self.subTest(initial_fields=initial_fields):
+                collector = types.SimpleNamespace()
+                initial = {"name": "dm-4", "label": "/volume1", "temperature_c": 38.0, "read_bps": 20}
+                snapshot = publish_disk_snapshot(
+                    collector, disks=[initial], physical_disks=[initial],
+                    disk_fields=initial_fields, physical_fields=initial_fields,
+                )
+                for field in ("disks", "physical_disks"):
+                    self.assertEqual(snapshot[field][0]["label"], "/volume1")
+                updated = {"name": "dm-4", "label": "/data", "mountpoints": ["/data"], "total_bytes": 1000}
+                snapshot = publish_disk_snapshot(
+                    collector, disks=[updated], physical_disks=[updated],
+                    disk_fields=DISK_CAPACITY_HEALTH_FIELDS, physical_fields=DISK_CAPACITY_HEALTH_FIELDS,
+                    replace_disks=True, replace_physical_disks=True,
+                )
+                for field in ("disks", "physical_disks"):
+                    self.assertEqual(len(snapshot[field]), 1)
+                    self.assertEqual(snapshot[field][0]["name"], "dm-4")
+                    self.assertEqual(snapshot[field][0]["label"], "/data")
+                    self.assertEqual(snapshot[field][0]["total_bytes"], 1000)
+
     def test_task_completion_publishes_fragment_immediately(self):
         """确认协调器无需等待同批其他任务即可更新快照。"""
         collector = mock.Mock()
