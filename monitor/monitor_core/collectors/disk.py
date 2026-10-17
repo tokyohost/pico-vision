@@ -79,6 +79,12 @@ class DiskMetricsMixin:
         return True
 
     @staticmethod
+    def _disk_label(disk):
+        """优先以排序去重的挂载路径生成友好名，未挂载时回退到设备名称。"""
+        mountpoints = sorted({str(path) for path in disk.get("mountpoints") or () if path})
+        return ", ".join(mountpoints) or str(disk.get("name") or "DISK")
+
+    @staticmethod
     def _physical_disk_statistics(disks):
         """从磁盘明细生成发送给 Pico 的物理磁盘容量、温度和读写速度统计。"""
         def nullable_number(value, converter):
@@ -90,6 +96,7 @@ class DiskMetricsMixin:
         return [
             {
                 "name": disk.get("name", "DISK"),
+                "label": disk.get("label") or DiskMetricsMixin._disk_label(disk),
                 "devices": list(disk.get("devices") or ()),
                 "mountpoints": list(disk.get("mountpoints") or ()),
                 "used_bytes": int(disk.get("used_bytes") or 0),
@@ -762,6 +769,8 @@ class DiskMetricsMixin:
                 current["health"] = max(current["health"], disk_sensor.get("health", DISK_HEALTH_UNKNOWN))
         details = []
         for current in grouped.values():
+            # 标签仅用于显示和样式筛选；设备名仍用于 I/O 关联与多任务快照合并。
+            current["label"] = self._disk_label(current)
             total_bytes = current["total_bytes"]
             current["percent"] = round(current["used_bytes"] * 100 / total_bytes, 1) if total_bytes else 0
             details.append(current)
@@ -773,6 +782,7 @@ class DiskMetricsMixin:
             total_bytes = self._read_linux_disk_capacity(sensor["name"]) if platform.system() == "Linux" else 0
             details.append({
                 "name": sensor["name"],
+                "label": sensor["name"],
                 "devices": [sensor["device"]],
                 "mountpoints": [],
                 "filesystems": [],

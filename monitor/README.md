@@ -10,9 +10,21 @@ CPU 数据通过顶层 `cpu` 对象发送，其中 `frequency_ghz` 是当前 GHz
 
 磁盘明细通过 JSON 顶层 `disks` 数组发送。同一物理盘的多个分区会合并，字段包括 `name`、`devices`、`mountpoints`、`filesystems`、`used_bytes`、`total_bytes`、`percent`、`temperature_c` 和 `health`。同时，面向 Pico 显示的物理磁盘统计通过顶层 `physical_disks` 数组发送，每块物理盘也包含 `health`、温度、容量、占用率、实时读写速度 `read_bps`/`write_bps`，以及固定长度的读写速度历史 `read_history`/`write_history`。程序在启动时检查 SMART，之后每 30 分钟复查；Linux 需要安装 `smartmontools`。`health` 取值为：`0` 未知、`1` 健康、`2` 注意、`3` 警告、`4` 严重、`5` 失败。分级以 smartmontools 总体自检结论为最高优先级，并结合 NVMe Critical Warning、寿命百分比和 ATA 重映射、待映射及不可校正扇区等公开指标；无法读取 SMART、USB 硬盘盒不支持或权限不足时返回 `0`。
 
-Linux 未挂载物理盘在 `disks` 和 `physical_disks` 中的 `total_bytes` 来自 `/sys/class/block/<磁盘名>/size × 512`，无需挂载磁盘、访问 `/dev` 节点或安装 `smartmontools`；NVMe 按命名空间读取容量，兼容仅开放宿主 `/sys` 的容器部署。未挂载盘可能已有数据，其 `used_bytes`、`free_bytes` 和 `percent` 保留协议兼容值 `0`，表示未采集文件系统用量，不能据此判断为空盘或全部可用。sysfs 容量缺失、无权限或设备已移除时，`total_bytes` 回退为 `0`。已挂载条目仍按文件系统统计容量；顶层 `disk` 总览只汇总已挂载文件系统，避免将未挂载设备容量与 LVM/RAID 卷容量重复计算。
+Linux 磁盘条目新增友好名字段 `label`，同时发送到 `disks` 与 `physical_disks`。已挂载条目的 `label` 为挂载路径，例如 LVM 卷 `{"name": "dm-4", "label": "/volume1", "mountpoints": ["/volume1"]}`；同一条目有多个挂载路径时，按路径排序去重后用 `, ` 拼接；未挂载磁盘的 `label` 回退到 `name`。`name` 仍为设备标识，用于 I/O 关联和快照合并，不能用其前缀判断卷的挂载位置。标签随挂载关系刷新，不是文件系统卷标，也不是永久设备标识。
 
-实机验证可在具有未挂载物理盘的 Linux 上，从本目录执行 `sudo python3 tools/verify_linux_unmounted_disks.py`。脚本只读采集快照，并用 `blockdev --getsize64` 交叉核对 sysfs、`disks` 与 `physical_disks` 的容量；`--source <仓库根目录> --expect broken` 可对照修复前源码，默认检查修复后的行为，不修改磁盘或挂载状态。
+自定义样式与脚本可直接使用 `label` 显示或筛选卷；兼容旧 Monitor 数据时可回退到 `mountpoints` 和 `name`：
+
+```python
+def disk_label(disk):
+    """兼容新旧快照，获取用于显示和筛选的磁盘友好名。"""
+    mounts = sorted(set(disk.get("mountpoints") or ()))
+    return disk.get("label") or ", ".join(mounts) or disk.get("name", "DISK")
+
+
+volumes = [disk for disk in snapshot.get("disks", ()) if disk_label(disk).startswith("/volume")]
+```
+
+需要精确匹配某个挂载路径时，使用 `"/volume1" in disk.get("mountpoints", ())`，避免多分区标签或 `/volume10` 的前缀歧义。
 
 网络统计通过 `network.receive_bytes` 提供已下载总流量，通过 `network.transmit_bytes` 提供已上传总流量，单位均为字节。
 

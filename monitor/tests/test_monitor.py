@@ -2014,11 +2014,20 @@ class SystemCollectorTest(unittest.TestCase):
         ])
 
         self.assertEqual(statistics[0]["name"], "NVME0")
+        self.assertEqual(statistics[0]["label"], "C:\\")
         self.assertEqual(statistics[0]["temperature_c"], 42.5)
         self.assertEqual(statistics[0]["health"], 0)
         self.assertEqual(statistics[0]["total_bytes"], 1000)
         self.assertEqual(statistics[0]["read_bps"], 0)
         self.assertEqual(statistics[0]["write_history"], [])
+
+    def test_physical_disk_statistics_preserves_label_and_falls_back_to_name(self):
+        """确认标签传至设备快照，未挂载磁盘和旧采集数据仍有可用名称。"""
+        disks = [{"name": "dm-4", "label": "/volume1", "mountpoints": ["/volume1"]},
+                 {"name": "nvme0n1", "mountpoints": None}]
+        statistics = SystemInformationCollector._physical_disk_statistics(disks)
+        self.assertEqual([disk["label"] for disk in statistics], ["/volume1", "nvme0n1"])
+        self.assertNotIn("label", disks[1])
 
     def test_physical_disk_statistics_preserves_unavailable_rates(self):
         """确认 SensorHost 返回空读写速率时不会转换失败，也不会误报磁盘空闲。"""
