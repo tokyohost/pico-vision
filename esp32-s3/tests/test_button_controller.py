@@ -1,8 +1,11 @@
 """验证 GPIO 按键即时触发与正数消抖行为。"""
 
+import json
+import re
 import sys
 import types
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from button_controller import GpioButton
@@ -83,6 +86,81 @@ class GpioButtonTest(unittest.TestCase):
         button._pin.level = 1
 
         self.assertEqual(("style_next", "release"), button.update(720))
+
+
+class ButtonConfigurationTest(unittest.TestCase):
+    """确认屏幕方案默认按键与持久化覆盖配置在启动时正确生效。"""
+
+    @staticmethod
+    def load_configuration(device_type, runtime_values=None):
+        """在隔离命名空间模拟型号选择与运行配置文件，不改写实际源码。"""
+        path = Path(__file__).resolve().parents[1] / "config.py"
+        source = re.sub(
+            r'(?m)^LCD_DEVICE_TYPE = "[^"]*"$',
+            "LCD_DEVICE_TYPE = " + repr(device_type),
+            path.read_text(encoding="utf-8"),
+        )
+        configuration = {}
+        runtime_file = mock.mock_open(read_data=json.dumps(runtime_values or {}))
+        if runtime_values is None:
+            runtime_file.side_effect = FileNotFoundError
+        with mock.patch("builtins.open", runtime_file):
+            exec(compile(source, str(path), "exec"), configuration)
+        return configuration
+
+    def test_backpcb_canonical_and_alias_use_three_board_keys(self):
+        """规范型号与别名均应把 K1/K2/K3 映射为 GPIO1/2/42。"""
+        for device_type in (
+            "st7789-2.4inch-10pin-backpcb",
+            "st7789_2_4inch_10pin_backpcb",
+            " ST7789_2_4INCH_10PIN_BACKPCB ",
+        ):
+            with self.subTest(device_type=device_type):
+                configuration = self.load_configuration(device_type)
+                self.assertEqual(
+                    tuple(configuration[name] for name in (
+                        "PIN_BUTTON_STYLE_PREVIOUS", "PIN_BUTTON_STYLE_NEXT",
+                        "PIN_BUTTON_FUNCTION",
+                    )),
+                    (1, 2, 42),
+                )
+                self.assertTrue(configuration["BUTTON_ACTIVE_LOW"])
+                self.assertEqual(configuration["BUTTON_DEBOUNCE_MS"], 0)
+                self.assertEqual(configuration["BUTTON_LONG_PRESS_MS"], 500)
+                self.assertEqual(configuration["BUTTON_REPEAT_INTERVAL_MS"], 60)
+
+    def test_existing_panels_keep_original_button_pins(self):
+        """原有八针和十针屏继续使用 GPIO1/2/3，避免背板配置影响旧设备。"""
+        for device_type in (
+            "st7789-2inch-8pin-a", "st7789-2.4inch-8pin-b",
+            "st7789-2.4inch-10pin-a", "st7789_2_4inch_10pin_a",
+        ):
+            with self.subTest(device_type=device_type):
+                configuration = self.load_configuration(device_type)
+                self.assertEqual(
+                    tuple(configuration[name] for name in (
+                        "PIN_BUTTON_STYLE_PREVIOUS", "PIN_BUTTON_STYLE_NEXT",
+                        "PIN_BUTTON_FUNCTION",
+                    )),
+                    (1, 2, 3),
+                )
+
+    def test_runtime_button_configuration_overrides_board_defaults(self):
+        """持久化引脚、有效电平和按键时序应优先于背板默认配置。"""
+        overrides = {
+            "PIN_BUTTON_STYLE_PREVIOUS": 18,
+            "PIN_BUTTON_STYLE_NEXT": 8,
+            "PIN_BUTTON_FUNCTION": 3,
+            "BUTTON_ACTIVE_LOW": False,
+            "BUTTON_DEBOUNCE_MS": 30,
+            "BUTTON_LONG_PRESS_MS": 700,
+            "BUTTON_REPEAT_INTERVAL_MS": 100,
+        }
+        configuration = self.load_configuration(
+            "st7789-2.4inch-10pin-backpcb", overrides
+        )
+        for name, value in overrides.items():
+            self.assertEqual(configuration[name], value)
 
 
 if __name__ == "__main__":

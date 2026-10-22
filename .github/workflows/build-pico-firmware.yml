@@ -26,6 +26,7 @@ jobs:
         lcd_device_type:
           - st7789-2inch-8pin-a
           - st7789-2.4inch-10pin-a
+          - st7789-2.4inch-10pin-backpcb
           - st7789-2.4inch-8pin-b
     steps:
       - name: 检出项目代码

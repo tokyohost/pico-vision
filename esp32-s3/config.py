@@ -76,11 +76,17 @@ LCD_BOOT_PRELOAD_STYLES = ("horizontal_disk4x_qb",)
 MAX_JSON_SIZE = 16 * 1024
 SERIAL_READ_BUDGET = 4096
 
-# 后盖三按键使用 GP1、GP2、GP3，避开全部八针/十针 LCD 与两种板载状态灯。
+# 旧方案后盖三按键使用 GPIO1/2/3；V3 背板 J2 的 K1/K2/K3 使用 GPIO1/2/42。
 # 按键默认一端接 GPIO、另一端共接 GND，并使用 ESP32-S3 内部上拉。
 PIN_BUTTON_STYLE_PREVIOUS = 1
 PIN_BUTTON_STYLE_NEXT = 2
 PIN_BUTTON_FUNCTION = 3
+# 在加载 runtime_config.json 前应用方案默认值，保留用户显式配置的覆盖优先级。
+if str(LCD_DEVICE_TYPE).strip().lower() in (
+    "st7789-2.4inch-10pin-backpcb",
+    "st7789_2_4inch_10pin_backpcb",
+):
+    PIN_BUTTON_FUNCTION = 42
 BUTTON_ACTIVE_LOW = True
 BUTTON_DEBOUNCE_MS = 0
 BUTTON_LONG_PRESS_MS = 500
