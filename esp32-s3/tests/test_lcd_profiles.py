@@ -138,17 +138,17 @@ class BackPcbLcdProfilesTest(unittest.TestCase):
         self.assertEqual(color.madctl_color_bits(), 0x00)
 
     def test_backpcb_connector_and_gpio_match_pcb(self):
-        """J1 屏幕座脚序及 J3 引出的 GPIO 必须符合背板实际网络。"""
+        """J1 反序插接厂家十针屏后，应按屏幕实际功能映射 GPIO。"""
         pins = St7789TwoPointFourInch10PinBackPcbDevice.pin_profile
         self.assertEqual(pins.spi_id, 2)
         self.assertEqual(pins.baudrate, 40_000_000)
         self.assertEqual(
             (pins.sck, pins.mosi, pins.cs, pins.dc, pins.rst, pins.bl, pins.miso),
-            (7, 15, 6, 5, 4, 16, 17),
+            (5, 6, 7, 4, 15, 16, 17),
         )
         self.assertEqual(
             pins.connector_pins,
-            ("LED-", "LED+", "GND", "VDD", "SDA", "CS", "DC", "SCL", "RST", "GND"),
+            ("LED-", "LED+", "GND", "VDD", "RESET", "SDA", "SCL", "CS", "RS", "GND"),
         )
         self.assertEqual(pins.signal_label("sck"), "SCL")
         self.assertEqual(pins.signal_label("mosi"), "SDA")
@@ -158,6 +158,24 @@ class BackPcbLcdProfilesTest(unittest.TestCase):
             pins.bl, pins.miso, 1, 2, 42,
         )
         self.assertEqual(len(set(used_pins)), len(used_pins))
+
+    def test_backpcb_reversed_fpc_matches_manufacturer_pinout(self):
+        """由厂家脚序和 PCB 物理连线独立推导反序插接后的供电与信号。"""
+        pins = St7789TwoPointFourInch10PinBackPcbDevice.pin_profile
+        screen_pins = ("GND", "RS", "CS", "SCL", "SDA", "RESET", "VDD", "GND", "LED+", "LED-")
+        # 此处按 PCB J1 焊盘编号记录实际连线，避免用档案值推导预期结果。
+        pcb_connections = ("LED-", "LED+", "GND", "3V3", 15, 6, 5, 7, 4, "GND")
+        expected = {
+            "GND": "GND", "VDD": "3V3", "LED+": "LED+", "LED-": "LED-",
+            "RS": pins.dc, "CS": pins.cs, "SCL": pins.sck,
+            "SDA": pins.mosi, "RESET": pins.rst,
+        }
+        self.assertEqual(pins.connector_pins, tuple(reversed(screen_pins)))
+        for signal, connection in zip(screen_pins, reversed(pcb_connections)):
+            with self.subTest(signal=signal):
+                self.assertEqual(expected[signal], connection)
+        self.assertEqual(pins.signal_label("dc"), "RS")
+        self.assertEqual(pins.signal_label("rst"), "RESET")
 
     def test_backpcb_backlight_uses_active_high_low_side_driver(self):
         """Q1 的栅极应在初始化时为低，亮度增加时提高 GPIO16 的占空比。"""
@@ -184,10 +202,10 @@ class BackPcbLcdProfilesTest(unittest.TestCase):
                 device = create_lcd_device("st7789-2.4inch-10pin-backpcb")
             self.assertEqual(device.spi.spi_id, 2)
             self.assertEqual(device.spi.parameters["baudrate"], 40_000_000)
-            self.assertEqual(device.spi.parameters["sck"].pin, 7)
-            self.assertEqual(device.spi.parameters["mosi"].pin, 15)
+            self.assertEqual(device.spi.parameters["sck"].pin, 5)
+            self.assertEqual(device.spi.parameters["mosi"].pin, 6)
             self.assertEqual(device.spi.parameters["miso"].pin, 17)
-            self.assertEqual((device.cs.pin, device.dc.pin, device.rst.pin), (6, 5, 4))
+            self.assertEqual((device.cs.pin, device.dc.pin, device.rst.pin), (7, 4, 15))
             self.assertEqual(device.bl.pin.pin, 16)
             self.assertEqual(device.bl.duty, 0)
             self.assertEqual(device.transfer_backend_name(), backend)
@@ -198,8 +216,8 @@ class BackPcbLcdProfilesTest(unittest.TestCase):
                     "device_type": "st7789-2.4inch-10pin-backpcb",
                     "width": 240, "height": 320,
                     "x_offset": 0, "y_offset": 0,
-                    "spi_id": 2, "sck": 7, "mosi": 15, "miso": 17,
-                    "cs": 6, "dc": 5, "rst": 4, "backlight": 16,
+                    "spi_id": 2, "sck": 5, "mosi": 6, "miso": 17,
+                    "cs": 7, "dc": 4, "rst": 15, "backlight": 16,
                     "baudrate": 40_000_000,
                 }
                 for key, value in expected.items():

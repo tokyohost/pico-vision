@@ -32,36 +32,40 @@ class St7789TwoPointFourInch10PinBackPcbDevice(LcdDevice):
         0,
         "st7789_2_4inch_10pin_a",
     )
-    # J3 的第 4～9 脚依次连接 GPIO4/5/6/7/15/16，对应复位、数据命令、
-    # 片选、时钟、数据和背光 PWM；GPIO16 经 R1 驱动 Q1，低端调节 LED-。
+    # 单面接触屏幕排线按 J1 第 1 脚接屏幕第 10 脚，依次反序连接。
+    # 厂家屏幕 1～10 脚：GND、RS、CS、SCL、SDA、RESET、VDD、GND、LED+、LED-。
+    # J1 第 5～9 脚的 PCB 网络名仍是 LCD_SDA/CS/DC/SCL/RST，
+    # 实际屏幕功能却依次为 RESET/SDA/SCL/CS/RS，必须按实际功能分配 GPIO。
+    # GPIO16 经 R1 驱动 Q1，低端调节 LED-；供电、地和背光无需改线。
     pin_profile = LcdPinProfile(
         2,
-        7,
-        15,
-        6,
         5,
+        6,
+        7,
         4,
+        15,
         LcdBacklightProfile.external_low_side(16),
         baudrate=40_000_000,
-        # 按屏幕座 J1 的电气针号排列；两个接地机械固定脚不计入十针。
+        # 按 PCB J1 第 1～10 脚记录插屏后的实际功能，不沿用 PCB 旧网络名。
+        # 两个接地机械固定脚不计入十针。
         connector_pins=(
             "LED-",
             "LED+",
             "GND",
             "VDD",
+            "RESET",
             "SDA",
-            "CS",
-            "DC",
             "SCL",
-            "RST",
+            "CS",
+            "RS",
             "GND",
         ),
         signal_labels={
-            "dc": "DC",
+            "dc": "RS",
             "cs": "CS",
             "sck": "SCL",
             "mosi": "SDA",
-            "rst": "RST",
+            "rst": "RESET",
         },
         # 屏幕不使用 MISO；显式放到 J3 第 10 脚的空闲 GPIO17，避免占用 MOSI。
         miso=17,
