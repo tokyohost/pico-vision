@@ -1,4 +1,6 @@
 <script setup>
+import { t } from '../i18n'
+
 import { computed } from 'vue'
 
 const props = defineProps({
@@ -12,9 +14,9 @@ const props = defineProps({
 const emit = defineEmits(['navigate'])
 
 const statusText = computed(() => {
-  if (props.device.connected === true) return '设备在线'
-  if (props.device.connected === false) return '连接异常'
-  return '正在等待设备'
+  if (props.device.connected === true) return t('ui.device_online')
+  if (props.device.connected === false) return t('ui.connection_error')
+  return t('ui.waiting_for_device')
 })
 
 const statusType = computed(() => {
@@ -37,7 +39,7 @@ function navigate(page) {
       <div class="brand-mark"><el-icon><Cpu /></el-icon></div>
       <div>
         <strong>{{ applicationName }}</strong>
-        <small>控制中心</small>
+        <small>{{ t('ui.control_center') }}</small>
       </div>
     </div>
     <el-menu :default-active="activePage" class="navigation" @select="navigate">
@@ -48,7 +50,7 @@ function navigate(page) {
     </el-menu>
     <div class="sidebar-status">
       <el-tag :type="statusType" effect="dark" round>{{ statusText }}</el-tag>
-      <small>版本 {{ version }}</small>
+      <small>{{ t('ui.version') }}{{ version }}</small>
     </div>
   </el-aside>
 </template>

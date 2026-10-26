@@ -28,6 +28,7 @@ class DashboardRenderer:
         self._style = create_style(style_name)
         self._style_name = self._style.name
         self.canvas = None
+        self._system_menu = None
         self._snapshot = None
         self._frame_pending = False
         self._force_frame = True
@@ -129,7 +130,7 @@ class DashboardRenderer:
         height = int(getattr(self._style, "height", panel_profile.height))
         landscape = bool(getattr(self._style, "landscape", False))
         self.lcd.set_visible_frame_second_sync(
-            bool(
+            self._system_menu is None and bool(
                 getattr(
                     self._style,
                     "sync_visible_frame_to_second",
@@ -157,7 +158,7 @@ class DashboardRenderer:
         self.canvas.set_font(getattr(self._style, "font_name", "native"))
         # configure_canvas 可能重建原生任务，因此必须再次恢复当前样式策略。
         self.lcd.set_visible_frame_second_sync(
-            bool(
+            self._system_menu is None and bool(
                 getattr(
                     self._style,
                     "sync_visible_frame_to_second",
@@ -171,7 +172,7 @@ class DashboardRenderer:
         normalized = 180 if rotation == 180 else 0
         if normalized == self.lcd.rotation():
             return False
-        second_sync = bool(
+        second_sync = self._system_menu is None and bool(
             getattr(
                 self._style,
                 "sync_visible_frame_to_second",
@@ -195,14 +196,40 @@ class DashboardRenderer:
         self.canvas.clear(BLACK)
         self.lcd.present(self.canvas.buffer, force=True)
 
+    def wrap_system_menu_text(self, text):
+        """在画布所属线程按当前屏幕宽度排版详情正文。"""
+        from menu.view import wrap_text
+
+        return wrap_text(self.canvas, text, self._width - 16)
+
+    def set_system_menu(self, view):
+        """更新菜单覆盖层，并在渲染线程安排完整刷新。"""
+        self._system_menu = view
+        self.lcd.set_visible_frame_second_sync(
+            view is None and bool(getattr(self._style, "sync_visible_frame_to_second", False))
+        )
+        self._force_frame = True
+        if view is not None or self._snapshot is not None:
+            self.request_render(self._snapshot or {}, force=True)
+
     def request_render(self, snapshot, force=False):
         """登记最新快照，实际绘制始终发生在完整 RAM 画布。"""
+        from i18n import get_locale
+
+        locale = get_locale()
+        if getattr(self, "_locale", None) != locale:
+            force = True
+            self._locale = locale
+            # 系统启动页的命令缓存可能含已翻译文字，语言变化时使其失效。
+            cache = getattr(self._style, "_command_cache", None)
+            if isinstance(cache, dict):
+                cache.clear()
         next_snapshot = dict(snapshot) if snapshot else {}
         begin_frame = getattr(self._style, "begin_frame", None)
-        if callable(begin_frame):
+        if self._system_menu is None and callable(begin_frame):
             begin_frame()
         prepare_frame = getattr(self._style, "prepare_frame", None)
-        if callable(prepare_frame):
+        if self._system_menu is None and callable(prepare_frame):
             prepare_frame(next_snapshot)
         self._snapshot = next_snapshot
         self._force_frame = self._force_frame or bool(force)
@@ -228,8 +255,13 @@ class DashboardRenderer:
         frame_started = time.ticks_us()
         self.canvas.set_view(0, 0, self._width, self._height)
         canvas_started = time.ticks_us()
-        self._style.draw_visible(self.canvas, self._snapshot)
-        self._draw_button_hint(self._snapshot)
+        if self._system_menu is not None:
+            from menu.view import draw_menu
+
+            draw_menu(self.canvas, self._system_menu, self._width, self._height)
+        else:
+            self._style.draw_visible(self.canvas, self._snapshot)
+            self._draw_button_hint(self._snapshot)
         self._canvas_us = time.ticks_diff(time.ticks_us(), canvas_started)
         lcd_started = time.ticks_us()
         self._region_count = self.lcd.present(

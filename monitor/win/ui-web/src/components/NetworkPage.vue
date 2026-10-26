@@ -1,4 +1,6 @@
 <script setup>
+import { t } from '../i18n'
+
 import { onMounted, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '../bridge'
@@ -44,7 +46,7 @@ async function connectWifi() {
   wifi.connecting = true
   try {
     await invoke('wifi.connect', { ssid: wifi.ssid, password: wifi.password })
-    ElMessage.success('连接请求已发送')
+    ElMessage.success(t('ui.connection_requested'))
     await scanWifi()
   } catch (error) {
     ElMessage.error(error?.message || String(error))
@@ -58,7 +60,7 @@ async function connectWifi() {
  */
 async function forgetWifi(ssid) {
   try {
-    await ElMessageBox.confirm(`确定忘记网络“${ssid}”吗？`, '忘记网络', { type: 'warning' })
+    await ElMessageBox.confirm(t('ui.forget_network_value', { value0: ssid }), t('ui.forget_network'), { type: 'warning' })
     await invoke('wifi.forget', { ssid })
     await scanWifi()
   } catch (error) {
@@ -91,7 +93,7 @@ async function saveClient(client) {
       enabled: client.enabled,
       priority: client.priority,
     })
-    ElMessage.success('客户端策略已保存')
+    ElMessage.success(t('ui.client_policy_saved'))
     await loadWebsocketClients()
   } catch (error) {
     ElMessage.error(error?.message || String(error))
@@ -109,23 +111,23 @@ onMounted(() => {
     <el-card shadow="never" v-loading="wifi.loading">
       <template #header>
         <div class="card-header">
-          <span>Wi-Fi 网络</span>
-          <el-button text @click="scanWifi">重新扫描</el-button>
+          <span>{{ t('ui.wi_fi_networks') }}</span>
+          <el-button text @click="scanWifi">{{ t('ui.rescan') }}</el-button>
         </div>
       </template>
-      <el-input v-model="wifi.ssid" placeholder="网络名称" class="section-gap" />
-      <el-input v-model="wifi.password" type="password" show-password placeholder="网络密码" class="section-gap" />
-      <el-button type="primary" class="section-gap" :loading="wifi.connecting" :disabled="!wifi.ssid" @click="connectWifi">连接网络</el-button>
+      <el-input v-model="wifi.ssid" :placeholder="t('ui.network_name')" class="section-gap" />
+      <el-input v-model="wifi.password" type="password" show-password :placeholder="t('ui.network_password')" class="section-gap" />
+      <el-button type="primary" class="section-gap" :loading="wifi.connecting" :disabled="!wifi.ssid" @click="connectWifi">{{ t('ui.connect') }}</el-button>
       <el-table :data="wifi.networks" class="section-gap theme-table wifi-table" highlight-current-row @row-click="selectWifi">
         <el-table-column prop="ssid" label="SSID" />
-        <el-table-column prop="state_label" label="状态" width="90" />
-        <el-table-column label="信号" width="90">
+        <el-table-column prop="state_label" :label="t('ui.status')" width="90" />
+        <el-table-column :label="t('ui.signal')" width="90">
           <template #default="{ row }">{{ Number.isInteger(row.rssi) ? `${row.rssi} dBm` : '--' }}</template>
         </el-table-column>
-        <el-table-column prop="security_label" label="安全性" width="100" />
-        <el-table-column label="操作" width="90">
+        <el-table-column prop="security_label" :label="t('ui.security')" width="100" />
+        <el-table-column :label="t('ui.actions')" width="90">
           <template #default="{ row }">
-            <el-button v-if="row.saved" text type="danger" @click.stop="forgetWifi(row.ssid)">忘记</el-button>
+            <el-button v-if="row.saved" text type="danger" @click.stop="forgetWifi(row.ssid)">{{ t('ui.forget') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -134,17 +136,17 @@ onMounted(() => {
     <el-card shadow="never" v-loading="websocket.loading">
       <template #header>
         <div class="card-header">
-          <span>WebSocket 客户端</span>
-          <el-button text @click="loadWebsocketClients">刷新</el-button>
+          <span>{{ t('ui.websocket_clients') }}</span>
+          <el-button text @click="loadWebsocketClients">{{ t('ui.refresh') }}</el-button>
         </div>
       </template>
       <el-table
         :data="websocket.clients"
         class="theme-table websocket-table"
-        empty-text="暂无客户端记录"
+        :empty-text="t('ui.no_client_records')"
         show-header
       >
-        <el-table-column label="客户端" min-width="210">
+        <el-table-column :label="t('ui.client')" min-width="210">
           <template #default="{ row }">
             <div class="client-identity">
               <strong>{{ row.name || row.id }}</strong>
@@ -152,32 +154,32 @@ onMounted(() => {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="110">
+        <el-table-column :label="t('ui.status')" width="110">
           <template #default="{ row }">
-            <el-tag v-if="row.active" type="success" size="small">当前连接</el-tag>
-            <el-tag v-else-if="row.enabled === false" type="info" size="small">已禁用</el-tag>
-            <el-tag v-else type="primary" size="small">允许</el-tag>
+            <el-tag v-if="row.active" type="success" size="small">{{ t('ui.active_connection') }}</el-tag>
+            <el-tag v-else-if="row.enabled === false" type="info" size="small">{{ t('ui.disabled') }}</el-tag>
+            <el-tag v-else type="primary" size="small">{{ t('ui.allow') }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="last_peer" label="最近地址" min-width="180">
-          <template #default="{ row }">{{ row.last_peer || '无最近地址' }}</template>
+        <el-table-column prop="last_peer" :label="t('ui.last_address')" min-width="180">
+          <template #default="{ row }">{{ row.last_peer || t('ui.no_recent_address') }}</template>
         </el-table-column>
-        <el-table-column prop="connections" label="连接次数" width="100">
+        <el-table-column prop="connections" :label="t('ui.connection_count')" width="100">
           <template #default="{ row }">{{ row.connections || 0 }}</template>
         </el-table-column>
-        <el-table-column label="启用" width="90">
+        <el-table-column :label="t('ui.enable')" width="90">
           <template #default="{ row }"><el-switch v-model="row.enabled" /></template>
         </el-table-column>
         <el-table-column min-width="210">
           <template #header>
             <span class="priority-header">
-              <span>优先级</span>
+              <span>{{ t('ui.priority') }}</span>
               <el-tooltip
-                content="取值范围为 -1000 至 1000，数值越大优先级越高。新客户端仅在优先级严格高于当前客户端时才能抢占连接，相同优先级不会抢占。"
+                :content="t('ui.range_1000_to_1000_higher_values_have_higher_priority')"
                 placement="top"
                 :show-after="200"
               >
-                <span class="priority-help" tabindex="0" aria-label="查看优先级说明">!</span>
+                <span class="priority-help" tabindex="0" :aria-label="t('ui.about_priorities')">!</span>
               </el-tooltip>
             </span>
           </template>
@@ -185,9 +187,9 @@ onMounted(() => {
             <el-input-number v-model="row.priority" :min="-1000" :max="1000" size="small" />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="90" align="right">
+        <el-table-column :label="t('ui.actions')" width="90" align="right">
           <template #default="{ row }">
-            <el-button size="small" type="primary" plain @click="saveClient(row)">保存</el-button>
+            <el-button size="small" type="primary" plain @click="saveClient(row)">{{ t('ui.save') }}</el-button>
           </template>
         </el-table-column>
       </el-table>

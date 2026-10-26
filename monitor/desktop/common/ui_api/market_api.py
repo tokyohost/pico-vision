@@ -1,5 +1,7 @@
 """Web 界面的插件市场下载安装接口。"""
 
+from i18n import t
+
 import logging
 import os
 import tempfile
@@ -20,7 +22,7 @@ def _normalized_url_origin(url):
     """提取 HTTP 地址的标准化来源。"""
     parsed = urlsplit(str(url or "").strip())
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
-        raise ValueError("插件下载地址必须使用 http:// 或 https://")
+        raise ValueError(t('message.plugin_download_url_must_use_http_or_https'))
     default_port = 443 if parsed.scheme == "https" else 80
     return parsed.scheme, parsed.hostname.lower(), parsed.port or default_port
 
@@ -36,7 +38,7 @@ class _SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, file_pointer, code, message, headers, new_url):
         """在发起重定向请求前拒绝跨来源目标。"""
         if _normalized_url_origin(new_url) != self.allowed_origin:
-            raise ValueError("插件下载重定向到其他来源，已拒绝安装")
+            raise ValueError(t('message.plugin_download_redirected_to_another_origin_installation_refused'))
         return super().redirect_request(
             request, file_pointer, code, message, headers, new_url
         )
@@ -60,13 +62,13 @@ class MarketApiMixin:
             else str(self._application.settings.get("market_url") or "").strip()
         )
         if not market_url:
-            raise RuntimeError("尚未配置插件市场地址")
+            raise RuntimeError(t('message.no_plugin_market_url_configured'))
         return self._url_origin(market_url)
 
     def _validate_market_download_url(self, download_url):
         """限制下载地址与已配置市场同源，避免页面请求任意网络资源。"""
         if self._url_origin(download_url) != self._market_origin():
-            raise ValueError("插件下载地址与当前市场不同源，已拒绝安装")
+            raise ValueError(t('message.plugin_url_differs_from_the_market_origin_installation_refused'))
         return str(download_url).strip()
 
     def _set_market_state(
@@ -106,7 +108,7 @@ class MarketApiMixin:
             final_url = self._validate_market_download_url(response.geturl())
             total = int(response.headers.get("Content-Length") or 0)
             if total > MAXIMUM_MARKET_PACKAGE_SIZE:
-                raise ValueError("插件包超过 20 MB 限制")
+                raise ValueError(t('message.plugin_package_exceeds_the_20_mb_limit'))
             downloaded = 0
             last_reported = -1
             with target_path.open("wb") as output:
@@ -116,7 +118,7 @@ class MarketApiMixin:
                         break
                     downloaded += len(chunk)
                     if downloaded > MAXIMUM_MARKET_PACKAGE_SIZE:
-                        raise ValueError("插件包超过 20 MB 限制")
+                        raise ValueError(t('message.plugin_package_exceeds_the_20_mb_limit'))
                     output.write(chunk)
                     if total:
                         percentage = min(65, 10 + int(downloaded * 55 / total))
@@ -124,13 +126,13 @@ class MarketApiMixin:
                             self._set_market_state(
                                 "running",
                                 percentage,
-                                "正在下载插件包：{}%".format(
+                                t('message.downloading_plugin_package').format(
                                     min(100, int(downloaded * 100 / total))
                                 ),
                             )
                             last_reported = percentage
             if downloaded == 0:
-                raise ValueError("市场返回了空插件包")
+                raise ValueError(t('message.market_returned_an_empty_plugin_package'))
             LOGGER.info("市场插件包下载完成：地址=%s，字节=%s", final_url, downloaded)
 
     def _require_connected_device(self):
@@ -138,7 +140,7 @@ class MarketApiMixin:
         getter = getattr(self._application, "_get_device_connection", None)
         connection = getter() if callable(getter) else {}
         if not connection or not connection.get("connected"):
-            raise RuntimeError("请先连接设备，连接成功后即可安装 Style 界面样式")
+            raise RuntimeError(t('message.connect_a_device_before_installing_a_screen_style'))
         return connection
 
     def _run_market_install(self, download_url, plugin_name, plugin_type):
@@ -150,13 +152,13 @@ class MarketApiMixin:
         package_path = Path(temporary_name)
         try:
             self._set_market_state(
-                "running", 8, "开始下载“{}”".format(plugin_name)
+                "running", 8, t('message.downloading').format(plugin_name)
             )
             self._download_market_package(download_url, package_path)
-            self._set_market_state("running", 70, "下载完成，正在校验 ZIP 插件包")
+            self._set_market_state("running", 70, t('message.download_complete_validating_zip_plugin_package'))
             if not zipfile.is_zipfile(package_path):
-                raise ValueError("下载内容不是有效的 ZIP 插件包")
-            self._set_market_state("running", 82, "校验通过，正在安装市场资源")
+                raise ValueError(t('message.download_is_not_a_valid_zip_plugin_package'))
+            self._set_market_state("running", 82, t('message.validation_passed_installing_market_resource'))
             if plugin_type == "style":
                 self._require_connected_device()
                 existing_names = {
@@ -177,13 +179,13 @@ class MarketApiMixin:
             self._set_market_state(
                 "success",
                 100,
-                "插件“{}”安装完成".format(result["chineseName"]),
+                t('message.plugin_installed').format(result["chineseName"]),
                 result=result,
             )
             LOGGER.info("市场插件安装完成：%s", result["name"])
         except Exception as error:
             self._set_market_state(
-                "error", None, "插件“{}”安装失败：{}".format(plugin_name, error)
+                "error", None, t('message.plugin_installation_failed').format(plugin_name, error)
             )
             LOGGER.exception("市场插件安装失败：%s", error)
         finally:
@@ -194,22 +196,22 @@ class MarketApiMixin:
         download_url = self._validate_market_download_url(
             payload.get("downloadUrl")
         )
-        plugin_name = str(payload.get("pluginName") or "未命名插件").strip()[:120]
+        plugin_name = str(payload.get("pluginName") or t('ui.unnamed_plugin')).strip()[:120]
         plugin_type = str(payload.get("pluginType") or "plugin").strip()
         if plugin_type not in ("plugin", "style"):
-            raise ValueError("市场资源类型必须是 plugin 或 style")
+            raise ValueError(t('message.market_resource_type_must_be_plugin_or_style'))
         if plugin_type == "style":
             self._require_connected_device()
         with self._market_lock:
             if self._market_state["busy"]:
-                raise RuntimeError("已有插件正在下载安装，请稍候")
+                raise RuntimeError(t('message.another_plugin_is_being_installed_please_wait'))
             self._market_state.update(
                 {
                     "busy": True,
                     "status": "running",
                     "progress": 2,
-                    "message": "正在准备下载安装",
-                    "logs": ["正在准备下载安装"],
+                    "message": t('message.preparing_download_and_installation'),
+                    "logs": [t('message.preparing_download_and_installation')],
                     "result": None,
                 }
             )

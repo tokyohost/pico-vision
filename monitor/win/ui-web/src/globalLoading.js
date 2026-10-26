@@ -1,3 +1,4 @@
+import { t } from './i18n'
 import { reactive } from 'vue'
 
 const globalLoading = reactive({
@@ -37,13 +38,13 @@ function updateGlobalLoading(progress, message = '') {
  * 在全局遮罩中运行异步任务，并向任务提供进度与日志方法。
  */
 export async function runWithGlobalLoading(options, task) {
-  if (globalLoading.visible) throw new Error('已有操作正在执行，请稍候')
+  if (globalLoading.visible) throw new Error(t('ui.another_operation_is_running_please_wait'))
   globalLoading.visible = true
-  globalLoading.title = String(options?.title || '正在处理')
+  globalLoading.title = String(options?.title || t('ui.processing'))
   globalLoading.progress = normalizeProgress(options?.progress ?? 5)
   globalLoading.status = 'active'
   globalLoading.logs = []
-  appendGlobalLoadingLog(options?.message || '操作开始')
+  appendGlobalLoadingLog(options?.message || t('ui.operation_started'))
   try {
     const result = await task({
       log: appendGlobalLoadingLog,
@@ -51,11 +52,11 @@ export async function runWithGlobalLoading(options, task) {
     })
     globalLoading.progress = 100
     globalLoading.status = 'success'
-    appendGlobalLoadingLog(options?.successMessage || '操作完成')
+    appendGlobalLoadingLog(options?.successMessage || t('ui.operation_completed'))
     return result
   } catch (error) {
     globalLoading.status = 'exception'
-    appendGlobalLoadingLog(`操作失败：${error?.message || String(error)}`)
+    appendGlobalLoadingLog(t('ui.operation_failed_value', { value0: error?.message || String(error) }))
     throw error
   } finally {
     await new Promise((resolve) => window.setTimeout(resolve, globalLoading.status === 'success' ? 450 : 900))

@@ -1,4 +1,6 @@
 <script setup>
+import { t, styleLabel, taskLabel } from '../i18n'
+
 import { computed, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '../bridge'
@@ -29,7 +31,7 @@ async function verifyQbittorrent() {
       username: props.settings.qbittorrent_username,
       password: props.settings.qbittorrent_password,
     })
-    ElMessage.success('qBittorrent 账号验证成功')
+    ElMessage.success(t('ui.qbittorrent_account_verified'))
   } catch (error) {
     ElMessage.error(error?.message || String(error))
   }
@@ -41,7 +43,7 @@ async function verifyQbittorrent() {
 async function openHttpManagement() {
   const port = Number(props.settings.http_port)
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    ElMessage.warning('请先填写有效的 HTTP 管理端口')
+    ElMessage.warning(t('ui.enter_a_valid_http_management_port_first'))
     return
   }
   try {
@@ -98,8 +100,8 @@ async function invokePluginAction(panel, item) {
   try {
     if (item.confirm) {
       await ElMessageBox.confirm(
-        `确定执行“${item.zh_name || item.action}”吗？`,
-        '执行插件动作',
+        t('ui.run_value', { value0: item.zh_name || item.action }),
+        t('ui.run_plugin_action'),
         { type: 'warning' },
       )
     }
@@ -112,7 +114,7 @@ async function invokePluginAction(panel, item) {
     })
     Object.assign(config, result.config_patch || {})
     for (const warning of result.warnings || []) ElMessage.warning(String(warning))
-    ElMessage.success(result.message || '插件动作执行成功，配置已回填，请保存后生效')
+    ElMessage.success(result.message || t('ui.plugin_action_completed_settings_updated_save_to_apply'))
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
       ElMessage.error(error?.message || String(error))
@@ -133,39 +135,45 @@ function isActionRunning(panel, item) {
 <template>
   <div class="page-grid">
     <el-card shadow="never">
-      <template #header><span>显示设置</span></template>
+      <template #header><span>{{ t('ui.display_settings') }}</span></template>
       <el-form label-position="top">
+        <el-form-item :label="t('common.language')">
+          <el-select v-model="settings.locale">
+            <el-option value="zh-CN" label="简体中文" />
+            <el-option value="en-US" label="English" />
+          </el-select>
+        </el-form-item>
         <div class="form-grid">
-          <el-form-item label="界面样式">
+          <el-form-item :label="t('ui.screen_style')">
             <el-select v-model="settings.lcd_style">
-              <el-option v-for="item in normalStyles" :key="item.name" :label="`${item.chinese_name}（${item.name}）`" :value="item.name" />
+              <el-option v-for="item in normalStyles" :key="item.name" :label="`${styleLabel(item)}（${item.name}）`" :value="item.name" />
             </el-select>
           </el-form-item>
           <el-form-item>
             <template #label>
               <span class="idle-setting-label">
-                <span>待机样式</span>
-                <el-checkbox v-model="idleDisabled" class="idle-disable-option">不进入待机</el-checkbox>
+                <span>{{ t('ui.idle_style') }}</span>
+                <el-checkbox v-model="idleDisabled" class="idle-disable-option">{{ t('ui.disable_idle_mode') }}</el-checkbox>
               </span>
             </template>
             <el-select v-model="settings.idle_style" :disabled="idleDisabled">
-              <el-option v-for="item in idleStyles" :key="item.name" :label="`${item.chinese_name}（${item.name}）`" :value="item.name" />
+              <el-option v-for="item in idleStyles" :key="item.name" :label="`${styleLabel(item)}（${item.name}）`" :value="item.name" />
             </el-select>
           </el-form-item>
-          <el-form-item label="屏幕旋转">
+          <el-form-item :label="t('ui.screen_rotation')">
             <el-select v-model="settings.screen_rotation">
               <el-option :value="0" label="0°" />
               <el-option :value="180" label="180°" />
             </el-select>
           </el-form-item>
-          <el-form-item label="空闲进入待机（秒）">
+          <el-form-item :label="t('ui.idle_timeout_s')">
             <el-input-number v-model="settings.idle_timeout" :min="1" :disabled="idleDisabled" />
           </el-form-item>
         </div>
-        <el-form-item label="背光亮度">
+        <el-form-item :label="t('ui.brightness')">
           <el-slider v-model="settings.lcd_brightness" :min="1" :max="100" show-input />
         </el-form-item>
-        <el-form-item label="网络速率单位">
+        <el-form-item :label="t('ui.network_rate_unit')">
           <el-radio-group v-model="settings.network_unit">
             <el-radio-button value="MB">MB/s</el-radio-button>
             <el-radio-button value="Mbps">Mb/s</el-radio-button>
@@ -175,25 +183,25 @@ function isActionRunning(panel, item) {
     </el-card>
 
     <el-card shadow="never">
-      <template #header><span>连接与采集</span></template>
+      <template #header><span>{{ t('ui.connection_collection') }}</span></template>
       <el-form label-position="top">
         <div class="form-grid">
-          <el-form-item label="串口（留空自动识别）"><el-input v-model="settings.port" placeholder="自动识别" /></el-form-item>
-          <el-form-item label="客户端名称"><el-input v-model="settings.websocket_client_name" /></el-form-item>
-          <el-form-item label="Ping 目标"><el-input v-model="settings.ping_target" /></el-form-item>
-          <el-form-item label="JSON 发送间隔（秒）"><el-input-number v-model="settings.interval" :min="0.3" :step="0.1" /></el-form-item>
+          <el-form-item :label="t('ui.serial_port_blank_for_auto')"><el-input v-model="settings.port" :placeholder="t('ui.auto_detect')" /></el-form-item>
+          <el-form-item :label="t('ui.client_name')"><el-input v-model="settings.websocket_client_name" /></el-form-item>
+          <el-form-item :label="t('ui.ping_target')"><el-input v-model="settings.ping_target" /></el-form-item>
+          <el-form-item :label="t('ui.json_send_interval_s')"><el-input-number v-model="settings.interval" :min="0.3" :step="0.1" /></el-form-item>
           <el-form-item>
             <template #label>
               <span class="form-label-with-help">
-                <span>JSON 分片大小（字节）</span>
+                <span>{{ t('ui.json_chunk_size_bytes') }}</span>
                 <el-popover
                   trigger="hover"
                   placement="top"
                   :width="320"
-                  content="保存后生效，实际分片不超过设备上限；需设备支持 PV1 JSONB 二进制分片。"
+                  :content="t('ui.applies_after_saving_and_is_capped_by_the_device')"
                 >
                   <template #reference>
-                    <el-icon class="form-help-icon" tabindex="0" aria-label="查看 JSON 分片大小说明">
+                    <el-icon class="form-help-icon" tabindex="0" :aria-label="t('ui.about_json_chunk_size')">
                       <QuestionFilled />
                     </el-icon>
                   </template>
@@ -201,56 +209,56 @@ function isActionRunning(panel, item) {
               </span>
             </template>
             <el-select v-model="settings.json_chunk_size">
-              <el-option :value="512" label="512 字节" />
-              <el-option :value="1024" label="1024 字节（1 KB）" />
-              <el-option :value="2048" label="2048 字节（2 KB）" />
-              <el-option :value="4096" label="4096 字节（4 KB，默认）" />
-              <el-option :value="8192" label="8192 字节（8 KB）" />
-              <el-option :value="16384" label="16384 字节（16 KB）" />
+              <el-option :value="512" :label="t('ui.512_bytes')" />
+              <el-option :value="1024" :label="t('ui.1024_bytes_1_kb')" />
+              <el-option :value="2048" :label="t('ui.2048_bytes_2_kb')" />
+              <el-option :value="4096" :label="t('ui.4096_bytes_4_kb_default')" />
+              <el-option :value="8192" :label="t('ui.8192_bytes_8_kb')" />
+              <el-option :value="16384" :label="t('ui.16384_bytes_16_kb')" />
             </el-select>
           </el-form-item>
-          <el-form-item label="重连间隔（秒）"><el-input-number v-model="settings.reconnect_interval" :min="0.1" :step="0.5" /></el-form-item>
-          <el-form-item label="串口探测间隔（秒）"><el-input-number v-model="settings.serial_probe_interval" :min="0.1" :step="0.5" /></el-form-item>
-          <el-form-item label="Wi-Fi 设备发现">
+          <el-form-item :label="t('ui.reconnect_interval_s')"><el-input-number v-model="settings.reconnect_interval" :min="0.1" :step="0.5" /></el-form-item>
+          <el-form-item :label="t('ui.serial_probe_interval_s')"><el-input-number v-model="settings.serial_probe_interval" :min="0.1" :step="0.5" /></el-form-item>
+          <el-form-item :label="t('ui.wi_fi_discovery')">
             <el-select v-model="settings.wifi_discovery_strategy">
-              <el-option value="announcement" label="ESP32 UDP 组播公告（推荐，扫描兜底）" />
-              <el-option value="scan" label="直接扫描本地网段" />
+              <el-option value="announcement" :label="t('ui.esp32_udp_announcements_recommended_scan_fallback')" />
+              <el-option value="scan" :label="t('ui.scan_local_network_directly')" />
             </el-select>
           </el-form-item>
         </div>
-        <el-switch v-model="settings.adaptive_transmit" active-text="自适应发送" />
-        <el-switch v-model="settings.collection_task_logs" active-text="采集任务日志" class="switch-gap" />
+        <el-switch v-model="settings.adaptive_transmit" :active-text="t('ui.adaptive_sending')" />
+        <el-switch v-model="settings.collection_task_logs" :active-text="t('ui.collection_task_logs')" class="switch-gap" />
       </el-form>
     </el-card>
 
     <el-card shadow="never">
-      <template #header><span>qBittorrent 指标</span></template>
+      <template #header><span>{{ t('ui.qbittorrent_metrics') }}</span></template>
       <el-form label-position="top">
-        <el-switch v-model="settings.qbittorrent_enabled" active-text="启用指标采集" />
+        <el-switch v-model="settings.qbittorrent_enabled" :active-text="t('ui.enable_metric_collection')" />
         <div class="form-grid section-gap">
-          <el-form-item label="WebUI 地址"><el-input v-model="settings.qbittorrent_address" placeholder="http://127.0.0.1:8080" /></el-form-item>
-          <el-form-item label="采集间隔（秒）"><el-input-number v-model="settings.qbittorrent_interval" :min="0.1" :step="0.5" /></el-form-item>
-          <el-form-item label="用户名"><el-input v-model="settings.qbittorrent_username" /></el-form-item>
-          <el-form-item label="密码"><el-input v-model="settings.qbittorrent_password" type="password" show-password /></el-form-item>
+          <el-form-item :label="t('ui.webui_url')"><el-input v-model="settings.qbittorrent_address" placeholder="http://127.0.0.1:8080" /></el-form-item>
+          <el-form-item :label="t('ui.collection_interval_s')"><el-input-number v-model="settings.qbittorrent_interval" :min="0.1" :step="0.5" /></el-form-item>
+          <el-form-item :label="t('ui.username')"><el-input v-model="settings.qbittorrent_username" /></el-form-item>
+          <el-form-item :label="t('ui.password')"><el-input v-model="settings.qbittorrent_password" type="password" show-password /></el-form-item>
         </div>
-        <el-button @click="verifyQbittorrent">验证账号密码</el-button>
+        <el-button @click="verifyQbittorrent">{{ t('ui.verify_credentials') }}</el-button>
       </el-form>
     </el-card>
 
     <el-card shadow="never">
-      <template #header><span>采集任务频率</span></template>
+      <template #header><span>{{ t('ui.collection_task_intervals') }}</span></template>
       <div class="task-grid">
         <label v-for="name in metadata.defaultTasks" :key="name">
-          <span>{{ metadata.taskNames[name] || name }}</span>
+          <span>{{ taskLabel(name, metadata.taskNames[name]) }}</span>
           <el-input-number v-model="settings.collection_task_intervals[name]" :min="0.1" :step="0.1" size="small" />
         </label>
       </div>
     </el-card>
 
     <el-card shadow="never">
-      <template #header><span>插件市场</span></template>
+      <template #header><span>{{ t('ui.plugin_market') }}</span></template>
       <el-form label-position="top">
-        <el-form-item label="正式版市场地址">
+        <el-form-item :label="t('ui.stable_market_url')">
           <el-input
             v-model="settings.market_url"
             placeholder="https://omni.mzlblog.com"
@@ -266,14 +274,14 @@ function isActionRunning(panel, item) {
     </el-card>
 
     <el-card shadow="never">
-      <template #header><span>HTTP 管理页面</span></template>
+      <template #header><span>{{ t('ui.http_management') }}</span></template>
       <el-form label-position="top">
         <el-switch
           v-model="settings.http_enabled"
-          active-text="启用局域网 HTTP 管理页面"
+          :active-text="t('ui.enable_lan_http_management')"
         />
         <div class="form-grid section-gap">
-          <el-form-item label="监听端口">
+          <el-form-item :label="t('ui.listen_port')">
             <el-input-number
               v-model="settings.http_port"
               :min="1"
@@ -289,7 +297,7 @@ function isActionRunning(panel, item) {
           </el-form-item>
         </div>
         <el-alert
-          title="默认端口为 9876。浏览器首次访问时输入 Auth，之后保存在当前浏览器缓存中。"
+          :title="t('ui.default_port_9876_enter_auth_on_first_access_it')"
           type="info"
           :closable="false"
           show-icon
@@ -299,9 +307,7 @@ function isActionRunning(panel, item) {
           type="primary"
           :disabled="!settings.http_enabled"
           @click="openHttpManagement"
-        >
-          立即访问
-        </el-button>
+        >{{ t('ui.open_now') }}</el-button>
       </el-form>
     </el-card>
 
@@ -312,8 +318,8 @@ function isActionRunning(panel, item) {
           <el-switch
             v-model="settings.custom_data_enabled[panel.name]"
             inline-prompt
-            active-text="启用"
-            inactive-text="停用"
+            :active-text="t('ui.enable')"
+            :inactive-text="t('ui.disable')"
           />
         </div>
       </template>
@@ -368,7 +374,7 @@ function isActionRunning(panel, item) {
     </el-card>
   </div>
   <div class="sticky-actions">
-    <span class="sticky-action-hint">保存后配置将立即热更新</span>
-    <el-button type="primary" :loading="saving" @click="saveSettings">保存配置</el-button>
+    <span class="sticky-action-hint">{{ t('ui.settings_apply_immediately_after_saving') }}</span>
+    <el-button type="primary" :loading="saving" @click="saveSettings">{{ t('ui.save_settings') }}</el-button>
   </div>
 </template>

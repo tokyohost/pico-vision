@@ -75,6 +75,9 @@ class MonitorService(
 
     def __init__(self, arguments):
         """根据命令行配置创建采集器、串口客户端和停止事件。"""
+        from i18n import set_locale
+
+        set_locale(getattr(arguments, "locale", "zh-CN"))
         self.arguments = arguments
         self.collector = SystemInformationCollector(
             arguments.ping_target,
@@ -563,6 +566,7 @@ class MonitorService(
             },
             "ext": {},
             "display": {
+                "locale": getattr(arguments, "locale", "zh-CN"),
                 "rotation": arguments.screen_rotation,
                 "brightness": getattr(arguments, "lcd_brightness", 100),
                 "collection_interval_ms": max(300, round(arguments.interval * 1000)),

@@ -1,4 +1,6 @@
 <script setup>
+import { t } from '../i18n'
+
 import { nextTick, ref, watch } from 'vue'
 import { useGlobalLoading } from '../globalLoading'
 import CopyableLog from './CopyableLog.vue'
@@ -25,7 +27,7 @@ watch(() => state.logs.length, scrollLogsToBottom)
           <span class="global-loading-spinner" aria-hidden="true" />
           <div>
             <h3>{{ state.title }}</h3>
-            <p>请勿关闭窗口或断开设备连接</p>
+            <p>{{ t('ui.do_not_close_this_window_or_disconnect_the_device') }}</p>
           </div>
           <strong>{{ state.progress }}%</strong>
         </div>
@@ -39,7 +41,7 @@ watch(() => state.logs.length, scrollLogsToBottom)
           ref="logView"
           :content="state.logs.join('\n')"
           pre-class="global-loading-logs"
-          copy-success-text="操作日志已复制"
+          :copy-success-text="t('ui.operation_logs_copied')"
         />
       </section>
     </div>

@@ -298,6 +298,7 @@ class WorkerControllerMixin:
         if process is None or process.poll() is not None or process.stdin is None:
             return False
         payload = {
+            "locale": self.settings.get("locale", "zh-CN"),
             "lcd_style": self.settings["lcd_style"],
             "idle_enabled": self.settings["idle_enabled"],
             "idle_style": self.settings["idle_style"],

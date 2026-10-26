@@ -10,6 +10,7 @@ from collectTask import system_task_defaults
 from collectTask.system_tasks import system_task_aliases
 
 CONFIG_ENV_MAP = {
+    "PICO_MONITOR_LOCALE": ("screen", "locale"),
     "PICO_MONITOR_PORT": ("serial", "port"),
     "PICO_MONITOR_WEBSOCKET_URL": ("network", "websocket_url"),
     "PICO_MONITOR_FORCE_USB_CDC": ("network", "force_usb_cdc"),

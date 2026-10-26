@@ -1,5 +1,7 @@
 """Web 界面的自定义数据插件管理接口。"""
 
+from i18n import get_locale, t
+
 import base64
 import json
 import logging
@@ -46,7 +48,7 @@ class CustomDataApiMixin:
                     "previewFilename": definition.preview_filename,
                     "previewDataUrl": preview_data_url,
                     "path": str(definition.plugin_directory),
-                    "environment": manager.environment_status(definition),
+                    "environment": manager.environment_status(definition, locale=get_locale()),
                     "enabled": bool(
                         self._application.settings.get(
                             "custom_data_enabled", {}
@@ -69,7 +71,7 @@ class CustomDataApiMixin:
         """选择 ZIP 插件包并导入自定义数据插件。"""
         path = str(payload.get("sourcePath") or "").strip()
         if not path:
-            path = self._select_file(("插件包 (*.zip)",))
+            path = self._select_file((t('message.plugin_package_zip'),))
         if not path:
             return {"cancelled": True}
         return self._import_custom_data_source(path, payload)
@@ -133,7 +135,7 @@ class CustomDataApiMixin:
             for definition in custom_data.get_manager().list_definitions()
         }
         if name not in definitions:
-            raise ValueError("插件不存在或尚未加载")
+            raise ValueError(t('message.plugin_not_found_or_not_loaded'))
         states = dict(
             custom_data.normalize_plugin_enabled(
                 self._application.settings.get("custom_data_enabled")
@@ -144,7 +146,7 @@ class CustomDataApiMixin:
         self._application.settings_store.save(self._application.settings)
         custom_data.get_manager().set_plugin_enabled(name, enabled)
         if not self._application._apply_runtime_settings(wait=True):
-            raise RuntimeError("后台监控未运行，启用状态将在下次启动时生效")
+            raise RuntimeError(t('message.monitor_is_not_running_enable_state_will_apply_on'))
         return {"name": name, "enabled": enabled}
 
     def _custom_data_invoke_action(self, payload):
@@ -153,14 +155,14 @@ class CustomDataApiMixin:
         action = str(payload.get("action") or "").strip()
         config = payload.get("config")
         if not isinstance(config, dict):
-            raise ValueError("插件动作缺少有效配置快照")
+            raise ValueError(t('message.plugin_action_requires_a_valid_settings_snapshot'))
         return custom_data.get_manager().invoke_action(name, action, config)
 
     def _custom_data_install_dependencies(self, payload):
         """创建指定插件的独立环境并安装依赖。"""
         name = str(payload.get("name") or "").strip()
         if not name:
-            raise ValueError("缺少插件名称")
+            raise ValueError(t('message.plugin_name_is_required'))
         logs = []
 
         def append_log(message):
@@ -192,11 +194,11 @@ class CustomDataApiMixin:
         }
         definition = definitions.get(name)
         if definition is None:
-            raise ValueError("插件不存在或尚未加载")
+            raise ValueError(t('message.plugin_not_found_or_not_loaded'))
         if not definition.detail_path:
-            raise ValueError("该插件没有绑定简介 HTML")
+            raise ValueError(t('message.this_plugin_has_no_description_html'))
         return {
-            "title": "{} · 插件简介".format(definition.zh_name),
+            "title": t('message.plugin_description').format(definition.zh_name),
             "content": definition.detail_path.read_text(encoding="utf-8-sig"),
         }
 
@@ -209,9 +211,9 @@ class CustomDataApiMixin:
         }
         definition = definitions.get(name)
         if definition is None:
-            raise ValueError("插件不存在或尚未加载")
+            raise ValueError(t('message.plugin_not_found_or_not_loaded'))
         if not definition.bind_style or not definition.style_path:
-            raise ValueError("该插件没有绑定可同步的屏幕样式")
+            raise ValueError(t('message.this_plugin_has_no_linked_screen_style'))
         existing_names = {
             str(item.get("name") or "")
             for item in self._application.settings.get("styles", ())
@@ -266,7 +268,7 @@ class CustomDataApiMixin:
         }
         definition = definitions.get(path)
         if definition is None:
-            raise ValueError("插件不存在或尚未加载")
+            raise ValueError(t('message.plugin_not_found_or_not_loaded'))
         configs = self._application.settings.get("custom_data_configs", {})
         enabled = dict(self._application.settings.get("custom_data_enabled", {}))
         was_enabled = bool(enabled.get(definition.name, True))
@@ -279,7 +281,7 @@ class CustomDataApiMixin:
             and process is not None
             and process.poll() is None
         ):
-            raise RuntimeError("无法确认后台采集任务已停止，已取消删除")
+            raise RuntimeError(t('message.could_not_confirm_collection_stopped_deletion_cancelled'))
         try:
             manager.set_plugin_enabled(definition.name, False)
             manager.delete_plugin(path, configs.get(definition.name, {}))

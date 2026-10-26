@@ -368,6 +368,11 @@ class RenderService:
                     active_frame = False
                     active_version = None
                     self._set_worker_rendering(False)
+                elif control.action == "set_system_menu" and control.error is None:
+                    # 菜单由控制队列主动刷新，无监控快照时也必须推进这一帧。
+                    active_frame = renderer.is_rendering()
+                    active_version = None
+                    self._set_worker_rendering(active_frame)
                 continue
             if not active_frame:
                 frame = self._mailbox.take_latest()
@@ -415,7 +420,11 @@ class RenderService:
         try:
             action = request.action
             arguments = request.arguments
-            if action == "preload_style":
+            if action == "wrap_system_menu_text":
+                request.result = renderer.wrap_system_menu_text(*arguments)
+            elif action == "set_system_menu":
+                request.result = renderer.set_system_menu(*arguments)
+            elif action == "preload_style":
                 request.result = renderer.preload_style(*arguments)
             elif action == "set_style":
                 request.result = renderer.set_style(*arguments)
@@ -469,6 +478,15 @@ class RenderService:
         if request.error is not None:
             raise request.error
         return request.result
+
+    def wrap_system_menu_text(self, text):
+        """请求绘图线程返回详情行，主线程不直接访问画布。"""
+        return self._submit_control("wrap_system_menu_text", str(text))
+
+    def set_system_menu(self, view_or_none):
+        """复制菜单数据并通过控制队列交给唯一绘图线程。"""
+        view = _clone_render_value(view_or_none) if view_or_none is not None else None
+        return self._submit_control("set_system_menu", view)
 
     def set_progress_callback(self, callback):
         """设置控制等待期间执行的轻量通信泵浦回调。"""

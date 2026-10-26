@@ -12,7 +12,8 @@
     "@element-plus/icons-vue": "^2.3.2",
     "element-plus": "^2.9.11",
     "reconnecting-websocket": "^4.4.0",
-    "vue": "^3.5.16"
+    "vue": "^3.5.16",
+    "vue-i18n": "^11.4.16"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.4",

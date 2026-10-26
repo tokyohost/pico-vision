@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """负责自定义数据插件的扫描、环境管理、导入、删除与状态维护。"""
 
+from i18n import t
+
 import hashlib
 import json
 import logging
@@ -179,23 +181,23 @@ class CustomDataManager:
             if known != current:
                 self.reload_scripts()
 
-    def environment_status(self, definition):
+    def environment_status(self, definition, locale="zh-CN"):
         """返回插件独立环境和依赖的中文状态。"""
-        return "环境就绪" if self._is_environment_ready(definition) else self._environment_not_ready_status(definition)
+        return t("environment.ready", locale=locale) if self._is_environment_ready(definition) else self._environment_not_ready_status(definition, locale=locale)
 
-    def _environment_not_ready_status(self, definition):
+    def _environment_not_ready_status(self, definition, locale="zh-CN"):
         """返回插件环境尚未达到可执行状态时的中文原因。"""
         python_path = _environment_python(definition.environment_directory)
         if not python_path.is_file():
-            return "环境未安装"
+            return t("environment.missing", locale=locale)
         marker = definition.environment_directory / ".dependencies-ready"
         if definition.has_dependencies and (
             not marker.is_file() or marker.read_text(encoding="utf-8", errors="replace").strip() != self._requirements_digest(definition)
         ):
-            return "依赖未安装"
+            return t("environment.dependencies_missing", locale=locale)
         if not marker.is_file() or marker.read_text(encoding="utf-8", errors="replace").strip() != self._requirements_digest(definition):
-            return "依赖状态未记录"
-        return "环境未就绪"
+            return t("environment.unrecorded", locale=locale)
+        return t("environment.not_ready", locale=locale)
 
     def _is_environment_ready(self, definition):
         """判断插件独立环境是否已经创建并安装当前 requirements.txt。"""

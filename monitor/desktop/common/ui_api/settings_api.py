@@ -1,5 +1,7 @@
 """Web 界面的初始化数据、设置保存和连接验证接口。"""
 
+from i18n import t, set_locale
+
 import base64
 import platform
 import sys
@@ -80,7 +82,7 @@ class SettingsApiMixin:
         """单独保存开发者计划，不重启监控或覆盖其他未保存设置。"""
         enabled = payload.get("enabled")
         if not isinstance(enabled, bool):
-            raise ValueError("开发者计划开关必须为布尔值")
+            raise ValueError(t('message.developer_program_flag_must_be_a_boolean'))
         updated = dict(self._application.settings)
         updated["developer_plan"] = enabled
         self._application.settings_store.save(updated)
@@ -91,20 +93,22 @@ class SettingsApiMixin:
         """校验并保存 Vue 表单提交的完整设置。"""
         incoming = payload.get("settings")
         if not isinstance(incoming, dict):
-            raise ValueError("缺少有效配置")
+            raise ValueError(t('message.valid_settings_are_required'))
         current = self._application.settings
         updated = dict(current)
         allowed = set(current)
         # 样式目录由设备查询结果维护，禁止前端旧快照覆盖刚同步的自定义样式。
         allowed.discard("styles")
         updated.update({key: incoming[key] for key in incoming if key in allowed})
+        if updated.get("locale") not in ("zh-CN", "en-US"):
+            raise ValueError(t("error.locale"))
         updated["port"] = str(updated.get("port") or "").strip()
         updated["websocket_client_name"] = str(
             updated.get("websocket_client_name") or ""
         ).strip()[:64]
         updated["ping_target"] = str(updated.get("ping_target") or "").strip()
         if updated.get("json_chunk_size") not in (512, 1024, 2048, 4096, 8192, 16384):
-            raise ValueError("JSON 分片大小必须为 512、1024、2048、4096、8192 或 16384 字节")
+            raise ValueError(t('message.json_chunk_size_must_be_512_1024_2048_4096'))
         updated["interval"] = float(updated["interval"])
         updated["reconnect_interval"] = float(updated["reconnect_interval"])
         updated["serial_probe_interval"] = float(updated["serial_probe_interval"])
@@ -112,7 +116,7 @@ class SettingsApiMixin:
         if updated.get("network_unit") == "Mb":
             updated["network_unit"] = "Mbps"
         if updated.get("network_unit") not in ("MB", "Mbps"):
-            raise ValueError("网络速率单位无效")
+            raise ValueError(t('message.invalid_network_rate_unit'))
         updated["idle_timeout"] = int(updated["idle_timeout"])
         updated["screen_rotation"] = int(updated["screen_rotation"])
         updated["lcd_brightness"] = int(updated["lcd_brightness"])
@@ -123,21 +127,21 @@ class SettingsApiMixin:
             updated.get("wifi_discovery_strategy") or "announcement"
         ).strip().lower()
         if updated["wifi_discovery_strategy"] not in ("announcement", "scan"):
-            raise ValueError("Wi-Fi 发现策略无效")
+            raise ValueError(t('message.invalid_wi_fi_discovery_strategy'))
         updated["collection_task_logs"] = bool(updated["collection_task_logs"])
         updated["qbittorrent_enabled"] = bool(updated["qbittorrent_enabled"])
         updated["market_url"] = str(updated.get("market_url") or "").strip()
         if updated["market_url"] and not updated["market_url"].lower().startswith(
             ("https://", "http://")
         ):
-            raise ValueError("插件市场地址必须以 http:// 或 https:// 开头")
+            raise ValueError(t('message.plugin_market_url_must_start_with_http_or_https'))
         updated["http_enabled"] = bool(updated.get("http_enabled", False))
         updated["http_port"] = int(updated.get("http_port", 9876))
         if not 1 <= updated["http_port"] <= 65535:
-            raise ValueError("HTTP 管理页面端口必须在 1 至 65535 之间")
+            raise ValueError(t('message.http_management_port_must_be_between_1_and_65535'))
         updated["http_auth"] = str(updated.get("http_auth") or "").strip()
         if not updated["http_auth"]:
-            raise ValueError("HTTP 管理页面 Auth 不能为空")
+            raise ValueError(t('message.http_management_auth_cannot_be_empty'))
         updated["collection_task_intervals"] = normalize_collection_task_intervals(
             updated.get("collection_task_intervals")
         )
@@ -149,9 +153,9 @@ class SettingsApiMixin:
             updated.get("custom_data_enabled"),
         )
         if updated["lcd_style"] not in style_names(updated, idle=False):
-            raise ValueError("界面样式无效")
+            raise ValueError(t('message.invalid_screen_style'))
         if updated["idle_enabled"] and updated["idle_style"] not in style_names(updated, idle=True):
-            raise ValueError("待机样式无效")
+            raise ValueError(t('message.invalid_idle_style'))
         intervals = (
             updated["interval"],
             updated["reconnect_interval"],
@@ -166,7 +170,7 @@ class SettingsApiMixin:
             or (updated["idle_enabled"] and updated["idle_timeout"] <= 0)
             or not 1 <= updated["lcd_brightness"] <= 100
         ):
-            raise ValueError("请检查设备名称、地址、亮度和时间间隔")
+            raise ValueError(t('message.check_device_name_addresses_brightness_and_intervals'))
         if updated["qbittorrent_enabled"] and not all(
             (
                 updated.get("qbittorrent_address"),
@@ -174,14 +178,22 @@ class SettingsApiMixin:
                 updated.get("qbittorrent_password"),
             )
         ):
-            raise ValueError("启用 qBittorrent 后必须填写地址、用户名和密码")
-        self._application.settings = updated
+            raise ValueError(t('message.qbittorrent_requires_an_address_username_and_password'))
         self._application.settings_store.save(updated)
+        self._application.settings = updated
+        set_locale(updated.get("locale", "zh-CN"))
+        window = getattr(self._application, "webview_window", None)
+        if window is not None:
+            try:
+                window.set_title(t('message.control_center').format(APPLICATION_NAME))
+            except Exception:
+                # 原生窗口可能正在关闭，标题更新失败不影响语言保存和设备同步。
+                pass
         if not self._application._apply_runtime_settings(wait=True):
-            raise RuntimeError("后台监控未运行，配置将在下次启动时生效")
+            raise RuntimeError(t('message.monitor_is_not_running_settings_will_apply_on_next'))
         if self._application.icon is not None:
             self._application.icon.update_menu()
-            self._application.icon.notify("配置已保存并生效", APPLICATION_NAME)
+            self._application.icon.notify(t('ui.settings_saved_and_applied'), APPLICATION_NAME)
         self._application._schedule_http_admin_settings()
         return {"saved": True}
 

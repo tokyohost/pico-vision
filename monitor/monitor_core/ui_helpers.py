@@ -1,5 +1,7 @@
 """提供 Windows 与 Linux 管理界面共用的纯数据处理能力。"""
 
+from i18n import t
+
 import base64
 import json
 import logging
@@ -175,38 +177,38 @@ def extract_style_package(package_path, target_directory):
     import custom_data
 
     if not zipfile.is_zipfile(package_path):
-        raise ValueError("选择的文件不是有效 ZIP 包")
+        raise ValueError(t('style.invalid_zip'))
     with zipfile.ZipFile(package_path) as archive:
         entries = archive.infolist()
         if len(entries) > 2000 or sum(item.file_size for item in entries) > 50 * 1024 * 1024:
-            raise ValueError("样式 ZIP 解压后不能超过 50 MB 或 2000 个文件")
+            raise ValueError(t('style.zip_limits'))
         for entry in entries:
             item_path = PurePosixPath(entry.filename.replace("\\", "/"))
             if item_path.is_absolute() or ".." in item_path.parts:
-                raise ValueError("样式 ZIP 包含不安全路径")
+                raise ValueError(t('style.unsafe_path'))
             if (entry.external_attr >> 16) & 0o170000 == 0o120000:
-                raise ValueError("样式 ZIP 不能包含符号链接")
+                raise ValueError(t('style.zip_symlink'))
         manifests = [
             item for item in entries
             if not item.is_dir()
             and PurePosixPath(item.filename.replace("\\", "/")).name == "plugin.json"
         ]
         if len(manifests) != 1:
-            raise ValueError("样式 ZIP 必须且只能包含一个 plugin.json")
+            raise ValueError(t('style.single_manifest'))
         manifest_entry = manifests[0]
         try:
             manifest = json.loads(archive.read(manifest_entry).decode("utf-8-sig"))
         except (UnicodeError, ValueError) as error:
-            raise ValueError("plugin.json 必须是有效的 UTF-8 JSON") from error
+            raise ValueError(t('style.manifest_encoding')) from error
         if manifest.get("type") != "style":
-            raise ValueError("样式 ZIP 的 plugin.json type 必须为 style")
+            raise ValueError(t('style.manifest_type'))
         style_name = manifest.get("style")
         if (
             not isinstance(style_name, str)
             or PurePosixPath(style_name).name != style_name
             or not style_name.lower().endswith(".py")
         ):
-            raise ValueError("style 必须是样式包根目录内的 py 文件名")
+            raise ValueError(t('style.source_path'))
         root = PurePosixPath(manifest_entry.filename.replace("\\", "/")).parent
         style_archive_path = str(root / style_name)
         names = {
@@ -214,7 +216,7 @@ def extract_style_package(package_path, target_directory):
             for item in entries if not item.is_dir()
         }
         if style_archive_path not in names:
-            raise ValueError("样式 ZIP 中缺少 plugin.json 声明的 style 文件")
+            raise ValueError(t('style.missing_source'))
         # 展示资源会持久化到 Monitor 数据目录，需要在解压前限制类型和大小。
         for bind_field, path_field, extensions, maximum_size in (
             ("bind_detail", "detail", (".html", ".htm"), custom_data.CUSTOM_DATA_DETAIL_MAX_BYTES),
@@ -230,7 +232,7 @@ def extract_style_package(package_path, target_directory):
                 or str(root / resource_name) not in names
                 or names[str(root / resource_name)].file_size > maximum_size
             ):
-                raise ValueError("{} 声明的资源无效或不存在".format(path_field))
+                raise ValueError(t('style.missing_asset').format(path_field))
         archive.extractall(target_directory)
 
     def extracted_resource(bind_field, path_field):
@@ -248,7 +250,7 @@ def extract_style_package(package_path, target_directory):
         try:
             package["detail"].read_text(encoding="utf-8-sig")
         except (OSError, UnicodeError) as error:
-            raise ValueError("样式详情必须是 UTF-8 编码的 HTML") from error
+            raise ValueError(t('style.detail_encoding')) from error
     if package["preview"] is not None:
         custom_data._validate_preview_content(package["preview"])
     return package
@@ -291,16 +293,16 @@ def merge_wifi_networks(networks, wifi_status):
 def wifi_state_label(network):
     """返回无线网络的中文连接状态标签。"""
     if network.get("connected"):
-        return "已连接"
+        return t("wifi.connected")
     if network.get("saved"):
-        return "已保存"
-    return "可用"
+        return t("wifi.saved")
+    return t("wifi.available")
 
 
 def wifi_security_label(security):
     """把设备安全类型编码转换为适合界面展示的文本。"""
     if security == 0:
-        return "开放"
+        return t("wifi.open")
     if security is None:
-        return "未知"
-    return "需要密钥"
+        return t("wifi.unknown")
+    return t("wifi.secured")

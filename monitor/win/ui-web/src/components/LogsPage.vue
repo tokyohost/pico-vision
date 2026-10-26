@@ -1,4 +1,6 @@
 <script setup>
+import { t } from '../i18n'
+
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '../bridge'
@@ -57,7 +59,7 @@ function toggleAutoRefresh() {
 async function exportLogs() {
   try {
     await invoke('log.export')
-    ElMessage.success('日志已导出')
+    ElMessage.success(t('ui.logs_exported'))
   } catch (error) {
     ElMessage.error(error?.message || String(error))
   }
@@ -68,7 +70,7 @@ async function exportLogs() {
  */
 async function clearLogs() {
   try {
-    await ElMessageBox.confirm('确定清空当前运行日志吗？', '清空日志', { type: 'warning' })
+    await ElMessageBox.confirm(t('ui.clear_the_current_application_logs'), t('ui.clear_logs'), { type: 'warning' })
     await invoke('log.clear')
     logs.value = ''
     followLatest.value = true
@@ -91,21 +93,21 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="log-toolbar">
-    <el-button :loading="loading" @click="loadLogs(false)">刷新</el-button>
+    <el-button :loading="loading" @click="loadLogs(false)">{{ t('ui.refresh') }}</el-button>
     <el-button :type="autoRefresh ? 'success' : 'default'" @click="toggleAutoRefresh">
-      {{ autoRefresh ? '实时查看中' : '继续实时查看' }}
+      {{ autoRefresh ? t('ui.live_view') : t('ui.resume_live_view') }}
     </el-button>
     <el-tag :type="followLatest ? 'success' : 'warning'" effect="plain">
-      {{ followLatest ? '跟随最新' : '已暂停滚动' }}
+      {{ followLatest ? t('ui.follow_latest') : t('ui.scrolling_paused') }}
     </el-tag>
-    <el-button @click="exportLogs">导出日志</el-button>
-    <el-button type="danger" plain @click="clearLogs">清空日志</el-button>
+    <el-button @click="exportLogs">{{ t('ui.export_logs') }}</el-button>
+    <el-button type="danger" plain @click="clearLogs">{{ t('ui.clear_logs') }}</el-button>
   </div>
   <CopyableLog
     ref="logView"
     :content="logs"
     pre-class="terminal log-view"
-    copy-success-text="运行日志已复制"
+    :copy-success-text="t('ui.application_logs_copied')"
     @scroll="updateFollowState"
   />
 </template>

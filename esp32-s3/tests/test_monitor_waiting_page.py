@@ -155,7 +155,9 @@ class MonitorWaitingPageTest(unittest.TestCase):
         boot = application._renderer.request_render.call_args.args[0]["boot"]
         self.assertEqual(100, boot["progress"])
         self.assertIn("MONITOR:TIMEOUT", boot["logs"])
-        self.assertTrue(boot["status"].startswith("waiting connecting"))
+        from i18n import t
+
+        self.assertTrue(boot["status"].startswith(t("boot.waiting")))
         self.assertEqual("测试网络", boot["wifi"]["ssid"])
         self.assertTrue(boot["wifi"]["connected"])
 

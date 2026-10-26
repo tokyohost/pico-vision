@@ -1,5 +1,7 @@
 """共享 pywebview 窗口、HTTP 管理服务与页面导航。"""
 
+from i18n import t
+
 import json
 import logging
 import sys
@@ -28,13 +30,13 @@ class WebUiMixin:
 
         entry = self._resource_path("win", "ui-web", "dist", "index.html")
         if not entry.is_file():
-            raise FileNotFoundError("Web 界面构建产物不存在：{}".format(entry))
+            raise FileNotFoundError(t('message.web_ui_build_not_found').format(entry))
         bridge = getattr(self, "webview_bridge", None)
         if bridge is None:
             bridge = WebViewBridge(self)
             self.webview_bridge = bridge
         window = webview.create_window(
-            "{} — 控制中心".format(APPLICATION_NAME),
+            t('message.control_center').format(APPLICATION_NAME),
             entry.resolve().as_uri(),
             js_api=bridge,
             width=1120,
@@ -103,7 +105,7 @@ class WebUiMixin:
                 icon = getattr(self, "icon", None)
                 if icon is not None:
                     icon.notify(
-                        "配置端口 {} 无法监听，HTTP 管理页面已自动切换到端口 {}".format(
+                        t('message.port_is_unavailable_http_management_switched_to_port').format(
                             desired[0],
                             server.port,
                         ),
@@ -116,7 +118,7 @@ class WebUiMixin:
             icon = getattr(self, "icon", None)
             if icon is not None:
                 icon.notify(
-                    "HTTP 管理页面启动失败，请检查端口 {} 是否被占用或被系统保留：{}".format(
+                    t('message.http_management_could_not_start_check_if_port_is').format(
                         desired[0],
                         error,
                     ),
@@ -146,7 +148,7 @@ class WebUiMixin:
         window = getattr(self, "webview_window", None)
         if window is None:
             if self.icon is not None:
-                self.icon.notify("界面尚未就绪，请稍后重试", APPLICATION_NAME)
+                self.icon.notify(t('message.the_interface_is_not_ready_try_again_later'), APPLICATION_NAME)
             return
         try:
             # 必须先退出最小化状态再显示，否则 WinForms 激活的仍是最小化窗口，
@@ -157,7 +159,7 @@ class WebUiMixin:
         except Exception as error:
             LOGGER.exception("恢复 Web 界面失败：%s", error)
             if self.icon is not None:
-                self.icon.notify("界面恢复失败：{}".format(error), APPLICATION_NAME)
+                self.icon.notify(t('message.failed_to_restore_interface').format(error), APPLICATION_NAME)
 
     @staticmethod
     def _navigate_web_page(window, page):

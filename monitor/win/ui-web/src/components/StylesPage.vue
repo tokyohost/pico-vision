@@ -1,4 +1,6 @@
 <script setup>
+import { t, styleLabel } from '../i18n'
+
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke, isHttpBridge, uploadFile } from '../bridge'
@@ -82,9 +84,10 @@ function hasStyleDetail(item) {
  */
 function openStyleDetail(item) {
   const styleName = String(item?.name || '').toLowerCase()
-  const content = customStyleAssets[styleName]?.detailHtml || styleDetailSources[styleName]
+  const customContent = customStyleAssets[styleName]?.detailHtml
+  let content = customContent || styleDetailSources[styleName]
   if (!content) return
-  styleDetail.title = `${item.chinese_name} · 样式详情`
+  styleDetail.title = t('ui.value_style_details', { value0: styleLabel(item) })
   styleDetail.content = applyDetailScrollbarTheme(content)
   styleDetail.visible = true
 }
@@ -152,13 +155,13 @@ async function uploadStylePayload(payload) {
   try {
     const result = await invoke('style.upload', payload)
     if (!result.cancelled) {
-      ElMessage.success('自定义样式上传成功')
+      ElMessage.success(t('ui.custom_style_uploaded'))
       await loadRemoteStyles()
     }
   } catch (error) {
     if (/已存在/.test(error?.message || '')) {
       try {
-        await ElMessageBox.confirm(`${error.message}。是否覆盖？`, '覆盖样式', { type: 'warning' })
+        await ElMessageBox.confirm(t('ui.value_replace_it', { value0: error.message }), t('ui.replace_style'), { type: 'warning' })
         await invoke('style.upload', { ...payload, overwrite: true })
         await loadRemoteStyles()
       } catch (nestedError) {
@@ -193,13 +196,13 @@ async function handleBrowserStyleFile(event) {
  */
 async function deleteStyle(item) {
   try {
-    await ElMessageBox.confirm(`确定删除“${item.chinese_name}”吗？`, '删除样式', { type: 'warning' })
+    await ElMessageBox.confirm(t('ui.delete_value', { value0: styleLabel(item) }), t('ui.delete_style'), { type: 'warning' })
     const result = await invoke('style.delete', { name: item.name, filename: item.filename })
     remoteStyles.items = remoteStyles.items.filter((style) => style.name !== item.name)
     const catalog = (result.catalog || props.styles).filter((style) => style.name !== item.name)
     emit('catalog-updated', catalog)
     repairDeletedStyleSelection(item.name, catalog)
-    ElMessage.success('样式已删除')
+    ElMessage.success(t('ui.style_deleted'))
   } catch (error) {
     if (error !== 'cancel') ElMessage.error(error?.message || String(error))
   }
@@ -236,12 +239,10 @@ onMounted(loadRemoteStyles)
       :href="customStyleTutorialUrl"
       target="_blank"
       rel="noopener noreferrer"
-      title="在浏览器中打开自定义屏幕教程"
-    >自定义屏幕教程</el-button>
-    <el-button :loading="remoteStyles.loading" @click="loadRemoteStyles">刷新设备</el-button>
-    <el-button type="primary" title="支持单个 py 文件或包含 plugin.json 的 zip 样式包" @click="uploadStyle">
-      上传 PY / ZIP 样式
-    </el-button>
+      :title="t('ui.open_the_custom_screen_tutorial_in_your_browser')"
+    >{{ t('ui.custom_screen_tutorial') }}</el-button>
+    <el-button :loading="remoteStyles.loading" @click="loadRemoteStyles">{{ t('ui.refresh_device') }}</el-button>
+    <el-button type="primary" :title="t('ui.supports_a_single_py_file_or_a_zip_style')" @click="uploadStyle">{{ t('ui.upload_py_zip_style') }}</el-button>
     <input
       v-if="isHttpBridge()"
       ref="styleFileInput"
@@ -261,7 +262,7 @@ onMounted(loadRemoteStyles)
       }]"
       role="button"
       :aria-disabled="item.idle && !settings.idle_enabled"
-      :title="item.idle && !settings.idle_enabled ? '已选择不进入待机，待机样式不可配置' : ''"
+      :title="item.idle && !settings.idle_enabled ? t('ui.idle_mode_is_disabled_idle_style_cannot_be_configured') : ''"
       :tabindex="item.idle && !settings.idle_enabled ? -1 : 0"
       @click="selectStyle(item)"
       @keydown.enter="selectStyle(item)"
@@ -271,44 +272,44 @@ onMounted(loadRemoteStyles)
         <img
           v-if="stylePreview(item)"
           :src="stylePreview(item)"
-          :alt="`${item.chinese_name}界面预览`"
+          :alt="t('ui.value_screen_preview', { value0: styleLabel(item) })"
           class="style-preview"
         />
         <span v-else class="style-preview-empty">
           <span class="style-icon"><el-icon><MagicStick /></el-icon></span>
-          <small>暂无界面预览</small>
+          <small>{{ t('ui.no_screen_preview') }}</small>
         </span>
       </span>
       <span class="style-card-copy">
-        <strong>{{ item.chinese_name }}</strong>
+        <strong>{{ styleLabel(item) }}</strong>
         <span class="style-card-meta">
-          <small>{{ item.name }} · {{ item.type === 'custom' ? '自定义' : '内置' }}</small>
+          <small>{{ item.name }} · {{ item.type === 'custom' ? t('ui.custom') : t('ui.built_in') }}</small>
           <el-button
             v-if="hasStyleDetail(item)"
             text
             size="small"
             type="primary"
             @click.stop="openStyleDetail(item)"
-          >查看详情</el-button>
+          >{{ t('ui.view_details') }}</el-button>
         </span>
       </span>
     </article>
   </div>
   <el-card v-if="remoteStyles.items.length" shadow="never" class="section-gap">
-    <template #header><span>设备自定义样式</span></template>
+    <template #header><span>{{ t('ui.device_custom_styles') }}</span></template>
     <el-table :data="remoteStyles.items">
-      <el-table-column prop="chinese_name" label="中文名称" />
-      <el-table-column prop="name" label="样式标识" />
-      <el-table-column prop="filename" label="文件名" />
-      <el-table-column prop="file_size" label="大小（字节）" width="120" />
-      <el-table-column label="操作" width="90">
-        <template #default="{ row }"><el-button text type="danger" @click="deleteStyle(row)">删除</el-button></template>
+      <el-table-column prop="chinese_name" :label="t('ui.chinese_name')" />
+      <el-table-column prop="name" :label="t('ui.style_id')" />
+      <el-table-column prop="filename" :label="t('ui.filename')" />
+      <el-table-column prop="file_size" :label="t('ui.size_bytes')" width="120" />
+      <el-table-column :label="t('ui.actions')" width="90">
+        <template #default="{ row }"><el-button text type="danger" @click="deleteStyle(row)">{{ t('ui.delete') }}</el-button></template>
       </el-table-column>
     </el-table>
   </el-card>
   <div class="sticky-actions">
-    <span class="sticky-action-hint">当前选择会与其他设置一并保存</span>
-    <el-button type="primary" :loading="saving" @click="emit('save')">应用样式</el-button>
+    <span class="sticky-action-hint">{{ t('ui.your_selection_will_be_saved_with_the_other_settings') }}</span>
+    <el-button type="primary" :loading="saving" @click="emit('save')">{{ t('ui.apply_style') }}</el-button>
   </div>
   <el-dialog v-model="styleDetail.visible" :title="styleDetail.title" width="min(920px, 88vw)" class="style-detail-dialog">
     <iframe

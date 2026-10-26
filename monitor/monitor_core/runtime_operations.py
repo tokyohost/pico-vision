@@ -505,6 +505,7 @@ class RuntimeOperationsMixin:
         """生成发送给 Pico 的显示配置快照。"""
         effective_interval = self._effective_transmit_interval()
         return {
+            "locale": getattr(self.arguments, "locale", "zh-CN"),
             "rotation": self.arguments.screen_rotation,
             "brightness": getattr(self.arguments, "lcd_brightness", 100),
             "collection_interval_ms": max(1, round(effective_interval * 1000)),

@@ -13,6 +13,8 @@
 
 """启动状态灯、多传输 JSON 接收和 LCD 异步刷新服务。"""
 
+from i18n import t, load_locale, get_locale, set_locale
+
 
 import gc
 import sys
@@ -76,6 +78,7 @@ class Application:
 
     def __init__(self, protocol, transport=None, sdk_bootloader=None):
         """按通信、LED、LCD 的顺序初始化各组件。"""
+        load_locale()
         gc_threshold = configure_garbage_collection()
         from dashboard import DashboardRenderer
         from data_receiver import DataReceiver, SnapshotCache
@@ -140,19 +143,22 @@ class Application:
         )
         self._buttons = ButtonController()
         self._button_commands = ButtonCommandDispatcher()
+        from menu import SystemMenu
+
+        self._system_menu = SystemMenu()
         self._protocol.set_command_services({"renderer": self._renderer})
         self._boot_frame = 0
         self._boot_logs = []
         self._next_boot_animation = time.ticks_ms()
-        self._show_boot(72, "BOOT:LCD_READY", "loading...", flush=True)
+        self._show_boot(72, "BOOT:LCD_READY", t('boot.loading'), flush=True)
         self._preload_boot_styles()
         self._cache = SnapshotCache()
-        self._show_boot(84, "BOOT:CACHE_READY", "loading...", flush=True)
+        self._show_boot(84, "BOOT:CACHE_READY", t('boot.loading'), flush=True)
         self._receiver = DataReceiver(self._protocol, self._cache, self._led)
         # 渲染控制等待期间也要持续消费 CDC 输入，防止主机在样式切换时
         # 把下一笔 JSON 分片写满 USB OUT 端点后永久背压。
         self._renderer.set_progress_callback(self._pump_protocol)
-        self._show_boot(94, "BOOT:RECEIVER_READY", "loading...", flush=True)
+        self._show_boot(94, "BOOT:RECEIVER_READY", t('boot.loading'), flush=True)
         self._rendering_version = -1
         now = time.ticks_ms()
         self._next_clock_render = time.ticks_add(
@@ -179,6 +185,22 @@ class Application:
         self._button_hint_until_ms = None
         self._button_hint_snapshot = None
         self._button_hint_label = None
+
+    def _apply_display_locale(self, snapshot):
+        """在菜单外和帧边界应用语言，清理旧提示并强制生成新帧。"""
+        display = snapshot.get("display", {}) if isinstance(snapshot, dict) else {}
+        locale = display.get("locale") if isinstance(display, dict) else None
+        if locale not in ("zh-CN", "en-US") or locale == get_locale():
+            return False
+        # 通过现有同步控制队列撤销旧帧，避免两核渲染混用不同语言。
+        self._renderer.abort_render(release_snapshot=True)
+        if set_locale(locale):
+            self._button_hint_label = None
+            self._button_hint_snapshot = None
+            self._button_hint_until_ms = None
+            self._rendering_version = -1
+            return True
+        return False
 
     def _pump_protocol(self):
         """在渲染控制等待期间轮询协议并缓存已收齐的最新快照。"""
@@ -261,7 +283,7 @@ class Application:
     def show_application_error(self, error):
         """切换到错误页面，并把未处理异常的类型和信息直接显示到 LCD。"""
         error_type = type(error).__name__
-        error_message = str(error) or "未知错误"
+        error_message = str(error) or t("error.unknown")
         self._renderer.abort_render(release_snapshot=True)
         self._renderer.set_style("boot")
         self._boot_logs = [
@@ -357,7 +379,7 @@ class Application:
         """应用按键选择的样式，并强制下一帧完整刷新。"""
         if snapshot is None:
             self._protocol.write(b"BUTTON:LCD_STYLE_IGNORED:NO_SNAPSHOT\n")
-            return
+            return False
         try:
             changed = self._set_style_after_system_boot(style_name)
         except (ImportError, MemoryError, TypeError, ValueError) as error:
@@ -369,7 +391,7 @@ class Application:
                     style_name, error
                 ).encode("utf-8")
             )
-            return
+            return False
         self._button_style_override = self._renderer.style_name()
         self._rendering_version = -1
         self._renderer.request_render(snapshot or {}, force=True)
@@ -377,6 +399,124 @@ class Application:
             self._emit_config_change(
                 "lcd_style", self._renderer.style_name()
             )
+        return True
+
+    def system_menu_active(self):
+        """判断系统菜单是否正在独占三枚按键。"""
+        menu = getattr(self, "_system_menu", None)
+        return menu is not None and menu.active
+
+    def open_system_menu(self):
+        """结束未提交的亮度快捷操作并打开系统菜单。"""
+        self.commit_brightness_command()
+        self._button_hint_until_ms = None
+        self._button_hint_snapshot = None
+        self._button_hint_label = None
+        self._system_menu.open()
+        self._renderer.set_system_menu(self._system_menu.view())
+
+    def handle_system_menu_event(self, action, event_type, snapshot):
+        """只处理菜单导航事件，避免触发原有快捷模式。"""
+        if action == "function" and event_type == "press":
+            self._system_menu.confirm(self, snapshot)
+        elif action in ("style_previous", "style_next") and event_type in ("press", "long_press", "repeat"):
+            self._system_menu.move(-1 if action == "style_previous" else 1)
+        else:
+            return
+        if not self._system_menu.active:
+            self._close_system_menu()
+        else:
+            self._renderer.set_system_menu(self._system_menu.view())
+
+    def _close_system_menu(self):
+        """按最新连接状态恢复显示，再撤下菜单覆盖层。"""
+        now = time.ticks_ms()
+        snapshot, _ = self._cache.latest()
+        display = snapshot.get("display", {}) if snapshot else {}
+        if snapshot is not None:
+            self._idle_enabled = bool(display.get("idle_enabled", True))
+            self._idle_style = str(display.get("idle_style", self._idle_style) or "idle")
+            try:
+                self._idle_timeout_ms = max(1, int(display.get("idle_timeout", 30))) * 1000
+            except (TypeError, ValueError):
+                self._idle_timeout_ms = 30000
+            if display.get("style", LCD_STYLE) != self._last_display_style:
+                self._button_style_override = None
+        self._rendering_version = -1
+        self._idle_active = False
+        # 撤下覆盖层前清理旧快照，避免渲染线程短暂显示进入菜单前的数据。
+        self._renderer.abort_render(release_snapshot=True)
+        self._apply_display_locale(snapshot)
+        try:
+            if not self._idle_enabled and self._monitor_timed_out(now):
+                self._return_to_waiting_page()
+            elif self._idle_due(now):
+                self._enter_idle(snapshot)
+            elif snapshot is None:
+                self._renderer.set_style("boot")
+                self._show_boot(100, "SYSTEM_BOOT:WAITING_MONITOR", t("boot.waiting") + " ....")
+            else:
+                display = snapshot.get("display", {})
+                style = self._button_style_override or display.get("style", LCD_STYLE)
+                self._set_style_after_system_boot(style)
+                self._renderer.request_render(self._with_button_hint(snapshot), force=True)
+        except (ImportError, MemoryError, OSError, TypeError, ValueError) as error:
+            self._protocol.write("BUTTON:MENU_RESTORE_ERROR:{}\n".format(error).encode("utf-8"))
+            self._renderer.set_style("boot")
+            self._show_boot(100, "STYLE:RESTORE_FAILED", t("boot.waiting") + " ....")
+        self._renderer.set_system_menu(None)
+
+    def system_menu_information(self, key, dynamic=False):
+        """提供离线可用的只读资料，动态刷新仅查询运行状态。"""
+        from menu.information import about_information, static_information, dynamic_information
+
+        if key == "about":
+            return about_information()
+        fields = [] if dynamic else static_information(getattr(self, "_lcd", None))
+        return fields + dynamic_information(getattr(self, "_transport", None))
+
+    def system_menu_detail_lines(self, text):
+        """委托渲染线程测量详情文字，避免跨线程操作画布。"""
+        return self._renderer.wrap_system_menu_text(text)
+
+    def system_menu_options(self, key):
+        """返回设置候选值和设备当前生效值。"""
+        if key == "style":
+            from styles.style_plugins import style_catalog
+
+            labels = {item["name"]: item.get("chinese_name", item["name"])
+                      for item in style_catalog()}
+            names = self._style_switch_candidates()
+            return [(name, labels.get(name, name)) for name in names], self._button_style_override or self._renderer.style_name()
+        if key == "brightness":
+            current = int(self._renderer.backlight_brightness())
+            values = sorted(set(list(range(10, 101, 10)) + [current]))
+            return [(value, "{}%".format(value)) for value in values], current
+        if key == "rotation":
+            return [(0, "0°"), (180, "180°")], self._renderer.rotation()
+        current = self._button_network_unit_override or self._last_display_network_unit or "MB"
+        return [("MB", "MB"), ("Mbps", "Mbps")], current
+
+    def apply_system_menu_setting(self, key, value, snapshot):
+        """确认后应用设置，返回可展示的中文失败原因。"""
+        try:
+            if key == "style":
+                if snapshot is None:
+                    return t('menu.connect_first')
+                if not self._apply_button_style(value, snapshot):
+                    return t('menu.style_failed')
+                self._idle_active = False
+            elif key == "brightness":
+                self._set_button_brightness(value)
+                self.commit_brightness_command()
+            elif key == "rotation":
+                self._set_button_rotation(value)
+            elif key == "network_unit":
+                self._set_button_network_unit(value)
+        except (ImportError, MemoryError, OSError, TypeError, ValueError) as error:
+            self._protocol.write("BUTTON:MENU_ERROR:{}:{}\n".format(key, error).encode("utf-8"))
+            return t('menu.setting_failed')
+        return None
 
     def _handle_button_actions(self, actions, snapshot):
         """使用命令分派器处理按下、长按和连发事件。"""
@@ -410,7 +550,7 @@ class Application:
 
     def show_button_mode(self, label, snapshot):
         """显示功能键刚切换到的按键命令模式。"""
-        self._show_button_hint("模式：{}".format(label), snapshot)
+        self._show_button_hint(t('hint.mode').format(label), snapshot)
 
     def execute_style_command(self, direction, snapshot):
         """执行样式方向命令并显示切换结果。"""
@@ -418,18 +558,36 @@ class Application:
             self._neighbor_style_name(direction), snapshot
         )
         self._show_button_hint(
-            "上一样式" if direction < 0 else "下一样式", snapshot
+            t('hint.previous') if direction < 0 else t('hint.next'), snapshot
         )
 
     def execute_brightness_command(self, direction, snapshot):
         """按一个百分点步长调节本机背光，并记录待同步状态。"""
         current = self._renderer.backlight_brightness()
         brightness = max(1, min(100, int(current) + direction))
+        self._set_button_brightness(brightness)
+        self._show_button_hint(t("hint.brightness").format(brightness), snapshot)
+
+    def _set_button_brightness(self, brightness):
+        """设置本机亮度并标记待同步值，不绘制快捷提示。"""
         changed = self._renderer.set_backlight_brightness(brightness)
         self._button_brightness_override = brightness
         if changed:
             self._button_brightness_dirty = True
-        self._show_button_hint("亮度 {}%".format(brightness), snapshot)
+
+    def _set_button_rotation(self, rotation):
+        """应用旋转并在值变化时同步配置。"""
+        changed = self._renderer.set_rotation(rotation)
+        self._button_rotation_override = rotation
+        if changed:
+            self._emit_config_change("screen_rotation", rotation)
+
+    def _set_button_network_unit(self, unit):
+        """应用网络单位并避免重复配置通知。"""
+        current = self._button_network_unit_override or self._last_display_network_unit or "MB"
+        self._button_network_unit_override = unit
+        if unit != current:
+            self._emit_config_change("network_unit", unit)
 
     def commit_brightness_command(self):
         """在亮度按键释放后向 Monitor 同步一次最终亮度。"""
@@ -443,17 +601,14 @@ class Application:
     def execute_rotation_command(self, direction, snapshot):
         """上一键选择零度，下一键选择一百八十度。"""
         rotation = 0 if direction < 0 else 180
-        self._renderer.set_rotation(rotation)
-        self._button_rotation_override = rotation
-        self._emit_config_change("screen_rotation", rotation)
-        self._show_button_hint("旋转 {}°".format(rotation), snapshot)
+        self._set_button_rotation(rotation)
+        self._show_button_hint(t("hint.rotation").format(rotation), snapshot)
 
     def execute_network_unit_command(self, direction, snapshot):
         """上一键选择 MB，下一键选择 Mbps 网络速率单位。"""
         unit = "MB" if direction < 0 else "Mbps"
-        self._button_network_unit_override = unit
-        self._emit_config_change("network_unit", unit)
-        self._show_button_hint("网络单位 {}".format(unit), snapshot)
+        self._set_button_network_unit(unit)
+        self._show_button_hint(t("hint.unit").format(unit), snapshot)
 
     def _show_button_hint(self, label, snapshot):
         """提交带按键名称的快照，并从本次按下起显示一秒。"""
@@ -699,7 +854,7 @@ class Application:
         self._show_boot(
             100,
             "SYSTEM_BOOT:WAITING_MONITOR",
-            "waiting connecting ....",
+            t("boot.waiting") + " ....",
             flush=True,
         )
         # Monitor 进程退出只会结束主机侧会话，ESP32-S3 内置 USB 控制台仍然
@@ -717,14 +872,14 @@ class Application:
         self._show_boot(
             97,
             "BOOT:MEMORY:USED={}:TOTAL={}".format(memory_used, memory_total),
-            "loading...",
+            t('boot.loading'),
             flush=True,
         )
         self._protocol.write(b"BOOT:ESP32_S3_LCD_READY\n")
         self._show_boot(
             100,
             "BOOT:ESP32_S3_LCD_READY",
-            "waiting connecting ....",
+            t("boot.waiting") + " ....",
             flush=True,
         )
         while True:
@@ -742,13 +897,26 @@ class Application:
             # 禁止待机只关闭待机样式，不应让通信中断后仍显示失效的监控数据。
             # 在读取本轮快照及接收忙状态判断之前清理，避免旧快照再次覆盖等待页，
             # 也防止残留半帧或未完成的渲染长期阻止页面切换。
-            if not self._idle_enabled and self._monitor_timed_out(now):
+            if not self.system_menu_active() and not self._idle_enabled and self._monitor_timed_out(now):
                 self._return_to_waiting_page()
             snapshot, version = self._cache.latest()
             idle_refresh_due = (
                 time.ticks_diff(now, self._next_clock_render) >= 0
             )
             self._handle_button_actions(self._buttons.update(now), snapshot)
+            if self.system_menu_active():
+                if self._system_menu.refresh(self, now):
+                    self._renderer.set_system_menu(self._system_menu.view())
+                # 菜单独占显示期间仍推进通信、LED、渲染和垃圾回收；最新配置
+                # 保存在快照缓存中，退出后由原有配置仲裁逻辑统一应用。
+                render_completed = self._update_renderer_with_fallback(snapshot or {})
+                if render_completed:
+                    self._collect_garbage_if_safe(time.ticks_ms())
+                self._write_render_profile_if_needed(render_completed)
+                time.sleep_ms(1)
+                continue
+            snapshot, version = self._cache.latest()
+            self._apply_display_locale(snapshot)
             self._clear_button_hint_if_due(now, snapshot)
             # 遗留半包可能使接收器持续忙碌，因此待机判断必须先于忙状态短路。
             if (
@@ -799,7 +967,7 @@ class Application:
                 self._show_boot(
                     100,
                     "BOOT:ESP32_S3_LCD_READY",
-                    "waiting connecting " + dots,
+                    t("boot.waiting") + " " + dots,
                 )
                 self._boot_frame += 1
                 self._next_boot_animation = time.ticks_add(now, 250)

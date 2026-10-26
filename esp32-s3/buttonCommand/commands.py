@@ -6,6 +6,7 @@ class ButtonCommand:
 
     name = "base"
     label = "未知模式"
+    label_key = "menu.unknown"
 
     def execute(self, host, direction, event_type, snapshot):
         """执行当前模式命令，子类必须实现具体行为。"""
@@ -17,6 +18,7 @@ class StyleSwitchCommand(ButtonCommand):
 
     name = "style"
     label = "样式切换"
+    label_key = "menu.style"
 
     def execute(self, host, direction, event_type, snapshot):
         """仅在首次按下时切换一次样式。"""
@@ -29,6 +31,7 @@ class BrightnessCommand(ButtonCommand):
 
     name = "brightness"
     label = "亮度调节"
+    label_key = "menu.brightness"
 
     def execute(self, host, direction, event_type, snapshot):
         """调节本机亮度，并在按键释放时统一同步最终值。"""
@@ -43,6 +46,7 @@ class RotationCommand(ButtonCommand):
 
     name = "rotation"
     label = "屏幕旋转"
+    label_key = "menu.rotation"
 
     def execute(self, host, direction, event_type, snapshot):
         """首次按下时选择零度或一百八十度。"""
@@ -55,6 +59,7 @@ class NetworkUnitCommand(ButtonCommand):
 
     name = "network_unit"
     label = "网络速率单位"
+    label_key = "menu.network_unit"
 
     def execute(self, host, direction, event_type, snapshot):
         """首次按下时选择 MB 或 Mbps。"""

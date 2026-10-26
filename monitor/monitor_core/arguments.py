@@ -3,6 +3,8 @@
 import argparse
 import os
 
+from i18n import SUPPORTED_LOCALES
+
 from .config import (
     config_flag,
     config_value,
@@ -58,6 +60,8 @@ def create_argument_parser(config=None):
     parser.add_argument("--lan-probe-max-workers", type=int, default=int(config_value(config, "PICO_MONITOR_LAN_PROBE_MAX_WORKERS", "256")), help="Wi-Fi 设备局域网扫描最大并发数")
     parser.add_argument("--screen-rotation", type=int, choices=(0, 180), default=int(config_value(config, "PICO_MONITOR_SCREEN_ROTATION", "0")), help="Pico 屏幕旋转角度，可选 0 或 180")
     parser.add_argument("--lcd-brightness", type=int, choices=range(1, 101), default=int(config_value(config, "PICO_MONITOR_LCD_BRIGHTNESS", "50")), help="Pico LCD 背光亮度百分比，范围为 1 至 100")
+    configured_locale = config_value(config, "PICO_MONITOR_LOCALE", "zh-CN")
+    parser.add_argument("--locale", choices=SUPPORTED_LOCALES, default=configured_locale if configured_locale in SUPPORTED_LOCALES else "zh-CN", help="界面与小屏语言")
     parser.add_argument("--network-unit", choices=("MB", "Mbps"), default=config_value(config, "PICO_MONITOR_NETWORK_UNIT", "MB"), help="网络速率模式：MB 自动使用 B/KB/MB/GB，Mbps 自动使用 bps/Kbps/Mbps/Gbps")
     parser.add_argument("--lcd-style", default=config_value(config, "PICO_MONITOR_LCD_STYLE", "horizontal_disk4x"), help="Pico LCD 界面样式名称")
     idle_group = parser.add_mutually_exclusive_group()

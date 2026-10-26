@@ -1,5 +1,7 @@
 """Linux/macOS 桌面的公共生命周期，不改变 Linux 默认无桌面入口。"""
 
+from i18n import t
+
 import logging
 import sys
 import threading
@@ -87,17 +89,17 @@ class PosixDesktopApplication(DesktopApplication):
             enabled = not self._is_autostart()
             self.autostart.set_enabled(enabled)
             icon.update_menu()
-            self.icon.notify("开机自动启动已{}".format("开启" if enabled else "关闭"))
+            self.icon.notify(t('message.start_at_login_2').format(t('message.enabled') if enabled else t('ui.close')))
         except Exception as error:
             LOGGER.exception("修改启动项失败")
-            self.icon.notify("修改启动项失败：{}".format(error))
+            self.icon.notify(t('message.failed_to_change_startup_setting').format(error))
 
     def run(self):
         """在主线程启动共享 GUI 循环，任意退出路径都回收 worker 和锁。"""
         import pystray
 
         if threading.current_thread() is not threading.main_thread():
-            raise RuntimeError("桌面 GUI 必须从主线程启动")
+            raise RuntimeError(t('message.desktop_gui_must_start_on_the_main_thread'))
         instance = SingleInstanceLock(self.data_directory / "desktop.lock")
         if not instance.acquire():
             return 0

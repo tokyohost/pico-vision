@@ -12,6 +12,20 @@ class FakeCommandHost:
         """初始化调用记录。"""
         self.calls = []
         self.handled_events = set()
+        self.menu_active = False
+
+    def system_menu_active(self):
+        """返回测试菜单开关状态。"""
+        return self.menu_active
+
+    def open_system_menu(self):
+        """记录长按进入菜单。"""
+        self.menu_active = True
+        self.calls.append(("menu_open",))
+
+    def handle_system_menu_event(self, action, event_type, snapshot):
+        """记录菜单独占的按键事件。"""
+        self.calls.append(("menu", action, event_type))
 
     def notify_style_button_event(self, button, event_type, snapshot):
         """记录透传给样式的事件，并按测试配置决定是否消费。"""
@@ -52,7 +66,7 @@ class ButtonCommandDispatcherTest(unittest.TestCase):
         host = FakeCommandHost()
 
         for _ in range(4):
-            dispatcher.dispatch((("function", "press"),), host, {})
+            dispatcher.dispatch((("function", "press"), ("function", "release")), host, {})
 
         self.assertEqual(
             ["亮度调节", "屏幕旋转", "网络速率单位", "样式切换"],
@@ -63,7 +77,7 @@ class ButtonCommandDispatcherTest(unittest.TestCase):
         """亮度模式应连续调节本机，并在释放时仅同步一次。"""
         dispatcher = ButtonCommandDispatcher()
         host = FakeCommandHost()
-        dispatcher.dispatch((("function", "press"),), host, {})
+        dispatcher.dispatch((("function", "press"), ("function", "release")), host, {})
         host.calls = []
 
         dispatcher.dispatch(

@@ -1,5 +1,7 @@
 """Pico 样式、截图与热配置命令处理。"""
 
+from i18n import t, set_locale
+
 import json
 import logging
 import os
@@ -252,6 +254,9 @@ class StyleCommandMixin:
 
     def apply_display_config(self, payload):
         """校验并热更新 Windows 托盘下发的显示配置。"""
+        locale = payload.get("locale", getattr(self.arguments, "locale", "zh-CN"))
+        if locale not in ("zh-CN", "en-US"):
+            raise ValueError(t("error.locale"))
         brightness = int(payload.get("lcd_brightness", self.arguments.lcd_brightness))
         rotation = int(payload.get("screen_rotation", self.arguments.screen_rotation))
         style = payload.get("lcd_style", self.arguments.lcd_style)
@@ -271,6 +276,8 @@ class StyleCommandMixin:
             raise ValueError("待机秒数必须大于 0")
         if network_unit not in ("MB", "Mbps"):
             raise ValueError("不支持的网络速率单位")
+        self.arguments.locale = locale
+        set_locale(locale)
         self.arguments.lcd_brightness = brightness
         self.arguments.screen_rotation = rotation
         self.arguments.lcd_style = style

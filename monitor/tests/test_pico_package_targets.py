@@ -58,6 +58,9 @@ class PicoPackageTargetsTest(unittest.TestCase):
         self.assertIn("WIFI_ENABLED = True", config)
         self.assertEqual(expected, names)
         self.assertIn("device_identity.py", names)
+        self.assertTrue({"i18n.py", "screen_text.py", "locales/__init__.py",
+                         "locales/zh_cn.py", "locales/en_us.py"}.issubset(names))
+        self.assertNotIn("locale.json", names)
         self.assertIn("render_service.py", names)
         self.assertIn("net/websocket_clients.py", names)
         self.assertIn("usb/native_cdc.py", names)

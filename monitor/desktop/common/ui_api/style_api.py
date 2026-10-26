@@ -1,5 +1,7 @@
 """Web 界面的设备屏幕样式管理接口。"""
 
+from i18n import t
+
 import shutil
 import tempfile
 from pathlib import Path
@@ -26,7 +28,7 @@ class StyleApiMixin:
         del payload
         self._drain_queue(self._application.custom_style_messages)
         if not self._application.request_custom_style_catalog():
-            raise RuntimeError("后台监控未运行")
+            raise RuntimeError(t('message.monitor_is_not_running'))
         result = self._wait_worker_result(
             self._application.custom_style_messages, 10
         )
@@ -54,7 +56,7 @@ class StyleApiMixin:
         """选择、校验并上传 Python 文件或 ZIP 样式包。"""
         path = str(payload.get("sourcePath") or "").strip()
         if not path:
-            path = self._select_file(("屏幕样式 (*.py;*.zip)",))
+            path = self._select_file((t('message.screen_styles_py_zip'),))
         if not path:
             return {"cancelled": True}
         return self._upload_style_source(path, payload)
@@ -65,7 +67,7 @@ class StyleApiMixin:
         if source_path.suffix.lower() == ".py":
             return self._upload_style_python(source_path, payload)
         if source_path.suffix.lower() != ".zip":
-            raise ValueError("屏幕样式仅支持 py 文件或 zip 包")
+            raise ValueError(t('message.screen_styles_must_be_py_files_or_zip_packages'))
         with tempfile.TemporaryDirectory(prefix="omniwatch-style-") as temporary:
             package = self._extract_style_package(
                 source_path, Path(temporary)

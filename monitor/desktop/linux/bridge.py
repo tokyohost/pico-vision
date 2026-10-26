@@ -1,5 +1,7 @@
 """跨平台 HTTP 管理页面与 WebSocket 调用代理。"""
 
+from i18n import get_locale, t, set_locale, error_response
+
 import asyncio
 import base64
 import json
@@ -135,6 +137,7 @@ class LinuxInvokeBridge:
                 "custom_data_configs": {},
                 "custom_data_enabled": {},
                 "collection_task_logs": True,
+                "locale": "zh-CN",
                 "screen_rotation": 0,
                 "lcd_brightness": 100,
                 "network_unit": "MB",
@@ -164,6 +167,7 @@ class LinuxInvokeBridge:
                 "http_port": server.port,
                 "http_auth": server.auth,
             })
+        set_locale(settings.get("locale", "zh-CN"))
         return settings
 
     def _bootstrap(self, payload=None):
@@ -209,10 +213,10 @@ class LinuxInvokeBridge:
             result = result_queue.get(timeout=timeout)
         except queue.Empty as error:
             raise RuntimeError(
-                "等待设备操作超时，请确认 Monitor 主循环仍在运行：{}".format(action)
+                t('message.device_operation_timed_out_check_monitor_s_main_loop').format(action)
             ) from error
         if result.get("status") != "ok":
-            raise RuntimeError(result.get("message") or "设备操作失败")
+            raise RuntimeError(result.get("message") or t('message.device_operation_failed'))
         return result
 
     @staticmethod
@@ -228,7 +232,7 @@ class LinuxInvokeBridge:
         ).strip()
         parsed = urlsplit(configured)
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
-            raise RuntimeError("尚未配置有效的插件市场地址")
+            raise RuntimeError(t('ui.no_valid_plugin_market_url_configured'))
         default_port = 443 if parsed.scheme == "https" else 80
         return parsed.scheme, parsed.hostname.lower(), parsed.port or default_port
 
@@ -236,11 +240,11 @@ class LinuxInvokeBridge:
         """限制插件下载地址必须与配置的市场地址同源。"""
         parsed = urlsplit(str(download_url or "").strip())
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise ValueError("插件下载地址必须使用 http:// 或 https://")
+            raise ValueError(t('message.plugin_download_url_must_use_http_or_https'))
         default_port = 443 if parsed.scheme == "https" else 80
         origin = parsed.scheme, parsed.hostname.lower(), parsed.port or default_port
         if origin != self._market_origin():
-            raise ValueError("插件下载地址与当前市场不同源，已拒绝安装")
+            raise ValueError(t('message.plugin_url_differs_from_the_market_origin_installation_refused'))
         return str(download_url).strip()
 
     def _set_market_state(self, status, progress=None, message="", result=None):
@@ -286,7 +290,7 @@ class LinuxInvokeBridge:
             bridge._validate_market_download_url(response.geturl())
             total = int(response.headers.get("Content-Length") or 0)
             if total > 20 * 1024 * 1024:
-                raise ValueError("插件包超过 20 MB 限制")
+                raise ValueError(t('message.plugin_package_exceeds_the_20_mb_limit'))
             received = 0
             with Path(target_path).open("wb") as output:
                 while True:
@@ -295,18 +299,18 @@ class LinuxInvokeBridge:
                         break
                     received += len(chunk)
                     if received > 20 * 1024 * 1024:
-                        raise ValueError("插件包超过 20 MB 限制")
+                        raise ValueError(t('message.plugin_package_exceeds_the_20_mb_limit'))
                     output.write(chunk)
                     if total:
                         bridge._set_market_state(
                             "running",
                             10 + int(received * 55 / total),
-                            "正在下载插件包：{}%".format(
+                            t('message.downloading_plugin_package').format(
                                 min(100, int(received * 100 / total))
                             ),
                         )
             if received == 0:
-                raise ValueError("市场返回了空插件包")
+                raise ValueError(t('message.market_returned_an_empty_plugin_package'))
 
     def _run_market_install(self, download_url, plugin_name, plugin_type):
         """在后台下载、校验并安装 Linux 市场资源。"""
@@ -316,14 +320,14 @@ class LinuxInvokeBridge:
         os.close(descriptor)
         package_path = Path(temporary_name)
         try:
-            self._set_market_state("running", 8, "开始下载“{}”".format(plugin_name))
+            self._set_market_state("running", 8, t('message.downloading').format(plugin_name))
             self._download_market_package(download_url, package_path)
-            self._set_market_state("running", 70, "下载完成，正在校验 ZIP 插件包")
+            self._set_market_state("running", 70, t('message.download_complete_validating_zip_plugin_package'))
             if not zipfile.is_zipfile(package_path):
-                raise ValueError("下载内容不是有效的 ZIP 插件包")
+                raise ValueError(t('message.download_is_not_a_valid_zip_plugin_package'))
             if plugin_type == "style":
                 if not self._device_status().get("connected"):
-                    raise RuntimeError("请先连接设备，连接成功后即可安装 Style 界面样式")
+                    raise RuntimeError(t('message.connect_a_device_before_installing_a_screen_style'))
                 result = self._upload_style_source(
                     package_path,
                     {"overwrite": True, "existingNames": []},
@@ -338,14 +342,14 @@ class LinuxInvokeBridge:
             self._set_market_state(
                 "success",
                 100,
-                "插件“{}”安装完成".format(result.get("chineseName") or plugin_name),
+                t('message.plugin_installed').format(result.get("chineseName") or plugin_name),
                 result=result,
             )
         except Exception as error:
             self._set_market_state(
                 "error",
                 None,
-                "插件“{}”安装失败：{}".format(plugin_name, error),
+                t('message.plugin_installation_failed').format(plugin_name, error),
             )
             LOGGER.exception("Linux HTTP 插件市场安装失败")
         finally:
@@ -354,21 +358,21 @@ class LinuxInvokeBridge:
     def _market_install(self, payload):
         """校验市场安装请求并启动唯一后台任务。"""
         download_url = self._validate_market_download_url(payload.get("downloadUrl"))
-        plugin_name = str(payload.get("pluginName") or "未命名插件").strip()[:120]
+        plugin_name = str(payload.get("pluginName") or t('ui.unnamed_plugin')).strip()[:120]
         plugin_type = str(payload.get("pluginType") or "plugin").strip()
         if plugin_type not in ("plugin", "style"):
-            raise ValueError("市场资源类型必须是 plugin 或 style")
+            raise ValueError(t('message.market_resource_type_must_be_plugin_or_style'))
         if plugin_type == "style" and not self._device_status().get("connected"):
-            raise RuntimeError("请先连接设备，连接成功后即可安装 Style 界面样式")
+            raise RuntimeError(t('message.connect_a_device_before_installing_a_screen_style'))
         with self._market_lock:
             if self._market_state["busy"]:
-                raise RuntimeError("已有插件正在下载安装，请稍候")
+                raise RuntimeError(t('message.another_plugin_is_being_installed_please_wait'))
             self._market_state.update({
                 "busy": True,
                 "status": "running",
                 "progress": 2,
-                "message": "正在准备下载安装",
-                "logs": ["正在准备下载安装"],
+                "message": t('message.preparing_download_and_installation'),
+                "logs": [t('message.preparing_download_and_installation')],
                 "result": None,
             })
         threading.Thread(
@@ -410,15 +414,15 @@ class LinuxInvokeBridge:
             "",
         )
         if first_content_line.startswith("PICO_MONITOR_"):
-            raise RuntimeError("旧版 EnvironmentFile 不支持从 HTTP 页面写回配置")
+            raise RuntimeError(t('message.legacy_environmentfile_cannot_be_updated_through_http'))
         try:
             import yaml
 
             document = yaml.safe_load(text) or {}
         except ImportError as error:
-            raise RuntimeError("保存 Linux 配置需要安装 PyYAML") from error
+            raise RuntimeError(t('message.pyyaml_is_required_to_save_linux_settings')) from error
         if not isinstance(document, dict):
-            raise RuntimeError("Linux YAML 配置根节点必须是对象")
+            raise RuntimeError(t('message.linux_yaml_settings_root_must_be_an_object'))
         settings = self._settings_snapshot()
         field_map = {
             "port": ("serial", "port"),
@@ -440,6 +444,7 @@ class LinuxInvokeBridge:
             "collection_task_logs": ("collection_tasks", "logs_enabled"),
             "custom_data_configs": ("custom_data", "configs"),
             "custom_data_enabled": ("custom_data", "enabled"),
+            "locale": ("screen", "locale"),
             "screen_rotation": ("screen", "rotation"),
             "lcd_brightness": ("screen", "lcd_brightness"),
             "network_unit": ("screen", "unit"),
@@ -457,7 +462,7 @@ class LinuxInvokeBridge:
         for name, location in field_map.items():
             section = document.setdefault(location[0], {})
             if not isinstance(section, dict):
-                raise RuntimeError("Linux 配置节点不是对象：{}".format(location[0]))
+                raise RuntimeError(t('message.linux_settings_node_is_not_an_object').format(location[0]))
             section[location[1]] = settings.get(name)
         temporary = path.with_suffix(path.suffix + ".tmp")
         temporary.write_text(
@@ -472,7 +477,7 @@ class LinuxInvokeBridge:
         """校验并热更新 Linux 运行配置，同时尽量写回 YAML 文件。"""
         incoming = payload.get("settings")
         if not isinstance(incoming, dict):
-            raise ValueError("缺少有效配置")
+            raise ValueError(t('message.valid_settings_are_required'))
         with self._settings_lock:
             current = self._settings_snapshot()
             updated = dict(current)
@@ -482,7 +487,7 @@ class LinuxInvokeBridge:
             if market_url and (
                 parsed.scheme not in ("http", "https") or not parsed.netloc
             ):
-                raise ValueError("插件市场地址必须是有效的 http:// 或 https:// 地址")
+                raise ValueError(t('message.plugin_market_url_must_be_a_valid_http_or'))
             updated["market_url"] = market_url
             runtime_fields = {
                 name: updated[name]
@@ -493,14 +498,17 @@ class LinuxInvokeBridge:
                     "interval", "json_chunk_size", "adaptive_transmit", "reconnect_interval", "serial_probe_interval",
                     "lan_probe_port", "lan_probe_path", "lan_probe_timeout", "lan_probe_max_workers",
                     "collection_task_intervals", "custom_data_configs", "custom_data_enabled",
-                    "collection_task_logs", "screen_rotation", "lcd_brightness", "network_unit",
+                    "collection_task_logs", "locale", "screen_rotation", "lcd_brightness", "network_unit",
                     "lcd_style", "idle_enabled", "idle_style", "idle_timeout", "qbittorrent_enabled",
                     "qbittorrent_address", "qbittorrent_username", "qbittorrent_password",
                     "qbittorrent_interval", "dev",
                 )
                 if name in updated
             }
+            if updated.get("locale") not in ("zh-CN", "en-US"):
+                raise ValueError(t("error.locale"))
             self._service.apply_runtime_config(runtime_fields)
+            set_locale(updated.get("locale", "zh-CN"))
             self._service.arguments.market_url = market_url
             persisted = self._save_linux_settings()
         return {"saved": True, "persisted": persisted}
@@ -545,7 +553,7 @@ class LinuxInvokeBridge:
                 "previewFilename": definition.preview_filename,
                 "previewDataUrl": preview_data_url,
                 "path": str(definition.plugin_directory),
-                "environment": manager.environment_status(definition),
+                "environment": manager.environment_status(definition, locale=get_locale()),
                 "enabled": bool(self._service.arguments.custom_data_enabled.get(
                     definition.name, state.runtime_enabled
                 )),
@@ -595,14 +603,14 @@ class LinuxInvokeBridge:
         """导入浏览器上传的 ZIP 数据插件。"""
         path = str(payload.get("sourcePath") or "").strip()
         if not path:
-            raise ValueError("请先从浏览器选择插件 ZIP")
+            raise ValueError(t('message.select_a_plugin_zip_in_the_browser_first'))
         return self._import_custom_data_source(path, payload)
 
     def _custom_data_import_directory(self, payload):
         """导入浏览器按目录上传的自定义数据插件。"""
         path = str(payload.get("sourcePath") or "").strip()
         if not path:
-            raise ValueError("请先从浏览器选择插件目录")
+            raise ValueError(t('message.select_a_plugin_directory_in_the_browser_first'))
         return self._import_custom_data_source(path, payload)
 
     def _custom_data_set_enabled(self, payload):
@@ -612,7 +620,7 @@ class LinuxInvokeBridge:
         name = str(payload.get("name") or "").strip()
         definitions = {item.name: item for item in self._service.custom_data_manager.list_definitions()}
         if name not in definitions:
-            raise ValueError("插件不存在或尚未加载")
+            raise ValueError(t('message.plugin_not_found_or_not_loaded'))
         enabled = dict(custom_data.normalize_plugin_enabled(
             getattr(self._service.arguments, "custom_data_enabled", {})
         ))
@@ -654,9 +662,9 @@ class LinuxInvokeBridge:
             None,
         )
         if definition is None or not definition.detail_path:
-            raise ValueError("插件不存在或没有绑定简介 HTML")
+            raise ValueError(t('message.plugin_not_found_or_no_description_html_linked'))
         return {
-            "title": "{} · 插件简介".format(definition.zh_name),
+            "title": t('message.plugin_description').format(definition.zh_name),
             "content": definition.detail_path.read_text(encoding="utf-8-sig"),
         }
 
@@ -679,7 +687,7 @@ class LinuxInvokeBridge:
         }
         definition = definitions.get(str(Path(path).resolve()))
         if definition is None:
-            raise ValueError("插件不存在或路径不属于 customData 目录")
+            raise ValueError(t('message.plugin_not_found_or_its_path_is_outside_customdata'))
         enabled = dict(getattr(self._service.arguments, "custom_data_enabled", {}) or {})
         enabled[definition.name] = False
         self._service.arguments.custom_data_enabled = enabled
@@ -720,7 +728,7 @@ class LinuxInvokeBridge:
         existing_names = set(payload.get("existingNames") or ())
         if validated.name in existing_names and not payload.get("overwrite"):
             raise FileExistsError(
-                "OmniWatch 中已存在样式名 {} 和文件 {}".format(
+                t('message.style_and_file_already_exist_in_omniwatch').format(
                     validated.name, validated.filename
                 )
             )
@@ -745,7 +753,7 @@ class LinuxInvokeBridge:
         if source_path.suffix.lower() == ".py":
             return self._upload_style_python(source_path, payload)
         if source_path.suffix.lower() != ".zip":
-            raise ValueError("屏幕样式仅支持 py 文件或 zip 包")
+            raise ValueError(t('message.screen_styles_must_be_py_files_or_zip_packages'))
         with tempfile.TemporaryDirectory(prefix="omniwatch-style-") as temporary:
             package = extract_style_package(source_path, Path(temporary))
             result = self._upload_style_python(package["style"], payload)
@@ -758,7 +766,7 @@ class LinuxInvokeBridge:
         """处理浏览器上传的 Python 样式或 ZIP 样式包。"""
         path = str(payload.get("sourcePath") or "").strip()
         if not path:
-            raise ValueError("请先从浏览器选择 PY 或 ZIP 样式")
+            raise ValueError(t('message.select_a_py_or_zip_style_in_the_browser'))
         return self._upload_style_source(path, payload)
 
     def _style_delete(self, payload):
@@ -784,7 +792,7 @@ class LinuxInvokeBridge:
             None,
         )
         if definition is None or not definition.bind_style or not definition.style_path:
-            raise ValueError("该插件没有绑定可同步的屏幕样式")
+            raise ValueError(t('message.this_plugin_has_no_linked_screen_style'))
         existing_names = {
             str(item.get("name") or "")
             for item in self._style_catalog()
@@ -857,7 +865,7 @@ class LinuxInvokeBridge:
         """请求 Linux Monitor 立即执行一次设备探测。"""
         del payload
         self._service.request_active_probe()
-        return {"device": self._device_status(), "log": "已请求主循环立即探测设备"}
+        return {"device": self._device_status(), "log": t('message.requested_immediate_device_scan')}
 
     def _device_screenshot(self, payload):
         """通过 Linux Monitor 主循环保存设备截图。"""
@@ -884,7 +892,7 @@ class LinuxInvokeBridge:
             device = str(getattr(item, "device", "") or "").strip()
             if device:
                 ports.append({"device": device, "label": "{} - {}".format(
-                    device, str(getattr(item, "description", "未知设备") or "未知设备")
+                    device, str(getattr(item, "description", t('message.unknown_device')) or t('message.unknown_device'))
                 )})
         current = str(getattr(self._service.client, "port_name", "") or "")
         return {"ports": ports, "recommendedPort": current if current else (ports[0]["device"] if ports else "")}
@@ -895,7 +903,7 @@ class LinuxInvokeBridge:
 
         path = Path(str(payload.get("sourcePath") or "").strip())
         if path.suffix.lower() != ".zip":
-            raise ValueError("请选择 ZIP 格式的设备固件全量包")
+            raise ValueError(t('message.select_a_zip_firmware_package'))
         package = PicoFirmwareArchive(path)
         try:
             file_count = len(package.files)
@@ -911,23 +919,23 @@ class LinuxInvokeBridge:
         """安排 Linux 主循环安装已上传的 Pico 固件包。"""
         path = str(payload.get("sourcePath") or self._selected_firmware_path or "").strip()
         if not path:
-            raise ValueError("请先选择设备固件全量包")
+            raise ValueError(t('message.select_a_full_device_firmware_package_first'))
         if not self._service.client.is_connected:
-            raise RuntimeError("设备未连接，无法更新固件")
+            raise RuntimeError(t('message.device_disconnected_cannot_update_firmware'))
         current_port = str(getattr(self._service.client, "port_name", "") or "")
         selected_port = str(payload.get("port") or "").strip()
         if current_port.lower().startswith(("ws://", "wss://")):
-            raise RuntimeError("Linux 固件更新需要当前设备使用 USB CDC 连接")
+            raise RuntimeError(t('message.linux_firmware_update_requires_a_usb_cdc_connection'))
         if selected_port and current_port and selected_port != current_port:
-            raise RuntimeError("所选固件串口不是当前 Monitor 已连接的设备串口")
+            raise RuntimeError(t('message.selected_firmware_port_is_not_the_currently_connected_monitor'))
         state = self._update_states["firmware"]
         if state["busy"]:
-            raise RuntimeError("已有固件更新任务正在执行，请稍候")
+            raise RuntimeError(t('message.another_firmware_update_is_running_please_wait'))
         state.update({
             "busy": True,
             "status": "running",
             "progress": 5,
-            "message": "正在通过 Monitor 主循环更新固件",
+            "message": t('message.updating_firmware_through_the_monitor_main_loop'),
             "logs": [],
         })
         result_queue = queue.Queue()
@@ -945,7 +953,7 @@ class LinuxInvokeBridge:
             "busy": False,
             "status": "success",
             "progress": 100,
-            "message": "设备固件更新完成",
+            "message": t('message.device_firmware_updated'),
         })
         return {
             "started": True,
@@ -984,21 +992,21 @@ class LinuxInvokeBridge:
         """安排 Linux 主循环执行 ESP32-S3 SDK 镜像刷写。"""
         image_path = str(self._selected_sdk_path or "").strip()
         if not image_path:
-            raise ValueError("请先选择 SDK 镜像")
+            raise ValueError(t('ui.select_an_sdk_image_first'))
         force = bool(payload.get("force"))
         port = str(payload.get("port") or "").strip()
         if not force:
             port = port or str(getattr(self._service.client, "port_name", "") or "")
         if not port:
-            raise ValueError("找不到可用于 SDK 刷写的串口")
+            raise ValueError(t('message.no_serial_port_available_for_sdk_flashing'))
         state = self._update_states["sdk"]
         if state["busy"]:
-            raise RuntimeError("已有 SDK 更新任务正在执行，请稍候")
+            raise RuntimeError(t('message.another_sdk_update_is_running_please_wait'))
         state.update({
             "busy": True,
             "status": "running",
             "progress": 5,
-            "message": "正在准备 SDK 刷写",
+            "message": t('message.preparing_sdk_flash'),
             "logs": [],
         })
         result_queue = queue.Queue()
@@ -1020,12 +1028,12 @@ class LinuxInvokeBridge:
             "busy": False,
             "status": "success",
             "progress": 100,
-            "message": "SDK 刷写完成",
+            "message": t('message.sdk_flashed'),
         })
         return {
             "busy": False,
             "status": "success",
-            "message": "SDK 刷写完成",
+            "message": t('message.sdk_flashed'),
             "data": self._response_data(result),
         }
 
@@ -1034,7 +1042,7 @@ class LinuxInvokeBridge:
         category = str(payload.get("category") or "").strip()
         if category:
             if category not in self._update_states:
-                raise ValueError("不支持的更新状态类别：{}".format(category))
+                raise ValueError(t('message.unsupported_update_status_category').format(category))
             return self._update_state_snapshot(self._update_states[category])
         return {
             name: self._update_state_snapshot(state)
@@ -1075,12 +1083,12 @@ class LinuxInvokeBridge:
             return {
                 "category": category,
                 "currentVersion": self._device_status().get("firmware_version") if category == "firmware" else self._device_status().get("sdk_version"),
-                "latestVersion": "不适用",
+                "latestVersion": t('message.not_applicable'),
                 "updateAvailable": False,
                 "applicable": False,
                 "assetAvailable": False,
                 "assetName": "",
-                "notes": "Linux HTTP 页面请使用浏览器上传本地设备更新包。",
+                "notes": t('message.upload_the_local_device_update_package_through_the_browser'),
             }
         if not GITHUB_REPOSITORY or MONITOR_VERSION == "development":
             return {
@@ -1091,7 +1099,7 @@ class LinuxInvokeBridge:
                 "applicable": False,
                 "assetAvailable": False,
                 "assetName": "",
-                "notes": "开发版本没有可用的 Linux Release。",
+                "notes": t('message.no_linux_release_is_available_for_development_builds'),
             }
         request = urllib.request.Request(
             "https://api.github.com/repos/{}/releases/latest".format(GITHUB_REPOSITORY),
@@ -1124,12 +1132,12 @@ class LinuxInvokeBridge:
 
         category = str(payload.get("category") or "").strip()
         if category != "application":
-            raise RuntimeError("Linux HTTP 页面请先上传并校验设备更新包")
+            raise RuntimeError(t('message.upload_and_validate_the_device_update_package_first'))
         state = self._update_states[category]
         if state["busy"]:
-            raise RuntimeError("已有更新任务正在执行，请稍候")
+            raise RuntimeError(t('message.another_update_is_running_please_wait'))
         self._set_update_state(
-            category, "running", 1, "Linux 应用更新已启动，正在准备", True
+            category, "running", 1, t('message.linux_application_update_started_preparing'), True
         )
 
         def install():
@@ -1145,8 +1153,8 @@ class LinuxInvokeBridge:
                     GITHUB_REPOSITORY, MONITOR_VERSION
                 ).update(progress_callback=report_progress)
                 message = (
-                    "Linux DEB 更新已完成"
-                    if updated else "OmniWatch Linux 应用已是最新版本"
+                    t('message.linux_deb_update_completed')
+                    if updated else t('message.omniwatch_linux_is_up_to_date')
                 )
                 self._set_update_state(
                     category, "success", 100, message
@@ -1156,7 +1164,7 @@ class LinuxInvokeBridge:
                     category,
                     "error",
                     None,
-                    "Linux 应用更新失败：{}".format(error),
+                    t('message.linux_application_update_failed').format(error),
                 )
                 LOGGER.exception("Linux HTTP 应用更新失败")
 
@@ -1198,7 +1206,7 @@ class LinuxInvokeBridge:
         configured = str(getattr(self._service.arguments, "market_url", "") or "").strip()
         parsed = urlsplit(configured)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise RuntimeError("请先在设置中配置有效的插件市场/服务端地址")
+            raise RuntimeError(t('message.configure_a_valid_plugin_market_server_url_in_settings'))
         path = parsed.path.rstrip("/")
         if path.endswith("/market"):
             path = path[:-len("/market")]
@@ -1221,9 +1229,9 @@ class LinuxInvokeBridge:
         except urllib.error.HTTPError as error:
             result = json.loads(error.read().decode("utf-8"))
         except (urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError) as error:
-            raise RuntimeError("无法连接设备注册服务：{}".format(error)) from error
+            raise RuntimeError(t('message.cannot_connect_to_device_registration_service').format(error)) from error
         if int(result.get("code", 500)) != 200:
-            raise RuntimeError(result.get("msg") or "设备注册服务请求失败")
+            raise RuntimeError(result.get("msg") or t('message.device_registration_service_request_failed'))
         return result
 
     def _registration_status(self, payload):
@@ -1240,7 +1248,7 @@ class LinuxInvokeBridge:
 
         connection = self._device_status()
         if not connection.get("connected"):
-            raise RuntimeError("设备未连接，无法立即注册")
+            raise RuntimeError(t('message.device_disconnected_cannot_register_now'))
         uuid = str(connection.get("device_id") or "").strip()
         encoded = str(payload.get("registrationCode") or "").strip()
         try:
@@ -1248,18 +1256,19 @@ class LinuxInvokeBridge:
                 base64_module.b64decode(encoded + "=" * (-len(encoded) % 4), validate=True).decode("utf-8")
             )
         except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise ValueError("注册码不是有效的 Base64 JSON") from error
+            raise ValueError(t('message.registration_code_is_not_valid_base64_json_2')) from error
         if not isinstance(registration, dict) or str(registration.get("uuid") or "").strip() != uuid:
-            raise ValueError("注册码绑定的 UUID 与当前设备不一致")
+            raise ValueError(t('message.registration_uuid_does_not_match_this_device_2'))
         result = self._registration_request(
             "/device/registration",
             method="POST",
             body={"uuid": uuid, "activationCode": registration.get("activationCode")},
         )
-        return {"registered": True, "uuid": uuid, "message": result.get("msg") or "设备注册成功"}
+        return {"registered": True, "uuid": uuid, "message": result.get("msg") or t('ui.device_registered')}
 
     def invoke(self, action, payload=None):
         """执行 Linux 已支持的 action，其余动作返回明确的不支持响应。"""
+        set_locale(getattr(self._service.arguments, "locale", "zh-CN"))
         payload = payload if isinstance(payload, dict) else {}
         handlers = {
             "app.bootstrap": self._bootstrap,
@@ -1314,10 +1323,10 @@ class LinuxInvokeBridge:
         if handler is None:
             return {
                 "ok": False,
-                "message": "Linux HTTP 管理页面暂不支持此操作：{}".format(action),
+                "message": t('message.this_action_is_not_supported_by_linux_http_management').format(action),
             }
         try:
             return {"ok": True, "data": handler(payload)}
         except Exception as error:
             LOGGER.exception("执行 Linux HTTP 管理动作失败：%s", action)
-            return {"ok": False, "message": str(error) or "操作失败"}
+            return error_response(error)

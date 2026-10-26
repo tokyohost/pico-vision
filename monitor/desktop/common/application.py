@@ -1,5 +1,7 @@
 """桌面应用公共状态、设备操作和菜单业务逻辑。"""
 
+from i18n import t, set_locale
+
 import base64
 import json
 import logging
@@ -83,10 +85,12 @@ class DesktopApplication(WorkerControllerMixin, LogServiceMixin, WebUiMixin):
         self.settings_store = TraySettingsStore(data_directory / "settings.json")
         settings_existed = self.settings_store.path.exists()
         self.settings = self.settings_store.load()
+        set_locale(self.settings.get("locale", "zh-CN"))
         # 新增随机 Auth 等默认配置必须在首次读取后落盘，确保重启后保持稳定。
         self.settings_store.save(self.settings)
         if not settings_existed:
             self.settings = settings_from_arguments(self.worker_arguments, self.settings)
+            set_locale(self.settings.get("locale", "zh-CN"))
             self.settings_store.save(self.settings)
 
     def _is_dev_mode(self, item=None):
@@ -101,12 +105,12 @@ class DesktopApplication(WorkerControllerMixin, LogServiceMixin, WebUiMixin):
         self.settings_store.save(self.settings)
         applied = self._apply_dev_settings()
         icon.update_menu()
-        state = "开启" if self.settings["dev"] else "关闭"
+        state = t('message.enabled') if self.settings["dev"] else t('ui.close')
         if applied:
-            self.icon.notify("开发模式已{}".format(state), APPLICATION_NAME)
+            self.icon.notify(t('message.developer_mode').format(state), APPLICATION_NAME)
         else:
             self.icon.notify(
-                "开发模式已{}，后台监控下次启动时生效".format(state),
+                t('message.developer_mode_applies_when_monitor_next_starts').format(state),
                 APPLICATION_NAME,
             )
 
@@ -166,7 +170,7 @@ class DesktopApplication(WorkerControllerMixin, LogServiceMixin, WebUiMixin):
                     details = "\n".join(recent_output).strip()
                     raise RuntimeError(
                         details[-2000:] if details else
-                        "mpremote 固件更新进程异常退出：{}".format(return_code)
+                        t('message.mpremote_firmware_update_exited_unexpectedly').format(return_code)
                     )
         finally:
             package.close()
@@ -180,7 +184,7 @@ class DesktopApplication(WorkerControllerMixin, LogServiceMixin, WebUiMixin):
             self.settings_store.save(self.settings)
             self._apply_display_settings()
             icon.update_menu()
-            self.icon.notify("已切换为{}".format(style_names(self.settings, idle=False)[style]), APPLICATION_NAME)
+            self.icon.notify(t('message.switched_to').format(style_names(self.settings, idle=False)[style]), APPLICATION_NAME)
         return select
 
     def _style_checked(self, style):
@@ -220,24 +224,24 @@ class DesktopApplication(WorkerControllerMixin, LogServiceMixin, WebUiMixin):
 
         style_menu = pystray.Menu(self._style_menu_items)
         return pystray.Menu(
-            pystray.MenuItem("配置...", self._show_settings, default=pystray.Icon.HAS_DEFAULT_ACTION),
-            pystray.MenuItem("界面样式", style_menu),
-            pystray.MenuItem("自定义屏幕", self._show_custom_style),
-            pystray.MenuItem("自定义数据", self._show_custom_data),
-            pystray.MenuItem("屏幕旋转", pystray.Menu(
+            pystray.MenuItem(lambda item: t('message.settings'), self._show_settings, default=pystray.Icon.HAS_DEFAULT_ACTION),
+            pystray.MenuItem(lambda item: t('ui.screen_style'), style_menu),
+            pystray.MenuItem(lambda item: t('message.custom_screen'), self._show_custom_style),
+            pystray.MenuItem(lambda item: t('message.custom_data'), self._show_custom_data),
+            pystray.MenuItem(lambda item: t('ui.screen_rotation'), pystray.Menu(
                 pystray.MenuItem("0°", self._set_rotation(0), checked=lambda item: self.settings["screen_rotation"] == 0, radio=pystray.Icon.HAS_MENU_RADIO),
                 pystray.MenuItem("180°", self._set_rotation(180), checked=lambda item: self.settings["screen_rotation"] == 180, radio=pystray.Icon.HAS_MENU_RADIO),
             )),
-            pystray.MenuItem("屏幕截图", self._take_screenshot),
-            pystray.MenuItem("打开日志", self._show_log),
-            pystray.MenuItem("设备管理", self._show_device_probe),
-            pystray.MenuItem("日志导出", self._export_log),
-            pystray.MenuItem("检查更新", self._check_for_updates),
-            pystray.MenuItem("关于应用", self._show_about),
-            pystray.MenuItem("Dev 模式", self._toggle_dev_mode, checked=self._is_dev_mode),
-            pystray.MenuItem("开机自动启动", self._toggle_autostart, checked=self._is_autostart),
+            pystray.MenuItem(lambda item: t('ui.screenshot'), self._take_screenshot),
+            pystray.MenuItem(lambda item: t('message.open_logs'), self._show_log),
+            pystray.MenuItem(lambda item: t('ui.devices'), self._show_device_probe),
+            pystray.MenuItem(lambda item: t('message.export_logs'), self._export_log),
+            pystray.MenuItem(lambda item: t('ui.updates'), self._check_for_updates),
+            pystray.MenuItem(lambda item: t('message.about_application'), self._show_about),
+            pystray.MenuItem(lambda item: t('message.developer_mode_2'), self._toggle_dev_mode, checked=self._is_dev_mode),
+            pystray.MenuItem(lambda item: t('message.start_at_login'), self._toggle_autostart, checked=self._is_autostart),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("退出", self._exit),
+            pystray.MenuItem(lambda item: t('message.exit'), self._exit),
         )
 
     def request_custom_style_catalog(self):
@@ -262,13 +266,13 @@ class DesktopApplication(WorkerControllerMixin, LogServiceMixin, WebUiMixin):
         }
         if validated.filename in existing_filenames and not overwrite:
             raise FileExistsError(
-                "OmniWatch 中已存在样式名 {} 和文件 {}".format(
+                t('message.style_and_file_already_exist_in_omniwatch').format(
                     validated.name, validated.filename,
                 )
             )
         process = self.worker_process
         if process is None or process.poll() is not None or process.stdin is None:
-            raise RuntimeError("OmniWatch 未运行，无法上传样式")
+            raise RuntimeError(t('message.omniwatch_is_not_running_cannot_upload_style'))
         payload = {
             "filename": validated.filename,
             "style_name": validated.name,
@@ -288,14 +292,14 @@ class DesktopApplication(WorkerControllerMixin, LogServiceMixin, WebUiMixin):
         except (BrokenPipeError, OSError) as error:
             if upload_active is not None:
                 upload_active.clear()
-            raise RuntimeError("自定义样式上传请求发送失败") from error
+            raise RuntimeError(t('message.failed_to_send_custom_style_upload_request')) from error
         return validated
 
     def request_custom_style_delete(self, style_name, filename):
         """向工作进程发送自定义样式删除请求。"""
         process = self.worker_process
         if process is None or process.poll() is not None or process.stdin is None:
-            raise RuntimeError("OmniWatch 未运行，无法删除样式")
+            raise RuntimeError(t('message.omniwatch_is_not_running_cannot_delete_style'))
         payload = {"style_name": style_name, "filename": filename}
         try:
             process.stdin.write(
@@ -305,7 +309,7 @@ class DesktopApplication(WorkerControllerMixin, LogServiceMixin, WebUiMixin):
             )
             process.stdin.flush()
         except (BrokenPipeError, OSError) as error:
-            raise RuntimeError("自定义样式删除请求发送失败") from error
+            raise RuntimeError(t('message.failed_to_send_custom_style_deletion_request')) from error
 
     def _reload_style_catalog(self):
         """从配置文件同步 Pico 样式清单及当前选择。"""

@@ -1,4 +1,6 @@
 <script setup>
+import { t } from '../i18n'
+
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '../bridge'
@@ -21,25 +23,25 @@ const logElements = {}
 const updateItems = computed(() => [
   {
     key: 'firmware',
-    title: '设备固件更新',
+    title: t('ui.device_firmware_update'),
     icon: 'Cpu',
-    description: '检查设备中运行的 OmniWatch Python 固件。',
-    current: props.device.firmware_version || '等待设备连接',
+    description: t('ui.check_the_omniwatch_python_firmware_running_on_the_device'),
+    current: props.device.firmware_version || t('ui.waiting_for_device_connection'),
     disabled: props.device.connected !== true,
   },
   {
     key: 'sdk',
-    title: '设备 SDK 更新',
+    title: t('ui.device_sdk_update'),
     icon: 'SetUp',
-    description: '检查 SDK 镜像。',
-    current: props.device.sdk_version || '等待设备连接',
+    description: t('ui.check_the_sdk_image'),
+    current: props.device.sdk_version || t('ui.waiting_for_device_connection'),
     disabled: props.device.connected !== true,
   },
   {
     key: 'application',
-    title: 'OmniWatch 应用更新',
+    title: t('ui.omniwatch_application_update'),
     icon: 'Monitor',
-    description: `检查 ${{ win32: 'Windows', darwin: 'macOS', linux: 'Linux' }[props.platform] || '当前平台'} 桌面控制中心安装包。`,
+    description: t('ui.check_the_value_desktop_control_center_package', { value0: { win32: 'Windows', darwin: 'macOS', linux: 'Linux' }[props.platform] || t('common.current_platform') }),
     current: props.applicationVersion || 'development',
     disabled: false,
   },
@@ -59,11 +61,11 @@ function resultTagType(state) {
  * 返回更新检查结果对应的中文状态。
  */
 function resultText(state) {
-  if (state.loading) return '正在检查'
-  if (state.error) return '检查失败'
-  if (!state.result) return '尚未检查'
-  if (state.result.applicable === false) return '当前设备不适用'
-  return state.result.updateAvailable ? '发现新版本' : '已是最新版本'
+  if (state.loading) return t('ui.checking')
+  if (state.error) return t('ui.check_failed')
+  if (!state.result) return t('ui.not_checked')
+  if (state.result.applicable === false) return t('ui.not_applicable_to_this_device')
+  return state.result.updateAvailable ? t('ui.new_version_available') : t('ui.up_to_date')
 }
 
 /**
@@ -91,8 +93,8 @@ async function checkAllUpdates() {
     if (!item.disabled) await checkUpdate(item.key, false)
   }
   const errorCount = Object.values(checks).filter((state) => state.error).length
-  if (errorCount) ElMessage.warning(`更新检查完成，${errorCount} 项检查失败`)
-  else ElMessage.success('更新检查已完成')
+  if (errorCount) ElMessage.warning(t('ui.update_check_completed_value_checks_failed', { value0: errorCount }))
+  else ElMessage.success(t('ui.update_check_completed'))
 }
 
 /**
@@ -103,9 +105,9 @@ async function installUpdate(category) {
   if (category !== 'application') {
     try {
       await ElMessageBox.confirm(
-        '更新期间请勿断开设备、关闭电源或退出 OmniWatch。是否立即更新？',
-        '确认立即更新',
-        { confirmButtonText: '立即更新', cancelButtonText: '取消', type: 'warning' },
+        t('ui.do_not_disconnect_the_device_power_off_or_exit'),
+        t('ui.confirm_update'),
+        { confirmButtonText: t('ui.update_now'), cancelButtonText: t('ui.cancel'), type: 'warning' },
       )
     } catch {
       return
@@ -115,7 +117,7 @@ async function installUpdate(category) {
   try {
     await invoke('update.install', { category })
     await refreshUpdateStatus()
-    ElMessage.success(category === 'application' ? '应用更新下载已启动' : '更新任务已启动')
+    ElMessage.success(category === 'application' ? t('ui.application_update_download_started') : t('ui.update_task_started'))
   } catch (error) {
     ElMessage.error(error?.message || String(error))
   } finally {
@@ -161,9 +163,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="update-toolbar">
-    <el-button type="primary" :loading="Object.values(checks).some((state) => state.loading)" @click="checkAllUpdates">
-      检查全部更新
-    </el-button>
+    <el-button type="primary" :loading="Object.values(checks).some((state) => state.loading)" @click="checkAllUpdates">{{ t('ui.check_all_updates') }}</el-button>
   </div>
 
   <div class="update-grid">
@@ -179,13 +179,13 @@ onBeforeUnmount(() => {
 
         <div class="update-version-list">
           <div class="update-version-row">
-            <span>当前版本</span>
+            <span>{{ t('ui.current_version') }}</span>
             <strong :title="checks[item.key].result?.currentVersion || item.current">
               {{ checks[item.key].result?.currentVersion || item.current }}
             </strong>
           </div>
           <div class="update-version-row">
-            <span>最新版本</span>
+            <span>{{ t('ui.latest_version') }}</span>
             <strong :title="checks[item.key].result?.latestVersion || '--'">
               {{ checks[item.key].result?.latestVersion || '--' }}
             </strong>
@@ -203,20 +203,20 @@ onBeforeUnmount(() => {
               :disabled="item.disabled"
               :loading="checks[item.key].loading"
               @click="checkUpdate(item.key)"
-            >立即检查</el-button>
+            >{{ t('ui.check_now') }}</el-button>
             <el-button
               v-if="checks[item.key].result?.updateAvailable && checks[item.key].result?.assetAvailable"
               type="danger"
               :loading="checks[item.key].installing"
               @click="installUpdate(item.key)"
-            >立即更新</el-button>
+            >{{ t('ui.update_now') }}</el-button>
           </div>
         </div>
       </div>
 
       <el-alert
         v-if="item.disabled"
-        title="请先连接设备后再检查"
+        :title="t('ui.connect_a_device_before_checking')"
         type="info"
         :closable="false"
         show-icon
@@ -229,24 +229,23 @@ onBeforeUnmount(() => {
         show-icon
       />
       <template v-else-if="checks[item.key].result">
-        <p v-if="checks[item.key].result.assetName" class="update-asset">
-          发布资源：{{ checks[item.key].result.assetName }}
+        <p v-if="checks[item.key].result.assetName" class="update-asset">{{ t('ui.release_asset') }}{{ checks[item.key].result.assetName }}
         </p>
         <el-alert
           v-if="checks[item.key].result.updateAvailable && !checks[item.key].result.assetAvailable"
-          title="发现新版本，但当前发布中缺少适配资源"
+          :title="t('ui.new_version_available_but_no_compatible_asset_was_found')"
           type="warning"
           :closable="false"
           show-icon
         />
         <details v-if="checks[item.key].result.notes" class="update-notes">
-          <summary>查看更新说明</summary>
+          <summary>{{ t('ui.release_notes') }}</summary>
           <pre>{{ checks[item.key].result.notes }}</pre>
         </details>
       </template>
       <div v-if="checks[item.key].status !== 'idle'" class="update-runtime">
         <div class="update-runtime-heading">
-          <span>{{ checks[item.key].message || '正在准备更新' }}</span>
+          <span>{{ checks[item.key].message || t('ui.preparing_update') }}</span>
           <strong>{{ checks[item.key].progress }}%</strong>
         </div>
         <el-progress
@@ -259,7 +258,7 @@ onBeforeUnmount(() => {
           :ref="(element) => setLogElement(item.key, element)"
           :content="checks[item.key].logs"
           pre-class="update-live-log"
-          copy-success-text="更新日志已复制"
+          :copy-success-text="t('ui.update_logs_copied')"
         />
       </div>
     </el-card>

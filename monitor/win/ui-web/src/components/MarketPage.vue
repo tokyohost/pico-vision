@@ -1,4 +1,6 @@
 <script setup>
+import { t } from '../i18n'
+
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { invoke } from '../bridge'
@@ -55,7 +57,7 @@ async function loadInstalledPlugins() {
     })).filter((item) => item.key)
   } catch (error) {
     installedPlugins.value = []
-    ElMessage.warning(`读取已安装插件失败：${error?.message || String(error)}`)
+    ElMessage.warning(t('ui.failed_to_read_installed_plugins_value', { value0: error?.message || String(error) }))
   } finally {
     inventoryReady.value = true
   }
@@ -84,14 +86,14 @@ function injectMonitorHook() {
  * 在全局进度日志弹框中轮询插件下载安装状态。
  */
 async function installMarketPlugin(payload) {
-  const pluginName = String(payload?.pluginName || '未命名插件')
+  const pluginName = String(payload?.pluginName || t('ui.unnamed_plugin'))
   const pluginType = payload?.pluginType === 'style' ? 'style' : 'plugin'
   const isStyle = pluginType === 'style'
   await runWithGlobalLoading({
-    title: `正在安装“${pluginName}”`,
-    message: 'Monitor 已获取下载地址，正在创建安装任务',
+    title: t('ui.installing_value', { value0: pluginName }),
+    message: t('ui.download_url_received_preparing_installation'),
     progress: 2,
-    successMessage: isStyle ? 'Style 界面样式安装完成' : '插件下载安装完成',
+    successMessage: isStyle ? t('ui.screen_style_installed') : t('ui.plugin_downloaded_and_installed'),
   }, async ({ progress, log }) => {
     await invoke('market.install', {
       pluginName,
@@ -107,15 +109,15 @@ async function installMarketPlugin(payload) {
       progress(status.progress)
       if (!status.busy) {
         if (status.status === 'success') return status.result
-        throw new Error(status.message || '插件安装失败')
+        throw new Error(status.message || t('ui.plugin_installation_failed'))
       }
       await delay(250)
     }
   })
   ElMessage.success(
     isStyle
-      ? `Style“${pluginName}”已安装，可在屏幕样式中查看`
-      : `插件“${pluginName}”已安装，可在插件管理中启用`
+      ? t('ui.style_value_installed_view_it_in_screen_styles', { value0: pluginName })
+      : t('ui.plugin_value_installed_enable_it_in_plugins', { value0: pluginName })
   )
   await loadInstalledPlugins()
   injectMonitorHook()
@@ -156,21 +158,21 @@ onBeforeUnmount(() => window.removeEventListener('message', handleMarketMessage)
       ref="marketFrame"
       class="market-frame"
       :src="marketUrl"
-      title="OmniWatch 插件市场"
+      :title="t('ui.omniwatch_plugin_market')"
       referrerpolicy="strict-origin-when-cross-origin"
       allow="clipboard-read; clipboard-write"
       @load="injectMonitorHook"
     />
     <div v-else-if="!marketUrl" class="market-frame-empty">
-      <el-empty description="尚未配置有效的插件市场地址">
+      <el-empty :description="t('ui.no_valid_plugin_market_url_configured')">
         <template #description>
-          <p>请在“设置 → 插件市场”中填写以 http:// 或 https:// 开头的市场地址。</p>
+          <p>{{ t('ui.enter_a_market_url_starting_with_http_or_https') }}</p>
         </template>
       </el-empty>
     </div>
     <div v-else class="market-frame-empty">
       <el-icon class="is-loading"><Loading /></el-icon>
-      <p>正在读取已安装插件...</p>
+      <p>{{ t('ui.reading_installed_plugins') }}</p>
     </div>
   </section>
 </template>

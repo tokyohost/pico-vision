@@ -1,5 +1,7 @@
 """Web 界面的设备管理和 ESP32-S3 SDK 刷写接口。"""
 
+from i18n import t
+
 import base64
 import json
 import logging
@@ -68,7 +70,7 @@ class DeviceApiMixin:
         ).strip()
         parsed = urllib.parse.urlsplit(configured_url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise RuntimeError("请先在设置中配置有效的插件市场/服务端地址")
+            raise RuntimeError(t('message.configure_a_valid_plugin_market_server_url_in_settings'))
         path = parsed.path.rstrip("/")
         if path.endswith("/market"):
             path = path[:-len("/market")]
@@ -88,9 +90,9 @@ class DeviceApiMixin:
         try:
             result = json.loads(response.read().decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise RuntimeError("注册服务返回了无效响应") from error
+            raise RuntimeError(t('message.the_registration_service_returned_an_invalid_response')) from error
         if int(result.get("code", 500)) != 200:
-            raise RuntimeError(result.get("msg") or "注册服务请求失败")
+            raise RuntimeError(result.get("msg") or t('message.registration_service_request_failed'))
         return result
 
     def _request_registration_api(self, path, method="GET", body=None):
@@ -107,7 +109,7 @@ class DeviceApiMixin:
             ).encode("utf-8")
             headers["Content-Type"] = "application/json; charset=utf-8"
         request_log = (
-            "[设备注册] 请求方法={}，请求地址={}，请求体={}".format(
+            t('message.device_registration_method_url_body').format(
                 method,
                 request_url,
                 json.dumps(body, ensure_ascii=False)
@@ -132,7 +134,7 @@ class DeviceApiMixin:
             except RuntimeError:
                 raise
         except urllib.error.URLError as error:
-            raise RuntimeError("无法连接设备注册服务：{}".format(error.reason)) from error
+            raise RuntimeError(t('message.cannot_connect_to_device_registration_service').format(error.reason)) from error
 
     def _device_registration_status(self, payload):
         """远程查询当前或指定设备UUID的注册状态。"""
@@ -153,13 +155,13 @@ class DeviceApiMixin:
         """解析用户粘贴的Base64注册码并上送当前设备信息。"""
         connection = self._application._get_device_connection()
         if not connection.get("connected"):
-            raise RuntimeError("设备未连接，无法立即注册")
+            raise RuntimeError(t('message.device_disconnected_cannot_register_now'))
         uuid = str(connection.get("device_id") or "").strip()
         if not uuid:
-            raise RuntimeError("当前固件未提供设备UUID，无法注册")
+            raise RuntimeError(t('message.the_firmware_did_not_provide_a_device_uuid'))
         encoded_code = str(payload.get("registrationCode") or "").strip()
         if not encoded_code:
-            raise ValueError("请粘贴Base64注册码")
+            raise ValueError(t('message.paste_a_base64_registration_code'))
         try:
             padding = "=" * (-len(encoded_code) % 4)
             registration = json.loads(
@@ -167,11 +169,11 @@ class DeviceApiMixin:
                 .decode("utf-8")
             )
         except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise ValueError("注册码不是有效的Base64 JSON") from error
+            raise ValueError(t('message.registration_code_is_not_valid_base64_json')) from error
         if not isinstance(registration, dict):
-            raise ValueError("注册码JSON结构无效")
+            raise ValueError(t('message.invalid_registration_json_structure'))
         if str(registration.get("uuid") or "").strip() != uuid:
-            raise ValueError("注册码绑定的UUID与当前设备不一致")
+            raise ValueError(t('message.registration_uuid_does_not_match_this_device'))
         result = self._request_registration_api(
             "/device/registration",
             method="POST",
@@ -196,10 +198,10 @@ class DeviceApiMixin:
         if connection.get("connected"):
             return {
                 "device": connection,
-                "log": "设备已由常驻监控完成握手，保留当前连接。",
+                "log": t('message.the_device_is_already_connected_to_monitor_keeping_the'),
             }
         if not self._application._request_device_probe():
-            raise RuntimeError("后台监控未运行，无法主动探测设备")
+            raise RuntimeError(t('message.monitor_is_not_running_cannot_scan_devices'))
         deadline = time.monotonic() + 35.0
         while time.monotonic() < deadline:
             time.sleep(0.1)
@@ -207,12 +209,12 @@ class DeviceApiMixin:
             if connection.get("connected"):
                 return {
                     "device": connection,
-                    "log": "主动探测握手成功，连接已交由常驻监控持续使用。",
+                    "log": t('message.device_handshake_succeeded_monitor_will_keep_this_connection'),
                 }
             worker = self._application.worker_process
             if worker is None or worker.poll() is not None:
-                raise RuntimeError("主动探测期间后台监控异常退出")
-        raise RuntimeError("主动探测超时，未发现 OmniWatch 设备")
+                raise RuntimeError(t('message.monitor_exited_unexpectedly_during_the_scan'))
+        raise RuntimeError(t('message.device_scan_timed_out_no_omniwatch_device_found'))
 
     def _take_screenshot(self, payload):
         """向工作进程发送 LCD 截图命令。"""
@@ -225,7 +227,7 @@ class DeviceApiMixin:
         del payload
         self._drain_queue(self._application.device_management_messages)
         if not self._application._write_worker_command("EXIT_REBOOT\n"):
-            raise RuntimeError("后台监控未运行")
+            raise RuntimeError(t('message.monitor_is_not_running'))
         return self._wait_worker_result(
             self._application.device_management_messages, 20
         )
@@ -234,10 +236,10 @@ class DeviceApiMixin:
     def _validate_firmware_package(path):
         """校验本地固件全量包是安全、可读取且非空的 ZIP 文件。"""
         if not str(path or "").strip():
-            raise ValueError("请先选择设备固件全量包")
+            raise ValueError(t('message.select_a_full_device_firmware_package_first'))
         package_path = Path(path)
         if package_path.suffix.lower() != ".zip":
-            raise ValueError("请选择 ZIP 格式的设备固件全量包")
+            raise ValueError(t('message.select_a_zip_firmware_package'))
         package = PicoFirmwareArchive(package_path)
         package.close()
         return package_path
@@ -246,7 +248,7 @@ class DeviceApiMixin:
         """选择并校验待写入设备的本地全量固件包。"""
         path = str(payload.get("sourcePath") or "").strip()
         if not path:
-            path = self._select_file(FIRMWARE_PACKAGE_FILE_TYPES)
+            path = self._select_file((t('message.full_firmware_package_zip'), t('message.all_files')))
         if not path:
             return {"cancelled": True}
         package_path = self._validate_firmware_package(path)
@@ -273,13 +275,13 @@ class DeviceApiMixin:
         identity = (
             "VID:{:04X} PID:{:04X}".format(vid, pid)
             if vid is not None and pid is not None
-            else "VID/PID 未知"
+            else t('message.unknown_vid_pid')
         )
         return {
             "device": device,
             "label": "{} - {} ({})".format(
                 device,
-                str(getattr(port, "description", "") or "未知设备").strip(),
+                str(getattr(port, "description", "") or t('message.unknown_device')).strip(),
                 identity,
             ),
         }
@@ -309,7 +311,7 @@ class DeviceApiMixin:
         """确认用户选择的固件更新串口仍然存在，并返回规范设备名。"""
         requested = str(selected_port or "").strip()
         if not requested:
-            raise ValueError("请选择固件更新目标串口")
+            raise ValueError(t('ui.select_the_target_serial_port_for_firmware_update'))
         available = {
             str(getattr(port, "device", "") or "").strip().upper():
             str(getattr(port, "device", "") or "").strip()
@@ -318,18 +320,18 @@ class DeviceApiMixin:
         }
         port = available.get(requested.upper())
         if not port:
-            raise RuntimeError("所选固件更新串口已断开：{}".format(requested))
+            raise RuntimeError(t('message.selected_firmware_port_disconnected').format(requested))
         return port
 
     def _run_local_firmware_update(self, package_path, port, force):
         """在后台按所选模式安装本地固件包并恢复常驻监控。"""
         try:
-            mode = "全量覆盖" if force else "SHA-256 增量"
+            mode = t('ui.replace_all') if force else t('message.sha_256_incremental')
             self._set_update_state(
                 "firmware",
                 "running",
                 20,
-                "本地固件包校验完成，更新模式：{}，正在暂停监控".format(mode),
+                t('message.local_firmware_validated_mode_pausing_monitor').format(mode),
                 True,
             )
             self._application._stop_worker()
@@ -337,7 +339,7 @@ class DeviceApiMixin:
                 "firmware",
                 "running",
                 50,
-                "正在通过 mpremote {}设备固件".format(mode),
+                t('message.using_mpremote_to_device_firmware').format(mode),
             )
 
             def report_progress(message, percent):
@@ -349,12 +351,12 @@ class DeviceApiMixin:
                 package_path, port, report_progress, force=force
             )
             self._set_update_state(
-                "firmware", "success", 100, "本地设备固件更新完成，正在重新连接设备"
+                "firmware", "success", 100, t('message.local_firmware_updated_reconnecting_device')
             )
             LOGGER.info("本地设备固件更新完成：%s", package_path.name)
         except Exception as error:
             self._set_update_state(
-                "firmware", "error", None, "本地设备固件更新失败：{}".format(error)
+                "firmware", "error", None, t('message.local_firmware_update_failed').format(error)
             )
             LOGGER.exception("本地设备固件更新失败：%s", error)
         finally:
@@ -370,7 +372,7 @@ class DeviceApiMixin:
                     "firmware",
                     "error",
                     None,
-                    "固件更新结束，但恢复后台监控失败：{}".format(error),
+                    t('message.firmware_update_ended_but_monitor_could_not_resume').format(error),
                 )
             finally:
                 self._application.update_lock.release()
@@ -383,10 +385,10 @@ class DeviceApiMixin:
         port = self._validate_selected_firmware_port(payload.get("port"))
         force = bool(payload.get("force"))
         if not self._application.update_lock.acquire(blocking=False):
-            raise RuntimeError("已有更新任务正在执行，请稍候")
+            raise RuntimeError(t('message.another_update_is_running_please_wait'))
         try:
             self._set_update_state(
-                "firmware", "running", 1, "本地固件更新任务已启动", True
+                "firmware", "running", 1, t('message.local_firmware_update_started'), True
             )
             threading.Thread(
                 target=self._run_local_firmware_update,
@@ -424,7 +426,7 @@ class DeviceApiMixin:
         connection = self._application._get_device_connection()
         if not self._sdk_flash_allowed(connection):
             raise RuntimeError(
-                "受控刷写前设备 USB 连接已变化，请保持 USB CDC 连接后重试"
+                t('message.usb_connection_changed_keep_usb_cdc_connected_and_try')
             )
         return connection
 
@@ -463,10 +465,10 @@ class DeviceApiMixin:
         """选择并严格校验 ESP32-S3 完整合并 SDK 镜像。"""
         with self._sdk_lock:
             if self._sdk_state["busy"]:
-                raise RuntimeError("SDK 更新正在执行，不能更换镜像")
+                raise RuntimeError(t('message.sdk_update_is_running_cannot_change_the_image'))
         path = str(payload.get("sourcePath") or "").strip()
         if not path:
-            path = self._select_file(SDK_IMAGE_FILE_TYPES)
+            path = self._select_file((t('message.sdk_image_bin'), t('message.all_files')))
         if not path:
             return {"cancelled": True}
         information = _inspect_sdk_image(path)
@@ -524,7 +526,7 @@ class DeviceApiMixin:
                 self._append_sdk_log(line)
         return_code = process.wait()
         if return_code != 0:
-            raise RuntimeError("esptool 刷写失败，返回码 {}".format(return_code))
+            raise RuntimeError(t('message.esptool_failed_with_exit_code').format(return_code))
 
     def _run_controlled_sdk_flash(self, information, connection):
         """让已连接设备进入 ROM USB 模式后执行受控 SDK 刷写。"""
@@ -534,10 +536,10 @@ class DeviceApiMixin:
         connection = self._current_sdk_usb_connection()
         worker = self._application.worker_process
         if worker is None or worker.poll() is not None or worker.stdin is None:
-            raise RuntimeError("当前没有可控制的 USB 设备连接")
+            raise RuntimeError(t('message.no_controllable_usb_device_connected'))
         source_device = str(connection.get("address") or "").strip()
         if not source_device:
-            raise RuntimeError("无法确定当前 USB 设备的串口")
+            raise RuntimeError(t('message.cannot_determine_the_current_usb_device_port'))
         self._append_sdk_log(
             "受控刷写已刷新当前 USB 串口：{}".format(source_device)
         )
@@ -552,10 +554,10 @@ class DeviceApiMixin:
         try:
             result = self._application.sdk_flash_messages.get(timeout=12)
         except queue.Empty as error:
-            raise RuntimeError("等待设备进入 ROM USB 下载模式超时") from error
+            raise RuntimeError(t('message.timed_out_waiting_for_rom_usb_download_mode')) from error
         if result.get("status") != "ok":
             raise RuntimeError(
-                result.get("message") or "设备拒绝进入 ROM USB 下载模式"
+                result.get("message") or t('message.device_refused_to_enter_rom_usb_download_mode')
             )
         self._append_sdk_log(result.get("message") or "设备已确认")
         try:
@@ -595,7 +597,7 @@ class DeviceApiMixin:
                 self._run_forced_sdk_flash(information, port)
             else:
                 self._run_controlled_sdk_flash(information, connection)
-            message = "SDK 刷写完成，正在重新连接设备并校验版本"
+            message = t('message.sdk_flashed_reconnecting_and_verifying_version')
             self._append_sdk_log(message)
             with self._sdk_lock:
                 self._sdk_state["status"] = "success"
@@ -603,7 +605,7 @@ class DeviceApiMixin:
             self._set_update_state("sdk", "success", 100, message)
         except Exception as error:
             LOGGER.exception("Web 设备管理 SDK 刷写失败：%s", error)
-            message = "SDK 刷写失败：{}".format(error)
+            message = t('message.sdk_flash_failed').format(error)
             self._append_sdk_log(message)
             with self._sdk_lock:
                 self._sdk_state["status"] = "error"
@@ -626,7 +628,7 @@ class DeviceApiMixin:
                     self._application._start_worker()
             except Exception as error:
                 LOGGER.exception("SDK 刷写后恢复后台监控失败：%s", error)
-                message = "SDK 刷写结束，但恢复后台监控失败：{}".format(error)
+                message = t('message.sdk_flashing_ended_but_monitor_could_not_resume').format(error)
                 self._append_sdk_log(message)
                 with self._sdk_lock:
                     self._sdk_state["status"] = "error"
@@ -642,9 +644,9 @@ class DeviceApiMixin:
             image_path = self._sdk_state["image_path"]
             busy = self._sdk_state["busy"]
         if busy:
-            raise RuntimeError("SDK 更新正在执行，请稍候")
+            raise RuntimeError(t('message.sdk_update_is_running_please_wait'))
         if not image_path:
-            raise ValueError("请先选择并校验 SDK 镜像")
+            raise ValueError(t('message.select_and_validate_an_sdk_image_first'))
         information = _inspect_sdk_image(image_path)
         connection = self._application._get_device_connection()
         if force:
@@ -653,20 +655,20 @@ class DeviceApiMixin:
                 for item in list_ports.comports()
             }
             if not port or port not in available_ports:
-                raise ValueError("请选择当前系统中有效的目标 COM 口")
+                raise ValueError(t('message.select_a_valid_target_com_port'))
         elif not self._sdk_flash_allowed(connection):
             raise RuntimeError(
-                "当前连接不支持受控 SDK 刷写，请使用 ESP32-S3 原生 USB CDC 连接"
+                t('message.managed_sdk_flashing_requires_an_esp32_s3_native_usb')
             )
         if not self._application.update_lock.acquire(blocking=False):
-            raise RuntimeError("已有更新任务正在执行，请稍候")
+            raise RuntimeError(t('message.another_update_is_running_please_wait'))
 
-        mode = "强刷" if force else "受控刷写"
+        mode = t('message.force_flash') if force else t('message.managed_flash')
         with self._sdk_lock:
             self._sdk_state.update({
                 "busy": True,
                 "status": "running",
-                "message": "正在{} SDK，请勿断电或拔线".format(mode),
+                "message": t('message.running_for_sdk_do_not_power_off_or_unplug').format(mode),
                 "image": self._sdk_image_payload(information),
                 "logs": [],
             })

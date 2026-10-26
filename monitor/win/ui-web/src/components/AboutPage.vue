@@ -1,4 +1,6 @@
 <script setup>
+import { t } from '../i18n'
+
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { invoke, copyText } from '../bridge'
@@ -19,7 +21,7 @@ async function saveDeveloperPlan(enabled) {
   try {
     const result = await invoke('settings.developerPlan', { enabled })
     props.settings.developer_plan = result.enabled
-    ElMessage.success(result.enabled ? '已加入开发者计划' : '已退出开发者计划')
+    ElMessage.success(result.enabled ? t('ui.joined_the_developer_program') : t('ui.left_the_developer_program'))
   } catch (error) {
     ElMessage.error(error?.message || String(error))
   } finally {
@@ -45,9 +47,9 @@ async function copyQqGroupNumber() {
   const groupNumber = props.metadata.about.qqGroup || qqGroupNumber
   try {
     await copyText(groupNumber)
-    ElMessage.success('QQ群号已复制')
+    ElMessage.success(t('ui.qq_group_number_copied'))
   } catch (error) {
-    ElMessage.error(error?.message || 'QQ群号复制失败')
+    ElMessage.error(error?.message || t('ui.failed_to_copy_qq_group_number'))
   }
 }
 </script>
@@ -57,52 +59,52 @@ async function copyQqGroupNumber() {
     <el-card shadow="never" class="about-card">
       <div class="about-heading">
         <div class="about-logo"><el-icon><Cpu /></el-icon></div>
-        <div><h2>{{ metadata.applicationName }}</h2><p>控制中心</p></div>
+        <div><h2>{{ metadata.applicationName }}</h2><p>{{ t('ui.control_center') }}</p></div>
       </div>
       <el-descriptions :column="1" border class="section-gap">
-        <el-descriptions-item label="版本号">{{ metadata.version }}</el-descriptions-item>
-        <el-descriptions-item label="作者">{{ metadata.about.author || 'tokyohost' }}</el-descriptions-item>
-        <el-descriptions-item label="微信号">{{ metadata.about.wechat || 'hi2024FL' }}</el-descriptions-item>
-        <el-descriptions-item label="发布仓库">{{ metadata.about.repository || '--' }}</el-descriptions-item>
-        <el-descriptions-item label="数据目录">{{ metadata.dataDirectory || '--' }}</el-descriptions-item>
+        <el-descriptions-item :label="t('ui.version_number')">{{ metadata.version }}</el-descriptions-item>
+        <el-descriptions-item :label="t('ui.author')">{{ metadata.about.author || 'tokyohost' }}</el-descriptions-item>
+        <el-descriptions-item :label="t('ui.wechat_id')">{{ metadata.about.wechat || 'hi2024FL' }}</el-descriptions-item>
+        <el-descriptions-item :label="t('ui.release_repository')">{{ metadata.about.repository || '--' }}</el-descriptions-item>
+        <el-descriptions-item :label="t('ui.data_directory')">{{ metadata.dataDirectory || '--' }}</el-descriptions-item>
       </el-descriptions>
       <el-form label-position="top" class="section-gap">
-        <el-form-item label="加入开发者计划">
+        <el-form-item :label="t('ui.join_the_developer_program')">
           <el-switch :model-value="!!settings.developer_plan" :loading="savingPlan" :disabled="savingPlan" @change="saveDeveloperPlan" />
         </el-form-item>
-        <el-alert title="加入后可更新 Preview 版本开发固件，但可能存在性能不稳定等问题。" type="warning" :closable="false" show-icon />
+        <el-alert :title="t('ui.receive_preview_firmware_updates_which_may_have_performance_or')" type="warning" :closable="false" show-icon />
       </el-form>
-      <el-button class="section-gap" type="primary" @click="openDataDirectory">打开日志和数据目录</el-button>
+      <el-button class="section-gap" type="primary" @click="openDataDirectory">{{ t('ui.open_log_and_data_directory') }}</el-button>
     </el-card>
     <el-card shadow="never" class="qr-card">
-      <h3>咸鱼店铺二维码</h3>
-      <img v-if="metadata.about.qrDataUrl" :src="metadata.about.qrDataUrl" alt="咸鱼店铺二维码" />
-      <el-empty v-else description="二维码资源未找到" />
-      <p>微信号：{{ metadata.about.wechat || 'hi2024FL' }}</p>
+      <h3>{{ t('ui.xianyu_shop_qr_code') }}</h3>
+      <img v-if="metadata.about.qrDataUrl" :src="metadata.about.qrDataUrl" :alt="t('ui.xianyu_shop_qr_code')" />
+      <el-empty v-else :description="t('ui.qr_code_resource_not_found')" />
+      <p>{{ t('ui.wechat_id_2') }}{{ metadata.about.wechat || 'hi2024FL' }}</p>
     </el-card>
     <el-card shadow="never" class="qr-card qq-group-card">
       <div class="qq-group-heading">
         <span class="qq-group-icon"><el-icon><ChatDotRound /></el-icon></span>
         <div>
-          <h3>OmniWatch QQ群</h3>
-          <p>扫码加入用户交流群</p>
+          <h3>{{ t('ui.omniwatch_qq_group') }}</h3>
+          <p>{{ t('ui.scan_to_join_the_user_group') }}</p>
         </div>
       </div>
       <img
         v-if="metadata.about.qqGroupQrDataUrl"
         :src="metadata.about.qqGroupQrDataUrl"
-        alt="OmniWatch QQ群二维码"
+        :alt="t('ui.omniwatch_qq_group_qr_code')"
         class="qq-group-qr"
       />
-      <el-empty v-else description="QQ群二维码资源未找到" />
+      <el-empty v-else :description="t('ui.qq_group_qr_code_resource_not_found')" />
       <div class="qq-group-number">
         <span>
-          <small>QQ群号</small>
+          <small>{{ t('ui.qq_group_number') }}</small>
           <strong>{{ metadata.about.qqGroup || qqGroupNumber }}</strong>
         </span>
         <el-button type="primary" plain size="small" @click="copyQqGroupNumber">
           <el-icon><CopyDocument /></el-icon>
-          <span>复制群号</span>
+          <span>{{ t('ui.copy_group_number') }}</span>
         </el-button>
       </div>
     </el-card>

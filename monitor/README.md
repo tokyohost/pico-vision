@@ -359,3 +359,31 @@ Metal 应用可在自身启动环境设置 `MTL_HUD_ENABLED=1` 和 `MTL_HUD_LOG_
 ### 致谢
 
 - Tz. 感谢协助修复intel 平台cpu 温度获取失败问题
+
+
+## 中英文界面与小屏语言
+
+设置页的“语言 / Language”支持 `zh-CN` 和 `en-US`，默认中文，保存后立即更新 Vue、Element Plus、托盘和用户提示，并通过现有 `display.locale` 同步到 ESP32-S3。桌面配置保存在既有设置文件的 `locale` 字段；无桌面环境可使用 `--locale en-US`、环境变量 `PICO_MONITOR_LOCALE=en-US`，或在 YAML 中配置：
+
+```yaml
+screen:
+  locale: en-US
+```
+
+Linux HTTP 管理页保存同一配置，不增加第二套语言来源。语言不跟随系统或浏览器；设备名、协议字段、状态枚举、用户输入、插件内容和自定义样式名称保持原值。日志正文、CLI 帮助、安装器及旧 Tk 窗口不在本期翻译范围内。
+
+资源分别位于 `win/ui-web/src/locales/` 与 `locales/`，使用稳定语义键和命名参数。前端列表应在 computed 或实际展示时调用 `t`，后端用户提示在产生时调用 `i18n.t`；缺失翻译依次回退中文和键名。主题 style 的名称、详情和画面文案保持原样，不参与国际化；`chinese_name` 元数据照常显示。第三方异常使用通用提示，原始详情保留在错误响应的 `details` 中。
+
+前端语言资源随 Vite 构建进入现有 `dist`；Python 语言包通过静态导入纳入冻结程序，不增加额外资源目录规则。发布时仍需先执行 `npm ci` 和 `npm run build`。测试命令（在各自目录运行）：
+
+```text
+# monitor
+python -m unittest tests.test_i18n tests.test_monitor tests.test_custom_data tests.test_desktop_common tests.test_pico_package_targets tests.test_ui_helpers
+# monitor/win/ui-web
+node --test tests/i18n.test.mjs
+npm run build
+# esp32-s3
+python -m unittest discover -s tests
+```
+
+设备侧的配置兼容、文件损坏/写入失败、菜单延迟应用和重复快照不重复写入有自动化覆盖。浏览器使用模拟桥接验证中英文保存切换；这不替代真实桌面窗口、USB/Wi-Fi 新旧固件组合及横竖屏真机验收。发布前还需在目标板实测峰值内存、完整重绘耗时和字形布局，并在目标系统验证实际冻结产物。

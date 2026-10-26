@@ -1,5 +1,7 @@
 """Vue 界面调用的统一 Python 桥接入口。"""
 
+from i18n import t, set_locale, error_response
+
 import logging
 import threading
 
@@ -75,6 +77,7 @@ class WebViewBridge(
 
     def invoke(self, action, payload=None):
         """按动作名称调用受控业务方法，并返回可 JSON 序列化结果。"""
+        set_locale(getattr(self._application, "settings", {}).get("locale", "zh-CN"))
         payload = payload if isinstance(payload, dict) else {}
         handlers = {
             "system.copyText": self._copy_text,
@@ -129,7 +132,7 @@ class WebViewBridge(
         }
         handler = handlers.get(str(action))
         if handler is None:
-            return self._error("不支持的界面动作：{}".format(action))
+            return self._error(t('message.unsupported_ui_action').format(action))
         try:
             result = handler(payload)
             if isinstance(result, dict) and "ok" in result:
@@ -137,4 +140,4 @@ class WebViewBridge(
             return {"ok": True, "data": result}
         except Exception as error:
             LOGGER.exception("执行界面动作失败：%s", action)
-            return self._error(str(error) or "操作失败")
+            return error_response(error)

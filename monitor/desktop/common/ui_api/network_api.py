@@ -1,5 +1,7 @@
 """Web 界面的 Wi-Fi 和 WebSocket 客户端管理接口。"""
 
+from i18n import t
+
 from monitor_core.ui_helpers import (
     merge_wifi_networks,
     wifi_security_label,
@@ -17,7 +19,7 @@ class NetworkApiMixin:
         del payload
         self._drain_queue(self._application.wifi_messages)
         if not self._application._request_wifi_list():
-            raise RuntimeError("后台监控未运行")
+            raise RuntimeError(t('message.monitor_is_not_running'))
         result = self._wait_worker_result(
             self._application.wifi_messages, 22, "list"
         )
@@ -40,7 +42,7 @@ class NetworkApiMixin:
         if not self._application._request_wifi_connect(
             str(payload.get("ssid") or ""), str(payload.get("password") or "")
         ):
-            raise RuntimeError("后台监控未运行")
+            raise RuntimeError(t('message.monitor_is_not_running'))
         result = self._wait_worker_result(
             self._application.wifi_messages, 25, "connect"
         )
@@ -50,7 +52,7 @@ class NetworkApiMixin:
         """请求设备忘记指定 Wi-Fi。"""
         self._drain_queue(self._application.wifi_messages)
         if not self._application._request_wifi_forget(str(payload.get("ssid") or "")):
-            raise RuntimeError("后台监控未运行")
+            raise RuntimeError(t('message.monitor_is_not_running'))
         result = self._wait_worker_result(
             self._application.wifi_messages, 15, "forget"
         )
@@ -61,7 +63,7 @@ class NetworkApiMixin:
         del payload
         self._drain_queue(self._application.websocket_client_messages)
         if not self._application._request_websocket_client_list():
-            raise RuntimeError("后台监控未运行")
+            raise RuntimeError(t('message.monitor_is_not_running'))
         result = self._wait_worker_result(
             self._application.websocket_client_messages, 12, "list"
         )
@@ -92,7 +94,7 @@ class NetworkApiMixin:
             payload.get("enabled"),
             payload.get("priority"),
         ):
-            raise RuntimeError("后台监控未运行")
+            raise RuntimeError(t('message.monitor_is_not_running'))
         result = self._wait_worker_result(
             self._application.websocket_client_messages, 12, "update"
         )

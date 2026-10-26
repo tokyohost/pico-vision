@@ -1,5 +1,7 @@
 """校验待上传的 Pico 自定义屏幕样式源码。"""
 
+from i18n import t
+
 import ast
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,27 +29,27 @@ class StyleFileValidator:
         """读取样式文件并返回可用于冲突检查和上传的校验结果。"""
         style_path = Path(path)
         if style_path.suffix.lower() != ".py":
-            raise ValueError("仅允许上传 .py 样式文件")
+            raise ValueError(t('style.python_only'))
         source = style_path.read_bytes()
         if source.startswith(b"\xef\xbb\xbf"):
-            raise ValueError("样式文件不能包含 UTF-8 BOM")
+            raise ValueError(t('style.no_bom'))
         if not source or len(source) > MAX_STYLE_FILE_SIZE:
-            raise ValueError("样式文件大小必须在 1 至 {} 字节之间".format(MAX_STYLE_FILE_SIZE))
+            raise ValueError(t('style.source_size').format(MAX_STYLE_FILE_SIZE))
         try:
             text = source.decode("utf-8")
         except UnicodeDecodeError as error:
-            raise ValueError("样式文件必须使用无 BOM 的 UTF-8 编码") from error
+            raise ValueError(t('style.source_encoding')) from error
         try:
             module = ast.parse(text, filename=style_path.name)
         except SyntaxError as error:
-            raise ValueError("样式文件语法错误：第 {} 行".format(error.lineno or 0)) from error
+            raise ValueError(t('style.syntax_error').format(error.lineno or 0)) from error
         style_class = self._find_style_class(module)
         metadata = self._class_metadata(style_class)
         self._validate_methods(style_class)
         self._validate_registration(module, style_class.name, metadata["name"])
         expected_filename = "style_{}.py".format(metadata["name"])
         if style_path.name != expected_filename:
-            raise ValueError("文件名必须为 {}".format(expected_filename))
+            raise ValueError(t('style.filename').format(expected_filename))
         return ValidatedStyle(
             name=metadata["name"],
             chinese_name=metadata["zh_name"],
@@ -66,7 +68,7 @@ class StyleFileValidator:
             if metadata.get("type") == "custom":
                 candidates.append(node)
         if len(candidates) != 1:
-            raise ValueError("样式文件必须且只能包含一个 type 为 custom 的样式类")
+            raise ValueError(t('style.single_class'))
         return candidates[0]
 
     @staticmethod
@@ -95,17 +97,17 @@ class StyleFileValidator:
         if not required:
             return metadata
         if not all(metadata.get(key) for key in ("name", "zh_name", "type")):
-            raise ValueError("样式类必须声明 name、zh_name 和 type")
+            raise ValueError(t('style.metadata_required'))
         if metadata["type"] != "custom":
-            raise ValueError("上传样式的 type 必须为 custom")
+            raise ValueError(t('style.custom_type'))
         second_sync = metadata.get("sync_visible_frame_to_second", False)
         if not isinstance(second_sync, bool):
             raise ValueError(
-                "sync_visible_frame_to_second 必须为布尔值"
+                t('style.second_sync_boolean')
             )
         name = metadata["name"]
         if any(not ("a" <= char <= "z" or char.isdigit() or char == "_") for char in name):
-            raise ValueError("样式名仅允许小写字母、数字和下划线")
+            raise ValueError(t('style.invalid_name'))
         return metadata
 
     @staticmethod
@@ -117,7 +119,7 @@ class StyleFileValidator:
         }
         missing = [name for name in REQUIRED_STYLE_METHODS if name not in methods]
         if missing:
-            raise ValueError("样式类缺少必要方法：{}".format("、".join(missing)))
+            raise ValueError(t('style.missing_methods').format(", ".join(missing)))
 
     @staticmethod
     def _validate_registration(module, class_name, style_name):
@@ -140,4 +142,4 @@ class StyleFileValidator:
             ):
                 registered_names.append(style_name)
         if registered_names != [style_name]:
-            raise ValueError("register_style 必须且只能注册样式名 {}".format(style_name))
+            raise ValueError(t('style.registration').format(style_name))

@@ -1,3 +1,4 @@
+import { t } from './i18n'
 import ReconnectingWebSocket from 'reconnecting-websocket'
 
 /**
@@ -8,12 +9,12 @@ function installHttpBridge() {
 
   const authStorageKey = 'omniwatch.http.auth'
   const unsupportedActions = new Map([
-    ['device.firmware.select', 'HTTP 页面不支持服务器本地固件选择'],
-    ['device.firmware.updateLocal', 'HTTP 页面不支持服务器本地固件选择'],
-    ['device.sdk.select', 'HTTP 页面不支持服务器本地镜像选择'],
-    ['log.export', 'HTTP 页面不支持原生文件保存对话框'],
-    ['style.upload', 'HTTP 页面不支持原生文件选择'],
-    ['system.openDataDirectory', 'HTTP 页面不支持打开服务器本地目录'],
+    ['device.firmware.select', 'ui.selecting_firmware_from_the_server_is_not_available_in'],
+    ['device.firmware.updateLocal', 'ui.selecting_firmware_from_the_server_is_not_available_in'],
+    ['device.sdk.select', 'ui.selecting_images_from_the_server_is_not_available_in'],
+    ['log.export', 'ui.native_save_dialogs_are_not_available_in_the_web'],
+    ['style.upload', 'ui.native_file_selection_is_not_available_in_the_web'],
+    ['system.openDataDirectory', 'ui.opening_server_directories_is_not_available_in_the_web'],
   ])
   const pending = new Map()
   let socket = null
@@ -38,8 +39,8 @@ function installHttpBridge() {
   function requireAuth() {
     const saved = window.localStorage.getItem(authStorageKey)
     if (saved) return saved
-    const entered = window.prompt('请输入 OmniWatch HTTP 管理页面 Auth')
-    if (!entered) throw new Error('未输入 HTTP 管理页面 Auth')
+    const entered = window.prompt(t('ui.enter_the_omniwatch_http_management_auth_token'))
+    if (!entered) throw new Error(t('ui.no_http_management_auth_token_entered'))
     window.localStorage.setItem(authStorageKey, entered)
     return entered
   }
@@ -50,7 +51,7 @@ function installHttpBridge() {
   function rejectPendingRequests() {
     for (const request of pending.values()) {
       window.clearTimeout(request.timer)
-      request.reject(new Error('WebSocket 连接已断开，客户端正在自动重连'))
+      request.reject(new Error(t('ui.websocket_disconnected_reconnecting_automatically')))
     }
     pending.clear()
   }
@@ -102,7 +103,7 @@ function installHttpBridge() {
         socket = null
         connectionPromise = null
         window.localStorage.removeItem(authStorageKey)
-        reject(new Error('HTTP 管理页面鉴权失败或连接不可用，请重新输入 Auth'))
+        reject(new Error(t('ui.authentication_failed_or_connection_unavailable_enter_the_auth_token')))
       }, 12000)
       socket.addEventListener('open', () => {
         window.clearTimeout(timeout)
@@ -119,14 +120,14 @@ function installHttpBridge() {
   async function invoke(action, payload = {}) {
     const unsupported = unsupportedActions.get(action)
     if (unsupported && !(uploadActions.has(action) && payload?.uploadId)) {
-      return { ok: false, message: unsupported }
+      return { ok: false, message: t(unsupported) }
     }
     const client = await ensureConnected()
     const id = `${Date.now()}-${++sequence}`
     return new Promise((resolve, reject) => {
       const timer = window.setTimeout(() => {
         pending.delete(id)
-        reject(new Error(`操作超时：${action}`))
+        reject(new Error(t('ui.operation_timed_out_value', { value0: action })))
       }, 30000)
       pending.set(id, { resolve, reject, timer })
       client.send(JSON.stringify({ type: 'invoke', id, action, payload }))
@@ -138,7 +139,7 @@ function installHttpBridge() {
    */
   async function upload(kind, fileList) {
     const files = Array.from(fileList || [])
-    if (!files.length) throw new Error('未选择文件')
+    if (!files.length) throw new Error(t('ui.no_file_selected'))
     const form = new FormData()
     for (const file of files) {
       const name = file.webkitRelativePath || file.name
@@ -156,11 +157,11 @@ function installHttpBridge() {
     try {
       result = await response.json()
     } catch {
-      result = { ok: false, message: '服务器返回了无效上传响应' }
+      result = { ok: false, message: t('ui.the_server_returned_an_invalid_upload_response') }
     }
     if (!response.ok || !result?.ok) {
       if (response.status === 401) window.localStorage.removeItem(authStorageKey)
-      throw new Error(result?.message || `文件上传失败（${response.status}）`)
+      throw new Error(result?.message || t('ui.file_upload_failed_value', { value0: response.status }))
     }
     return result.data ?? result
   }

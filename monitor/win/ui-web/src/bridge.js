@@ -1,3 +1,4 @@
+import { t } from './i18n'
 /**
  * 等待 pywebview 注入桥接对象。
  */
@@ -24,7 +25,7 @@ export async function uploadFile(kind, files) {
   await waitForBridge()
   const uploader = window.__omniwatchHttpBridge?.upload
   if (typeof uploader !== 'function') {
-    throw new Error('当前页面不支持浏览器文件上传')
+    throw new Error(t('ui.file_upload_is_not_available_on_this_page'))
   }
   return uploader(kind, files)
 }
@@ -36,7 +37,10 @@ export async function invoke(action, payload = {}) {
   await waitForBridge()
   const result = await window.pywebview.api.invoke(action, payload)
   if (!result?.ok) {
-    throw new Error(result?.message || '操作失败')
+    const error = new Error(result?.message || t('ui.operation_failed'))
+    error.details = result?.details || ''
+    error.code = result?.code || ''
+    throw error
   }
   return result.data ?? result
 }

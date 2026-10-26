@@ -1,13 +1,15 @@
 <script setup>
+import { t } from '../i18n'
+
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { copyText } from '../bridge'
 
 const props = defineProps({
   content: { type: String, default: '' },
-  emptyText: { type: String, default: '暂无日志' },
+  emptyText: { type: String, default: '' },
   preClass: { type: [String, Array, Object], default: '' },
-  copySuccessText: { type: String, default: '日志已复制' },
+  copySuccessText: { type: String, default: '' },
 })
 const emit = defineEmits(['scroll'])
 const logElement = ref(null)
@@ -31,14 +33,14 @@ const needsSpacing = computed(() => {
  */
 async function copyAllLogs() {
   if (!props.content) {
-    ElMessage.warning('暂无可复制的日志')
+    ElMessage.warning(t('ui.no_logs_to_copy'))
     return
   }
   try {
     await copyText(props.content)
-    ElMessage.success(props.copySuccessText)
+    ElMessage.success(props.copySuccessText || t('ui.logs_copied'))
   } catch (error) {
-    ElMessage.error(error?.message || '复制日志失败')
+    ElMessage.error(error?.message || t('ui.failed_to_copy_logs'))
   }
 }
 
@@ -63,11 +65,11 @@ defineExpose({ isNearBottom, scrollToBottom })
 
 <template>
   <div class="copyable-log-container" :class="{ 'copyable-log-spaced': needsSpacing }">
-    <el-tooltip content="复制全部日志" placement="left">
+    <el-tooltip :content="t('ui.copy_all_logs')" placement="left">
       <el-button
         class="copyable-log-button"
         circle
-        aria-label="复制全部日志"
+        :aria-label="t('ui.copy_all_logs')"
         @click="copyAllLogs"
       >
         <el-icon><CopyDocument /></el-icon>
@@ -77,6 +79,6 @@ defineExpose({ isNearBottom, scrollToBottom })
       ref="logElement"
       :class="preClass"
       @scroll="emit('scroll', $event)"
-    >{{ content || emptyText }}</pre>
+    >{{ content || emptyText || t('ui.no_logs') }}</pre>
   </div>
 </template>

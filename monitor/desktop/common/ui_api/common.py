@@ -1,5 +1,7 @@
 """Web 界面桥接层的队列、对话框和响应公共能力。"""
 
+from i18n import t
+
 import queue
 import time
 import webbrowser
@@ -15,10 +17,10 @@ class CommonBridgeMixin:
         """调用平台剪贴板，限制文本大小，不允许页面访问任意原生对象。"""
         text = payload.get("text")
         if not isinstance(text, str) or len(text.encode("utf-8")) > 2 * 1024 * 1024:
-            raise ValueError("剪贴板内容必须是小于两兆字节的文本")
+            raise ValueError(t('message.clipboard_content_must_be_text_smaller_than_2_mb'))
         copier = getattr(self._application, "_copy_text", None)
         if not callable(copier):
-            raise RuntimeError("当前平台不支持原生剪贴板")
+            raise RuntimeError(t('message.native_clipboard_is_not_supported_on_this_platform'))
         copier(text)
         return {"copied": True}
 
@@ -43,12 +45,12 @@ class CommonBridgeMixin:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise RuntimeError("等待设备响应超时，请确认设备连接和固件功能")
+                raise RuntimeError(t('message.device_response_timed_out_check_the_connection_and_firmware'))
             try:
                 result = target.get(timeout=remaining)
             except queue.Empty as error:
                 raise RuntimeError(
-                    "等待设备响应超时，请确认设备连接和固件功能"
+                    t('message.device_response_timed_out_check_the_connection_and_firmware')
                 ) from error
             if (
                 expected_action is not None
@@ -56,7 +58,7 @@ class CommonBridgeMixin:
             ):
                 continue
             if result.get("status") != "ok":
-                raise RuntimeError(result.get("message") or "设备操作失败")
+                raise RuntimeError(result.get("message") or t('message.device_operation_failed'))
             return result
 
     def _select_file(self, file_types):
@@ -65,7 +67,7 @@ class CommonBridgeMixin:
 
         window = getattr(self._application, "webview_window", None)
         if window is None:
-            raise RuntimeError("界面窗口尚未就绪")
+            raise RuntimeError(t('message.the_application_window_is_not_ready'))
         dialog_enum = getattr(webview, "FileDialog", None)
         dialog_type = (
             dialog_enum.OPEN
@@ -85,7 +87,7 @@ class CommonBridgeMixin:
 
         window = getattr(self._application, "webview_window", None)
         if window is None:
-            raise RuntimeError("界面窗口尚未就绪")
+            raise RuntimeError(t('message.the_application_window_is_not_ready'))
         dialog_enum = getattr(webview, "FileDialog", None)
         dialog_type = (
             dialog_enum.FOLDER
@@ -102,7 +104,7 @@ class CommonBridgeMixin:
         address = str(payload.get("url") or "").strip()
         parsed = urlparse(address)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise ValueError("仅允许打开有效的 http:// 或 https:// 地址")
+            raise ValueError(t('message.only_valid_http_or_https_urls_are_allowed'))
         if not webbrowser.open_new_tab(address):
-            raise RuntimeError("无法调用系统默认浏览器")
+            raise RuntimeError(t('message.unable_to_open_the_default_browser'))
         return {"url": address}

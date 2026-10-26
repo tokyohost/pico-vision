@@ -1,4 +1,6 @@
 <script setup>
+import { t } from '../i18n'
+
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke, isHttpBridge, uploadFile, copyText } from '../bridge'
@@ -46,11 +48,11 @@ let refreshTimer = null
 async function copyDeviceUuid() {
   const uuid = currentDevice.value.device_id
   if (!uuid) {
-    ElMessage.warning('当前设备没有可复制的UUID')
+    ElMessage.warning(t('ui.no_device_uuid_to_copy'))
     return
   }
   await copyText(uuid)
-  ElMessage.success('设备UUID已复制')
+  ElMessage.success(t('ui.device_uuid_copied'))
 }
 
 /**
@@ -68,7 +70,7 @@ async function checkRegistrationStatus(uuid = currentDevice.value.device_id) {
   } catch (error) {
     registration.uuid = uuid
     registration.registered = false
-    console.warn('检查设备注册状态失败', error)
+    console.warn(t('ui.failed_to_check_device_registration'), error)
   } finally {
     registration.checking = false
   }
@@ -79,18 +81,18 @@ async function checkRegistrationStatus(uuid = currentDevice.value.device_id) {
  */
 async function registerDeviceNow() {
   if (!currentDevice.value.device_id) {
-    ElMessage.warning('当前设备未提供UUID')
+    ElMessage.warning(t('ui.the_device_has_not_provided_a_uuid'))
     return
   }
   try {
     const { value } = await ElMessageBox.prompt(
-      '请粘贴注册码',
-      '立即注册设备',
+      t('ui.paste_the_registration_code'),
+      t('ui.register_device'),
       {
-        confirmButtonText: '立即注册',
-        cancelButtonText: '取消',
+        confirmButtonText: t('ui.register_now'),
+        cancelButtonText: t('ui.cancel'),
         inputType: 'textarea',
-        inputValidator: (text) => Boolean(String(text || '').trim()) || '注册码不能为空',
+        inputValidator: (text) => Boolean(String(text || '').trim()) || t('ui.registration_code_is_required'),
       },
     )
     const result = await invoke('device.registration.register', {
@@ -98,7 +100,7 @@ async function registerDeviceNow() {
     })
     registration.uuid = result.uuid
     registration.registered = Boolean(result.registered)
-    ElMessage.success('设备注册成功')
+    ElMessage.success(t('ui.device_registered'))
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
       ElMessage.error(error?.message || String(error))
@@ -113,9 +115,9 @@ const currentDevice = computed(() => ({
 }))
 
 const statusText = computed(() => {
-  if (currentDevice.value.connected === true) return '设备在线'
-  if (currentDevice.value.connected === false) return '连接异常'
-  return '正在等待设备'
+  if (currentDevice.value.connected === true) return t('ui.device_online')
+  if (currentDevice.value.connected === false) return t('ui.connection_error')
+  return t('ui.waiting_for_device')
 })
 
 const statusType = computed(() => {
@@ -131,7 +133,7 @@ const controlledFlashSupported = computed(() => {
   return Boolean(
     device.connected
     && board.includes('esp32-s3')
-    && (transport.includes('串口') || ['serial', 'usb', 'usb cdc'].includes(transport))
+    && (transport.includes(t('ui.serial_port')) || ['serial', 'usb', 'usb cdc'].includes(transport))
     && device.sdk_update_supported,
   )
 })
@@ -148,7 +150,7 @@ async function probeDevice() {
     })
     probe.detail = result.device || {}
     probe.log = result.log || ''
-    ElMessage.success('设备探测完成')
+    ElMessage.success(t('ui.device_scan_completed'))
   } catch (error) {
     ElMessage.error(error?.message || String(error))
   } finally {
@@ -205,7 +207,7 @@ async function selectFirmwarePackage() {
     const result = await invoke('device.firmware.select')
     if (!result.cancelled) {
       firmware.package = result.package
-      ElMessage.success('固件 ZIP 包校验通过')
+      ElMessage.success(t('ui.firmware_zip_validated'))
     }
   } catch (error) {
     ElMessage.error(error?.message || String(error))
@@ -224,7 +226,7 @@ async function handleBrowserFirmwareFile(event) {
     const result = await invoke('device.firmware.select', { uploadId: upload.uploadId })
     if (!result.cancelled) {
       firmware.package = result.package
-      ElMessage.success('固件 ZIP 包校验通过')
+      ElMessage.success(t('ui.firmware_zip_validated'))
     }
   } catch (error) {
     ElMessage.error(error?.message || String(error))
@@ -251,23 +253,23 @@ async function loadFirmwarePorts() {
  */
 async function updateLocalFirmware() {
   if (!firmware.package) {
-    ElMessage.warning('请先选择固件 ZIP 包')
+    ElMessage.warning(t('ui.select_a_firmware_zip_first'))
     return
   }
   if (!firmware.selectedPort) {
-    ElMessage.warning('请选择固件更新目标串口')
+    ElMessage.warning(t('ui.select_the_target_serial_port_for_firmware_update'))
     return
   }
-  const mode = firmware.force ? '全量更新：跳过 Hash 校验并覆盖全部文件' : '增量更新：仅复制 Hash 不一致的文件'
+  const mode = firmware.force ? t('ui.full_update_skip_hash_checks_and_replace_all_files') : t('ui.incremental_update_copy_only_files_with_different_hashes')
   try {
     await ElMessageBox.confirm(
-      `固件包：${firmware.package.name}\n`
-      + `文件数量：${firmware.package.fileCount}\n`
-      + `目标串口：${firmware.selectedPort}\n`
-      + `更新模式：${mode}\n\n`
-      + '更新期间请勿断电、拔线或退出 OmniWatch。',
-      '确认本地固件更新',
-      { type: 'warning', confirmButtonText: '开始更新', distinguishCancelAndClose: true },
+      t('ui.firmware_package_value', { value0: firmware.package.name })
+      + t('ui.file_count_value', { value0: firmware.package.fileCount })
+      + t('ui.target_port_value', { value0: firmware.selectedPort })
+      + t('ui.update_mode_value', { value0: mode })
+      + t('ui.do_not_power_off_unplug_the_device_or_exit'),
+      t('ui.confirm_local_firmware_update'),
+      { type: 'warning', confirmButtonText: t('ui.start_update'), distinguishCancelAndClose: true },
     )
     const payload = {
       port: firmware.selectedPort,
@@ -277,7 +279,7 @@ async function updateLocalFirmware() {
     else payload.packagePath = firmware.package.path
     const result = await invoke('device.firmware.updateLocal', payload)
     if (result.started) {
-      ElMessage.success(`已开始${firmware.force ? '全量' : '增量'}更新：${result.packageName}`)
+      ElMessage.success(t('ui.started_value_update_value', { value0: firmware.force ? t('common.full') : t('common.incremental'), value1: result.packageName }))
       await refreshRuntimeState()
     }
   } catch (error) {
@@ -299,7 +301,7 @@ async function selectSdkImage() {
     const result = await invoke('device.sdk.select')
     if (!result.cancelled) {
       sdk.image = result.image
-      ElMessage.success('SDK 镜像校验通过')
+      ElMessage.success(t('ui.sdk_image_validated'))
     }
   } catch (error) {
     ElMessage.error(error?.message || String(error))
@@ -318,7 +320,7 @@ async function handleBrowserSdkFile(event) {
     const result = await invoke('device.sdk.select', { uploadId: upload.uploadId })
     if (!result.cancelled) {
       sdk.image = { ...result.image, uploadId: upload.uploadId }
-      ElMessage.success('SDK 镜像校验通过')
+      ElMessage.success(t('ui.sdk_image_validated'))
     }
   } catch (error) {
     ElMessage.error(error?.message || String(error))
@@ -345,23 +347,23 @@ async function loadSdkPorts() {
  */
 async function startSdkFlash(force = false) {
   if (!sdk.image) {
-    ElMessage.warning('请先选择 SDK 镜像')
+    ElMessage.warning(t('ui.select_an_sdk_image_first'))
     return
   }
   if (force && !sdk.selectedPort) {
-    ElMessage.warning('请先选择强刷目标串口')
+    ElMessage.warning(t('ui.select_the_target_port_for_forced_flashing'))
     return
   }
-  const target = force ? `目标串口：${sdk.selectedPort}\n` : `当前 SDK：${currentDevice.value.sdk_version || '未知'}\n`
+  const target = force ? t('ui.target_port_value', { value0: sdk.selectedPort }) : t('ui.current_sdk_value', { value0: currentDevice.value.sdk_version || t('ui.unknown') })
   try {
     await ElMessageBox.confirm(
-      `${target}目标 SDK：${sdk.image.sdkVersion}\n`
-      + `镜像大小：${(sdk.image.size / 1024 / 1024).toFixed(2)} MiB\n`
+      t('ui.valuetarget_sdk_value', { value0: target, value1: sdk.image.sdkVersion })
+      + t('ui.image_size_value_mib', { value0: (sdk.image.size / 1024 / 1024).toFixed(2) })
       + `SHA-256：${sdk.image.sha256}\n\n`
-      + `${force ? '强刷会尝试控制所选串口进入下载模式。' : '设备将自动进入 ROM USB 下载模式。'}`
-      + '\n刷写期间请勿断电、拔线或让电脑休眠。',
-      force ? '确认强刷 SDK' : '确认刷写 USB SDK',
-      { type: 'warning', confirmButtonText: '开始刷写', distinguishCancelAndClose: true },
+      + `${force ? t('ui.forced_flashing_will_try_to_enter_download_mode_through') : t('ui.the_device_will_enter_rom_usb_download_mode_automatically')}`
+      + t('ui.do_not_power_off_unplug_the_device_or_let'),
+      force ? t('ui.confirm_forced_sdk_flash') : t('ui.confirm_usb_sdk_flash'),
+      { type: 'warning', confirmButtonText: t('ui.start_flashing'), distinguishCancelAndClose: true },
     )
     const payload = {
       force,
@@ -370,7 +372,7 @@ async function startSdkFlash(force = false) {
     if (sdk.image.uploadId) payload.uploadId = sdk.image.uploadId
     const result = await invoke('device.sdk.flash', payload)
     Object.assign(sdk, result)
-    ElMessage.success('SDK 更新任务已启动')
+    ElMessage.success(t('ui.sdk_update_started'))
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
       ElMessage.error(error?.message || String(error))
@@ -384,7 +386,7 @@ async function startSdkFlash(force = false) {
 async function takeScreenshot() {
   try {
     await invoke('device.screenshot')
-    ElMessage.success('截图请求已发送')
+    ElMessage.success(t('ui.screenshot_requested'))
   } catch (error) {
     ElMessage.error(error?.message || String(error))
   }
@@ -395,9 +397,9 @@ async function takeScreenshot() {
  */
 async function rebootDevice() {
   try {
-    await ElMessageBox.confirm('确定立即重启当前设备吗？', '重启设备', { type: 'warning' })
+    await ElMessageBox.confirm(t('ui.restart_the_current_device_now'), t('ui.restart_device'), { type: 'warning' })
     await invoke('device.reboot')
-    ElMessage.success('设备重启命令已发送')
+    ElMessage.success(t('ui.device_restart_command_sent'))
   } catch (error) {
     if (error !== 'cancel') ElMessage.error(error?.message || String(error))
   }
@@ -427,82 +429,82 @@ onBeforeUnmount(() => {
   <div class="hero-card">
     <div>
       <el-tag :type="statusType" effect="dark">{{ statusText }}</el-tag>
-      <h2>{{ currentDevice.board_model || 'OmniWatch 设备' }}</h2>
-      <p>{{ currentDevice.address || currentDevice.wifi_address || '等待连接信息' }}</p>
+      <h2>{{ currentDevice.board_model || t('ui.omniwatch_device') }}</h2>
+      <p>{{ currentDevice.address || currentDevice.wifi_address || t('ui.waiting_for_connection_details') }}</p>
     </div>
     <div class="hero-actions">
-      <el-button :loading="probe.loading" type="primary" @click="probeDevice">主动探测</el-button>
-      <el-button @click="takeScreenshot">屏幕截图</el-button>
-      <el-button type="danger" plain @click="rebootDevice">重启设备</el-button>
+      <el-button :loading="probe.loading" type="primary" @click="probeDevice">{{ t('ui.scan_devices') }}</el-button>
+      <el-button @click="takeScreenshot">{{ t('ui.screenshot') }}</el-button>
+      <el-button type="danger" plain @click="rebootDevice">{{ t('ui.restart_device') }}</el-button>
     </div>
   </div>
   <el-card shadow="never" class="section-gap connection-policy-card">
     <div class="connection-policy-row">
       <div>
-        <strong>强制切换 USB-CDC</strong>
-        <p>开启后断开当前 WebSocket，不再主动搜索 Wi-Fi 设备，并持续优先探测 USB 串口。</p>
+        <strong>{{ t('ui.force_usb_cdc') }}</strong>
+        <p>{{ t('ui.disconnect_websocket_stop_wi_fi_discovery_and_continuously_probe') }}</p>
       </div>
       <el-switch
         v-model="settings.force_usb_cdc"
         :loading="saving"
-        active-text="仅使用 USB-CDC"
-        inactive-text="允许 Wi-Fi / USB"
+        :active-text="t('ui.usb_cdc_only')"
+        :inactive-text="t('ui.allow_wi_fi_usb')"
         @change="saveConnectionPolicy"
       />
     </div>
   </el-card>
   <el-card shadow="never" class="section-gap">
-    <template #header><span>设备详情</span></template>
+    <template #header><span>{{ t('ui.device_details') }}</span></template>
     <el-descriptions :column="2" border>
-      <el-descriptions-item label="设备 UUID">
+      <el-descriptions-item :label="t('ui.device_uuid')">
         <div class="uuid-actions">
           <span class="hash-value">{{ currentDevice.device_id || '--' }}</span>
           <el-tag
             v-if="registration.registered && registration.uuid === currentDevice.device_id"
             type="success"
             size="small"
-          >已注册</el-tag>
-          <el-button link type="primary" :disabled="!currentDevice.device_id" @click="copyDeviceUuid">复制</el-button>
+          >{{ t('ui.registered') }}</el-tag>
+          <el-button link type="primary" :disabled="!currentDevice.device_id" @click="copyDeviceUuid">{{ t('ui.copy') }}</el-button>
           <el-button
             v-if="!registration.registered || registration.uuid !== currentDevice.device_id"
             link
             type="primary"
             :disabled="!currentDevice.connected || !currentDevice.device_id"
             @click="registerDeviceNow"
-          >立即注册</el-button>
+          >{{ t('ui.register_now') }}</el-button>
         </div>
       </el-descriptions-item>
-      <el-descriptions-item label="开发板">{{ currentDevice.board_model || '--' }}</el-descriptions-item>
-      <el-descriptions-item label="连接方式">{{ currentDevice.transport || '--' }}</el-descriptions-item>
+      <el-descriptions-item :label="t('ui.board')">{{ currentDevice.board_model || '--' }}</el-descriptions-item>
+      <el-descriptions-item :label="t('ui.connection')">{{ currentDevice.transport || '--' }}</el-descriptions-item>
       <el-descriptions-item label="LCD">{{ currentDevice.lcd_device_type || '--' }}</el-descriptions-item>
-      <el-descriptions-item label="分辨率">{{ currentDevice.screen_resolution || '--' }}</el-descriptions-item>
-      <el-descriptions-item label="固件版本">{{ currentDevice.firmware_version || '--' }}</el-descriptions-item>
-      <el-descriptions-item label="SDK 版本">{{ currentDevice.sdk_version || '--' }}</el-descriptions-item>
-      <el-descriptions-item label="SDK 受控刷写">
+      <el-descriptions-item :label="t('ui.resolution')">{{ currentDevice.screen_resolution || '--' }}</el-descriptions-item>
+      <el-descriptions-item :label="t('ui.firmware_version')">{{ currentDevice.firmware_version || '--' }}</el-descriptions-item>
+      <el-descriptions-item :label="t('ui.sdk_version')">{{ currentDevice.sdk_version || '--' }}</el-descriptions-item>
+      <el-descriptions-item :label="t('ui.managed_sdk_flashing')">
         <el-tag :type="controlledFlashSupported ? 'success' : 'info'" size="small">
-          {{ controlledFlashSupported ? '支持' : '不支持' }}
+          {{ controlledFlashSupported ? t('ui.supported') : t('ui.not_supported') }}
         </el-tag>
       </el-descriptions-item>
-      <el-descriptions-item label="Wi-Fi 支持">{{ currentDevice.wifi_supported ? '是' : '否' }}</el-descriptions-item>
+      <el-descriptions-item :label="t('ui.wi_fi_support')">{{ currentDevice.wifi_supported ? t('ui.yes') : t('ui.no') }}</el-descriptions-item>
     </el-descriptions>
   </el-card>
   <el-card shadow="never" class="section-gap">
     <template #header>
       <div class="card-header">
-        <span>USB SDK 更新</span>
-        <el-tag v-if="sdk.busy" type="warning">正在刷写</el-tag>
-        <el-tag v-else-if="sdk.status === 'success'" type="success">刷写完成</el-tag>
-        <el-tag v-else-if="sdk.status === 'error'" type="danger">刷写失败</el-tag>
+        <span>{{ t('ui.usb_sdk_update') }}</span>
+        <el-tag v-if="sdk.busy" type="warning">{{ t('ui.flashing') }}</el-tag>
+        <el-tag v-else-if="sdk.status === 'success'" type="success">{{ t('ui.flash_completed') }}</el-tag>
+        <el-tag v-else-if="sdk.status === 'error'" type="danger">{{ t('ui.flash_failed') }}</el-tag>
       </div>
     </template>
     <el-alert
-      title="刷写期间请勿断电、拔线或让电脑休眠。"
+      :title="t('ui.do_not_power_off_unplug_the_device_or_let_2')"
       type="warning"
       :closable="false"
       show-icon
     />
     <div class="sdk-toolbar section-gap">
-      <el-button :disabled="sdk.busy" @click="selectSdkImage">选择并校验 SDK 镜像</el-button>
+      <el-button :disabled="sdk.busy" @click="selectSdkImage">{{ t('ui.select_and_validate_sdk_image') }}</el-button>
       <input
         v-if="isHttpBridge()"
         ref="sdkFileInput"
@@ -514,7 +516,7 @@ onBeforeUnmount(() => {
       <el-select
         v-model="sdk.selectedPort"
         :disabled="sdk.busy"
-        placeholder="强刷目标串口"
+        :placeholder="t('ui.forced_flash_target_port')"
         class="sdk-port-select"
         @visible-change="(visible) => visible && loadSdkPorts()"
       >
@@ -525,20 +527,18 @@ onBeforeUnmount(() => {
           :value="port.device"
         />
       </el-select>
-      <el-button :disabled="sdk.busy || !sdk.image" @click="startSdkFlash(true)">强刷 SDK</el-button>
+      <el-button :disabled="sdk.busy || !sdk.image" @click="startSdkFlash(true)">{{ t('ui.force_flash_sdk') }}</el-button>
       <el-button
         type="primary"
         :loading="sdk.busy"
         :disabled="!sdk.image || !controlledFlashSupported"
         @click="startSdkFlash(false)"
-      >
-        刷写 USB SDK
-      </el-button>
+      >{{ t('ui.flash_usb_sdk') }}</el-button>
     </div>
     <el-descriptions v-if="sdk.image" :column="2" border class="section-gap">
-      <el-descriptions-item label="镜像文件">{{ sdk.image.name }}</el-descriptions-item>
-      <el-descriptions-item label="目标版本">{{ sdk.image.sdkVersion }}</el-descriptions-item>
-      <el-descriptions-item label="镜像大小">{{ (sdk.image.size / 1024 / 1024).toFixed(2) }} MiB</el-descriptions-item>
+      <el-descriptions-item :label="t('ui.image_file')">{{ sdk.image.name }}</el-descriptions-item>
+      <el-descriptions-item :label="t('ui.target_version')">{{ sdk.image.sdkVersion }}</el-descriptions-item>
+      <el-descriptions-item :label="t('ui.image_size')">{{ (sdk.image.size / 1024 / 1024).toFixed(2) }} MiB</el-descriptions-item>
       <el-descriptions-item label="SHA-256"><span class="hash-value">{{ sdk.image.sha256 }}</span></el-descriptions-item>
     </el-descriptions>
     <p v-if="sdk.message" class="sdk-status">{{ sdk.message }}</p>
@@ -547,22 +547,20 @@ onBeforeUnmount(() => {
       ref="sdkLogView"
       :content="sdk.logs"
       pre-class="terminal sdk-log-view"
-      copy-success-text="SDK 日志已复制"
+      :copy-success-text="t('ui.sdk_logs_copied')"
     />
     <el-divider />
     <div class="card-header">
       <div>
-        <strong>固件更新</strong>
-        <p class="sdk-status">选择目标串口和 ZIP 全量固件包，默认仅复制 Hash 不一致的文件。</p>
+        <strong>{{ t('ui.firmware_update') }}</strong>
+        <p class="sdk-status">{{ t('ui.select_a_target_port_and_full_firmware_zip_only') }}</p>
       </div>
-      <el-tag v-if="firmware.busy" type="warning">正在更新</el-tag>
-      <el-tag v-else-if="firmware.status === 'success'" type="success">更新完成</el-tag>
-      <el-tag v-else-if="firmware.status === 'error'" type="danger">更新失败</el-tag>
+      <el-tag v-if="firmware.busy" type="warning">{{ t('ui.updating') }}</el-tag>
+      <el-tag v-else-if="firmware.status === 'success'" type="success">{{ t('ui.update_completed') }}</el-tag>
+      <el-tag v-else-if="firmware.status === 'error'" type="danger">{{ t('ui.update_failed') }}</el-tag>
     </div>
     <div class="firmware-update-toolbar section-gap">
-      <el-button :disabled="firmware.busy" @click="selectFirmwarePackage">
-        选择固件 ZIP
-      </el-button>
+      <el-button :disabled="firmware.busy" @click="selectFirmwarePackage">{{ t('ui.select_firmware_zip') }}</el-button>
       <input
         v-if="isHttpBridge()"
         ref="firmwareFileInput"
@@ -574,7 +572,7 @@ onBeforeUnmount(() => {
       <el-select
         v-model="firmware.selectedPort"
         :disabled="firmware.busy"
-        placeholder="固件更新目标串口"
+        :placeholder="t('ui.firmware_update_target_port')"
         class="sdk-port-select"
         @visible-change="(visible) => visible && loadFirmwarePorts()"
       >
@@ -585,28 +583,24 @@ onBeforeUnmount(() => {
           :value="port.device"
         />
       </el-select>
-      <el-checkbox v-model="firmware.force" :disabled="firmware.busy" class="firmware-force-checkbox">
-        全量更新
-      </el-checkbox>
+      <el-checkbox v-model="firmware.force" :disabled="firmware.busy" class="firmware-force-checkbox">{{ t('ui.full_update') }}</el-checkbox>
       <el-button
         type="primary"
         :loading="firmware.busy"
         :disabled="sdk.busy || firmware.busy || !firmware.package || !firmware.selectedPort"
         @click="updateLocalFirmware"
-      >
-        开始固件更新
-      </el-button>
+      >{{ t('ui.start_firmware_update') }}</el-button>
     </div>
     <div v-if="firmware.package" class="firmware-package-summary">
-      <span>已选择：{{ firmware.package.name }}</span>
-      <span>{{ firmware.package.fileCount }} 个文件</span>
+      <span>{{ t('ui.selected') }}{{ firmware.package.name }}</span>
+      <span>{{ firmware.package.fileCount }}{{ t('ui.files') }}</span>
       <el-tag :type="firmware.force ? 'danger' : 'success'" size="small">
-        {{ firmware.force ? '全量覆盖' : 'Hash 增量' }}
+        {{ firmware.force ? t('ui.replace_all') : t('ui.hash_incremental') }}
       </el-tag>
     </div>
     <el-alert
       v-if="firmware.force"
-      title="全量更新将跳过设备文件 Hash 校验，直接复制并替换固件包中的全部文件。"
+      :title="t('ui.a_full_update_skips_device_hash_checks_and_replaces')"
       type="warning"
       :closable="false"
       show-icon
@@ -624,22 +618,22 @@ onBeforeUnmount(() => {
   <el-card shadow="never" class="section-gap">
     <template #header>
       <div class="card-header">
-        <span>设备实时日志</span>
+        <span>{{ t('ui.live_device_logs') }}</span>
       </div>
     </template>
     <CopyableLog
       ref="deviceLogView"
       :content="deviceLogs"
-      empty-text="暂无设备通信日志"
+      :empty-text="t('ui.no_device_communication_logs')"
       pre-class="terminal device-log-view"
-      copy-success-text="设备通信日志已复制"
+      :copy-success-text="t('ui.device_communication_logs_copied')"
     />
     <template v-if="probe.log">
-      <p class="probe-log-title">最近一次主动探测输出</p>
+      <p class="probe-log-title">{{ t('ui.latest_device_scan_output') }}</p>
       <CopyableLog
         :content="probe.log"
         pre-class="terminal probe-log-view"
-        copy-success-text="设备探测日志已复制"
+        :copy-success-text="t('ui.device_scan_logs_copied')"
       />
     </template>
   </el-card>

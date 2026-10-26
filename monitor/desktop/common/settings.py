@@ -1,5 +1,6 @@
 """桌面公共配置模型、持久化与启动参数转换。"""
 
+
 import json
 import platform
 import secrets
@@ -20,6 +21,7 @@ DEFAULT_COLLECTION_TASK_INTERVALS = system_task_defaults()
 COLLECTION_TASK_ZH_NAMES = system_task_zh_names()
 DEFAULT_MARKET_URL = "https://omni.mzlblog.com"
 DEFAULT_SETTINGS = {
+    "locale": "zh-CN",
     "port": "",
     "websocket_url": "",
     "force_usb_cdc": False,
@@ -65,6 +67,7 @@ DEFAULT_SETTINGS = {
     "http_auth": secrets.token_urlsafe(24),
 }
 ARGUMENT_NAMES = {
+    "--locale": "locale",
     "--port": "port",
     "--websocket-url": "websocket_url",
     "--websocket-client-name": "websocket_client_name",
@@ -116,7 +119,8 @@ def style_names(settings=None, idle=None):
 def style_label(style, settings=None):
     """返回包含中文名称和程序名称的样式显示文本。"""
     names = style_names(settings)
-    return "{}（{}）".format(names.get(style, style), style)
+    label = names.get(style, style)
+    return "{} ({})".format(label, style) if (settings or {}).get("locale") == "en-US" else "{}（{}）".format(label, style)
 
 
 def normalize_collection_task_intervals(intervals):
@@ -155,6 +159,8 @@ class TraySettingsStore:
                 legacy_intervals = payload.get("collection_task_intervals", {})
         except (OSError, ValueError, TypeError):
             pass
+        if settings.get("locale") not in ("zh-CN", "en-US"):
+            settings["locale"] = "zh-CN"
         settings["styles"] = normalize_style_catalog(settings.get("styles")) or list(DEFAULT_STYLE_CATALOG)
         settings["collection_task_intervals"] = normalize_collection_task_intervals(settings.get("collection_task_intervals"))
         settings["custom_data_configs"] = normalize_plugin_configs(

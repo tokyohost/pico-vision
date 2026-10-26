@@ -1,4 +1,6 @@
 <script setup>
+import { t, setLocale, elementLocale } from './i18n'
+
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { invoke } from './bridge'
@@ -40,23 +42,23 @@ const device = reactive({ connected: null })
 let deviceRefreshTimer = null
 let deviceRefreshPending = false
 
-const menuItems = [
-  ['settings', '设置', 'Setting', '配置屏幕显示、数据采集、设备连接与任务频率'],
-  ['device', '设备管理', 'Monitor', '查看设备状态，管理固件升级与底层 SDK 刷写'],
-  ['network', '无线与客户端', 'Connection', '管理无线网络档案、连接优先级与客户端访问状态'],
-  ['styles', '屏幕样式', 'Brush', '选择屏幕与待机样式，预览详情或管理设备自定义样式'],
-  ['data', '插件管理', 'DataAnalysis', '管理数据采集插件及其运行配置'],
-  ['market', '插件市场', 'Shop', '浏览、下载并管理 OmniWatch 数据采集插件'],
-  ['update', '检查更新', 'Upload', '检查设备固件、底层 SDK 与桌面控制中心的版本更新'],
-  ['logs', '运行日志', 'Document', '查看实时运行记录'],
-  ['about', '关于', 'InfoFilled', '关于此应用信息'],
-]
+const menuItems = computed(() => [
+  ['settings', t('ui.settings'), 'Setting', t('ui.configure_display_collection_connections_and_task_intervals')],
+  ['device', t('ui.devices'), 'Monitor', t('ui.view_device_status_and_manage_firmware_and_sdk_updates')],
+  ['network', t('ui.wireless_clients'), 'Connection', t('ui.manage_wi_fi_profiles_connection_priorities_and_client_access')],
+  ['styles', t('ui.screen_styles'), 'Brush', t('ui.choose_display_and_idle_styles_preview_details_and_manage')],
+  ['data', t('ui.plugins'), 'DataAnalysis', t('ui.manage_data_collection_plugins_and_their_settings')],
+  ['market', t('ui.plugin_market'), 'Shop', t('ui.browse_download_and_manage_omniwatch_plugins')],
+  ['update', t('ui.updates'), 'Upload', t('ui.check_firmware_sdk_and_desktop_application_updates')],
+  ['logs', t('ui.logs'), 'Document', t('ui.view_live_application_logs')],
+  ['about', t('ui.about'), 'InfoFilled', t('ui.about_this_application')],
+])
 
 const pageTitle = computed(
-  () => menuItems.find((item) => item[0] === activePage.value)?.[1] || '',
+  () => menuItems.value.find((item) => item[0] === activePage.value)?.[1] || '',
 )
 const pageDescription = computed(
-  () => menuItems.find((item) => item[0] === activePage.value)?.[3] || '',
+  () => menuItems.value.find((item) => item[0] === activePage.value)?.[3] || '',
 )
 
 /**
@@ -68,6 +70,7 @@ async function bootstrap() {
     const data = await invoke('app.bootstrap')
     Object.assign(metadata, data)
     Object.assign(settings, data.settings)
+    setLocale(settings.locale)
     Object.assign(device, data.device)
   } catch (error) {
     ElMessage.error(error?.message || String(error))
@@ -101,7 +104,8 @@ async function saveSettings() {
     await invoke('settings.save', {
       settings: JSON.parse(JSON.stringify(settings)),
     })
-    ElMessage.success('配置已保存并生效')
+    setLocale(settings.locale)
+    ElMessage.success(t('ui.settings_saved_and_applied'))
   } catch (error) {
     ElMessage.error(error?.message || String(error))
   } finally {
@@ -159,6 +163,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <el-config-provider :locale="elementLocale">
   <GlobalLoadingOverlay />
   <el-container class="shell" v-loading="loading">
     <AppSidebar
@@ -221,4 +226,5 @@ onBeforeUnmount(() => {
       </el-main>
     </el-container>
   </el-container>
+  </el-config-provider>
 </template>
