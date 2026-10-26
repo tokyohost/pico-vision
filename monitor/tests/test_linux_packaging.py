@@ -136,7 +136,7 @@ class LinuxPackagingTest(unittest.TestCase):
         workflow = (MONITOR_ROOT.parent / ".github/workflows/build-linux-deb.yml").read_text(encoding="utf-8")
         package_copy = next(line.strip() for line in workflow.splitlines()
                             if line.strip().startswith("cp -r collectTask "))
-        for package_name in ("custom_data", "monitor_core", "desktop", "net"):
+        for package_name in ("custom_data", "monitor_core", "desktop", "net", "locales"):
             with self.subTest(package=package_name):
                 self.assertIn(package_name, package_copy.split())
                 if package_name == "desktop":
@@ -194,6 +194,8 @@ class LinuxPackagingTest(unittest.TestCase):
                     self.assertEqual(manifest["version"], "1.2.3")
                     self.assertEqual(manifest["target"], target)
                     self.assertIn('MONITOR_VERSION = "1.2.3"', build_info)
+                    for runtime_file in ("i18n.py", "locales/__init__.py", "locales/zh_cn.py", "locales/en_us.py"):
+                        self.assertIn("{}/{}".format(root_name, runtime_file), names)
                     for strategy_target in ("synology", "qnap", "truenas"):
                         self.assertIn(
                             "{}/collectTask/tasks/{}/system_strategy.py".format(

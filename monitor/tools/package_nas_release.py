@@ -26,6 +26,7 @@ RUNTIME_DIRECTORIES = (
     "custom_data",
     "monitor_core",
     "net",
+    "locales",
 )
 SUPPORT_DIRECTORIES = (
     "bin",

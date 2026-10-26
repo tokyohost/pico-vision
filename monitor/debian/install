@@ -16,6 +16,8 @@ pico_upgrade.py usr/lib/pico-monitor
 monitor_update.py usr/lib/pico-monitor
 build_info.py usr/lib/pico-monitor
 constants.py usr/lib/pico-monitor
+i18n.py usr/lib/pico-monitor
+locales usr/lib/pico-monitor
 json_ack_timing_cache.py usr/lib/pico-monitor
 usbCdcFramework.py usr/lib/pico-monitor
 usb_transfer_diagnostics.py usr/lib/pico-monitor

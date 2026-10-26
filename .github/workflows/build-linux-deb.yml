@@ -119,7 +119,7 @@ jobs:
           mkdir -p "release-assets/${package_name}/packaging" "release-assets/${package_name}/debian"
           cp ./*.py requirements.txt install-linux.sh README.md NAS_INSTALL.md "release-assets/${package_name}/"
           # 桌面公共模块也是无界面服务的运行依赖，重构后必须随通用包一起发布。
-          cp -r collectTask custom_data monitor_core desktop net bin "release-assets/${package_name}/"
+          cp -r collectTask custom_data monitor_core desktop net locales bin "release-assets/${package_name}/"
           cp packaging/pico-monitor-generic packaging/pico-monitor-generic.service "release-assets/${package_name}/packaging/"
           cp debian/pico-monitor.conf "release-assets/${package_name}/debian/"
           mkdir -p "release-assets/${package_name}/win/ui-web"
