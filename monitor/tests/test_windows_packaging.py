@@ -1,5 +1,6 @@
 """验证 Windows 安装包依赖的构建与运行时部署配置。"""
 
+import json
 import unittest
 from pathlib import Path
 
@@ -198,7 +199,19 @@ class WindowsPackagingTest(unittest.TestCase):
         )
 
         self.assertIn("copyText(props.content)", copyable_log)
-        self.assertIn('aria-label="复制全部日志"', copyable_log)
+        # 无障碍名称和悬浮提示随界面语言切换，不能再匹配写死的中文属性。
+        self.assertIn(':aria-label="t(\'ui.copy_all_logs\')"', copyable_log)
+        self.assertIn(':content="t(\'ui.copy_all_logs\')"', copyable_log)
+        for locale, label in (
+            ("zh-CN", "复制全部日志"),
+            ("en-US", "Copy all logs"),
+        ):
+            with self.subTest(locale=locale):
+                translations = json.loads(
+                    (component_root.parent / "locales" / (locale + ".json"))
+                    .read_text(encoding="utf-8")
+                )
+                self.assertEqual(label, translations["ui.copy_all_logs"])
         for component_name in (
             "CustomDataPage.vue",
             "DevicePage.vue",

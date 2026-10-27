@@ -150,15 +150,16 @@ class Application:
         self._boot_frame = 0
         self._boot_logs = []
         self._next_boot_animation = time.ticks_ms()
-        self._show_boot(72, "BOOT:LCD_READY", t('boot.loading'), flush=True)
+        # 启动页使用原生 ASCII 字体，状态文案固定为英文，避免中文显示为问号。
+        self._show_boot(72, "BOOT:LCD_READY", "loading...", flush=True)
         self._preload_boot_styles()
         self._cache = SnapshotCache()
-        self._show_boot(84, "BOOT:CACHE_READY", t('boot.loading'), flush=True)
+        self._show_boot(84, "BOOT:CACHE_READY", "loading...", flush=True)
         self._receiver = DataReceiver(self._protocol, self._cache, self._led)
         # 渲染控制等待期间也要持续消费 CDC 输入，防止主机在样式切换时
         # 把下一笔 JSON 分片写满 USB OUT 端点后永久背压。
         self._renderer.set_progress_callback(self._pump_protocol)
-        self._show_boot(94, "BOOT:RECEIVER_READY", t('boot.loading'), flush=True)
+        self._show_boot(94, "BOOT:RECEIVER_READY", "loading...", flush=True)
         self._rendering_version = -1
         now = time.ticks_ms()
         self._next_clock_render = time.ticks_add(
@@ -283,7 +284,7 @@ class Application:
     def show_application_error(self, error):
         """切换到错误页面，并把未处理异常的类型和信息直接显示到 LCD。"""
         error_type = type(error).__name__
-        error_message = str(error) or t("error.unknown")
+        error_message = str(error) or "Unknown error"
         self._renderer.abort_render(release_snapshot=True)
         self._renderer.set_style("boot")
         self._boot_logs = [
@@ -454,7 +455,7 @@ class Application:
                 self._enter_idle(snapshot)
             elif snapshot is None:
                 self._renderer.set_style("boot")
-                self._show_boot(100, "SYSTEM_BOOT:WAITING_MONITOR", t("boot.waiting") + " ....")
+                self._show_boot(100, "SYSTEM_BOOT:WAITING_MONITOR", "waiting connecting ....")
             else:
                 display = snapshot.get("display", {})
                 style = self._button_style_override or display.get("style", LCD_STYLE)
@@ -463,7 +464,7 @@ class Application:
         except (ImportError, MemoryError, OSError, TypeError, ValueError) as error:
             self._protocol.write("BUTTON:MENU_RESTORE_ERROR:{}\n".format(error).encode("utf-8"))
             self._renderer.set_style("boot")
-            self._show_boot(100, "STYLE:RESTORE_FAILED", t("boot.waiting") + " ....")
+            self._show_boot(100, "STYLE:RESTORE_FAILED", "waiting connecting ....")
         self._renderer.set_system_menu(None)
 
     def system_menu_information(self, key, dynamic=False):
@@ -854,7 +855,7 @@ class Application:
         self._show_boot(
             100,
             "SYSTEM_BOOT:WAITING_MONITOR",
-            t("boot.waiting") + " ....",
+            "waiting connecting ....",
             flush=True,
         )
         # Monitor 进程退出只会结束主机侧会话，ESP32-S3 内置 USB 控制台仍然
@@ -872,14 +873,14 @@ class Application:
         self._show_boot(
             97,
             "BOOT:MEMORY:USED={}:TOTAL={}".format(memory_used, memory_total),
-            t('boot.loading'),
+            "loading...",
             flush=True,
         )
         self._protocol.write(b"BOOT:ESP32_S3_LCD_READY\n")
         self._show_boot(
             100,
             "BOOT:ESP32_S3_LCD_READY",
-            t("boot.waiting") + " ....",
+            "waiting connecting ....",
             flush=True,
         )
         while True:
@@ -967,7 +968,7 @@ class Application:
                 self._show_boot(
                     100,
                     "BOOT:ESP32_S3_LCD_READY",
-                    t("boot.waiting") + " " + dots,
+                    "waiting connecting " + dots,
                 )
                 self._boot_frame += 1
                 self._next_boot_animation = time.ticks_add(now, 250)
