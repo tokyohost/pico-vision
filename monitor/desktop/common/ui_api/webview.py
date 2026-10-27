@@ -35,8 +35,9 @@ class WebUiMixin:
         if bridge is None:
             bridge = WebViewBridge(self)
             self.webview_bridge = bridge
+        # pythonnet 无法将翻译标记字符串子类转换为 System.String，原生边界须传普通字符串。
         window = webview.create_window(
-            t('message.control_center').format(APPLICATION_NAME),
+            str(t('message.control_center').format(APPLICATION_NAME)),
             entry.resolve().as_uri(),
             js_api=bridge,
             width=1120,

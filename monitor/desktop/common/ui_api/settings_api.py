@@ -185,7 +185,8 @@ class SettingsApiMixin:
         window = getattr(self._application, "webview_window", None)
         if window is not None:
             try:
-                window.set_title(t('message.control_center').format(APPLICATION_NAME))
+                # 与首次创建窗口一致，避免翻译字符串子类触发 .NET 类型转换异常。
+                window.set_title(str(t('message.control_center').format(APPLICATION_NAME)))
             except Exception:
                 # 原生窗口可能正在关闭，标题更新失败不影响语言保存和设备同步。
                 pass

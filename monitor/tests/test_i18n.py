@@ -1,6 +1,7 @@
 """验证驱动语言配置、展示翻译和传输兼容性。"""
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ from unittest import mock
 from i18n import CHINESE, ENGLISH, error_response, set_locale, t
 from desktop.common.settings import DEFAULT_SETTINGS, TraySettingsStore, apply_worker_arguments, style_label
 from desktop.common.ui_api.bridge import WebViewBridge
+from desktop.common.ui_api.webview import WebUiMixin
 from desktop.linux.bridge import LinuxInvokeBridge
 from monitor_core.arguments import create_argument_parser
 from monitor_core.runtime_operations import RuntimeOperationsMixin
@@ -42,6 +44,27 @@ class I18nTest(unittest.TestCase):
             self.assertEqual("Hello Ada", t("test.named", {"name": "Ada"}))
         with mock.patch.dict(CHINESE, {"test.fallback": "回退"}):
             self.assertEqual("回退", t("test.fallback"))
+
+    def test_native_window_titles_use_plain_strings(self):
+        """启动和切换语言均向原生窗口传普通字符串，避免 pythonnet 转换失败。"""
+        for locale in ("zh-CN", "en-US"):
+            with self.subTest(locale=locale):
+                set_locale(locale)
+                application = mock.MagicMock()
+                application._resource_path.return_value = Path(__file__)
+                application.settings = dict(DEFAULT_SETTINGS)
+                webview = mock.MagicMock()
+                with mock.patch.dict(sys.modules, {"webview": webview}):
+                    WebUiMixin._initialize_webview(application)
+                title = webview.create_window.call_args.args[0]
+                self.assertIs(type(title), str)
+                self.assertEqual(t("message.control_center").format("OmniWatch"), title)
+
+                bridge = WebViewBridge(application)
+                bridge._save_settings({"settings": {"locale": locale}})
+                updated_title = application.webview_window.set_title.call_args.args[0]
+                self.assertIs(type(updated_title), str)
+                self.assertEqual(title, updated_title)
 
     def test_settings_cli_and_yaml_round_trip(self):
         """旧配置默认中文，保存后传递给命令行及 YAML 解析器。"""
