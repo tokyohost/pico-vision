@@ -12,6 +12,7 @@ PANEL_BORDER = 0x31A8
 DIM_TEXT = 0x632C
 GHOST_TEXT = 0x18E4
 LOG_FONT_NAME = "screen_2inch"
+WIFI_FONT_NAME = "zlabs_pixel_12px"
 WEEKDAYS = ("星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六")
 
 
@@ -103,23 +104,42 @@ class IdleStyle:
             return boot.get("wifi")
         return {}
 
+    @staticmethod
+    def _wifi_signal_level(wifi):
+        """将有效的负数 RSSI 转为一至四格，断开或数据无效时返回零格。"""
+        rssi = wifi.get("rssi")
+        if not wifi.get("connected") or isinstance(rssi, bool):
+            return 0
+        if not isinstance(rssi, (int, float)) or not -127 <= rssi < 0:
+            return 0
+        if rssi >= -55:
+            return 4
+        if rssi >= -65:
+            return 3
+        if rssi >= -75:
+            return 2
+        return 1
+
     @classmethod
     def _draw_header(cls, canvas, snapshot):
-        """绘制品牌和右上角 Wi-Fi 状态。"""
-        # canvas.text(8, 8, "OMNIWATCH", WHITE)
+        """绘制右上角四格阶梯信号条和 Wi-Fi 名称，预留图标空间。"""
         wifi = cls._wifi_status(snapshot)
         connected = bool(wifi.get("connected"))
-        color = IDLE_GREEN if connected else DIM_TEXT
         if connected:
-            rssi = wifi.get("rssi")
             ssid = wifi.get("ssid") or "ON"
-            label = "WIFI {}dBm {}".format(rssi, ssid) if rssi is not None else "WIFI {}".format(ssid)
+            label = "WIFI {}".format(ssid)
         else:
             label = "WIFI NOT CONNECT"
-        label = cls._clip_text(canvas, label.strip(), 208)
-        text_x = SCREEN_WIDTH - 8 - canvas.text_width(label)
-        canvas.fill_rect(max(104, text_x - 12), 9, 7, 7, color)
-        canvas.text(text_x, 8, label, WHITE if connected else DIM_TEXT)
+        # 状态区从 x=104 开始：18 像素图标、6 像素间距，右侧保留 8 像素。
+        label = cls._clip_text(canvas, label.strip(), 184, font_name=WIFI_FONT_NAME)
+        text_x = SCREEN_WIDTH - 8 - canvas.text_width(label, font_name=WIFI_FONT_NAME)
+        # Z 工坊 12px 字体上升部为 10 像素，基线位于文字顶部下方 10 像素。
+        baseline_y = 8 + 10
+        level = cls._wifi_signal_level(wifi)
+        for index, height in enumerate((3, 6, 9, 12)):
+            color = IDLE_GREEN if index < level else DIM_TEXT
+            canvas.fill_rect(text_x - 24 + index * 5, baseline_y - height, 3, height, color)
+        canvas.text(text_x, 8, label, WHITE if connected else DIM_TEXT, font_name=WIFI_FONT_NAME)
 
     @classmethod
     def _draw_clock(cls, canvas, parts):
