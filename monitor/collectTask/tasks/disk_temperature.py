@@ -16,7 +16,7 @@ class DiskTemperatureTask(CollectionTask):
         """返回合并后的磁盘温度指标。"""
         if self._sensor_host_available():
             return {}
-        disks = collect_shared_disk_details(self.collector, refresh_hardware=True)
+        disks = collect_shared_disk_details(self.collector, refresh_hardware=True, purpose="temperature")
         if self._sensor_host_available():
             return {}
         return publish_disk_snapshot(

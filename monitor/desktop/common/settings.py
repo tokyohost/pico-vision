@@ -45,6 +45,8 @@ DEFAULT_SETTINGS = {
     "custom_data_configs": normalize_plugin_configs({}),
     "custom_data_enabled": normalize_plugin_enabled({}),
     "collection_task_logs": True,
+    "disk_allow_wakeup": True,
+    "disk_smart_interval_minutes": 30,
     "screen_rotation": 0,
     "lcd_brightness": 100,
     "network_unit": "MB",
@@ -85,6 +87,7 @@ ARGUMENT_NAMES = {
     "--lan-probe-path": "lan_probe_path",
     "--lan-probe-timeout": "lan_probe_timeout",
     "--lan-probe-max-workers": "lan_probe_max_workers",
+    "--disk-smart-interval-minutes": "disk_smart_interval_minutes",
     "--collection-task-intervals": "collection_task_intervals",
     "--custom-data-configs": "custom_data_configs",
     "--custom-data-enabled": "custom_data_enabled",
@@ -159,6 +162,8 @@ class TraySettingsStore:
                 legacy_intervals = payload.get("collection_task_intervals", {})
         except (OSError, ValueError, TypeError):
             pass
+        from monitor_core.config import validate_disk_settings
+        settings["disk_smart_interval_minutes"] = validate_disk_settings(settings)
         if settings.get("locale") not in ("zh-CN", "en-US"):
             settings["locale"] = "zh-CN"
         settings["styles"] = normalize_style_catalog(settings.get("styles")) or list(DEFAULT_STYLE_CATALOG)
@@ -284,6 +289,7 @@ def apply_worker_arguments(arguments, settings):
             continue
         if argument in (
                 "--dev", "--no-dev", "--qbittorrent-enabled", "--no-qbittorrent",
+                "--disk-allow-wakeup", "--no-disk-allow-wakeup",
                 "--adaptive-transmit", "--no-adaptive-transmit",
                 "--collection-task-logs", "--no-collection-task-logs",
                 "--force-usb-cdc", "--no-force-usb-cdc",
@@ -311,6 +317,7 @@ def apply_worker_arguments(arguments, settings):
     retained.append("--adaptive-transmit" if settings["adaptive_transmit"] else "--no-adaptive-transmit")
     retained.append("--collection-task-logs" if settings["collection_task_logs"] else "--no-collection-task-logs")
     retained.append("--force-usb-cdc" if settings["force_usb_cdc"] else "--no-force-usb-cdc")
+    retained.append("--disk-allow-wakeup" if settings.get("disk_allow_wakeup", True) else "--no-disk-allow-wakeup")
     retained.append("--idle-enabled" if settings["idle_enabled"] else "--no-idle")
     if settings["dev"]:
         retained.append("--dev")
@@ -320,7 +327,9 @@ def apply_worker_arguments(arguments, settings):
 def settings_from_arguments(arguments, base=None):
     """从已有启动参数提取配置，用于首次升级时平滑迁移。"""
     settings = dict(DEFAULT_SETTINGS if base is None else base)
+    from monitor_core.config import parse_disk_smart_interval
     converters = {
+        "disk_smart_interval_minutes": parse_disk_smart_interval,
         "interval": float, "reconnect_interval": float, "serial_probe_interval": float,
         "lan_probe_port": int, "lan_probe_timeout": float, "lan_probe_max_workers": int,
         "wifi_announcement_port": int, "wifi_announcement_timeout": float,
@@ -357,6 +366,10 @@ def settings_from_arguments(arguments, base=None):
             settings["force_usb_cdc"] = True
         elif argument == "--no-force-usb-cdc":
             settings["force_usb_cdc"] = False
+        elif argument == "--disk-allow-wakeup":
+            settings["disk_allow_wakeup"] = True
+        elif argument == "--no-disk-allow-wakeup":
+            settings["disk_allow_wakeup"] = False
         elif argument == "--idle-enabled":
             settings["idle_enabled"] = True
         elif argument == "--no-idle":

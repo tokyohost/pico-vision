@@ -10,6 +10,8 @@ from collectTask import system_task_defaults
 from collectTask.system_tasks import system_task_aliases
 
 CONFIG_ENV_MAP = {
+    "PICO_MONITOR_DISK_ALLOW_WAKEUP": ("disk", "allow_wakeup"),
+    "PICO_MONITOR_DISK_SMART_INTERVAL_MINUTES": ("disk", "smart_interval_minutes"),
     "PICO_MONITOR_LOCALE": ("screen", "locale"),
     "PICO_MONITOR_PORT": ("serial", "port"),
     "PICO_MONITOR_WEBSOCKET_URL": ("network", "websocket_url"),
@@ -215,3 +217,23 @@ def parse_custom_data_enabled(value):
     if not isinstance(payload, dict):
         raise argparse.ArgumentTypeError("自定义数据插件启用状态必须是 JSON 对象")
     return normalize_plugin_enabled(payload)
+
+
+
+def parse_disk_smart_interval(value):
+    """严格解析正整数分钟，禁止布尔值和小数被隐式截断。"""
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError("SMART 健康检查周期必须为正整数分钟")
+    if isinstance(value, str) and (not value.isascii() or not value.isdecimal()):
+        raise ValueError("SMART 健康检查周期必须为正整数分钟")
+    result = int(value)
+    if result < 1:
+        raise ValueError("SMART 健康检查周期必须至少为 1 分钟")
+    return result
+
+
+def validate_disk_settings(settings):
+    """校验磁盘开关及周期，兼容缺少字段的旧配置。"""
+    if not isinstance(settings.get("disk_allow_wakeup", True), bool):
+        raise ValueError("允许磁盘主动查询必须为布尔值")
+    return parse_disk_smart_interval(settings.get("disk_smart_interval_minutes", 30))

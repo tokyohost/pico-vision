@@ -100,9 +100,19 @@ class LinuxInvokeBridge:
             "screen_resolution": screen_resolution,
             "firmware_version": getattr(client, "firmware_version", None),
             "sdk_version": getattr(client, "sdk_version", None),
+            "disk_collection_status": self._disk_collection_status(),
             "wifi_supported": bool(network_status.get("wifi_enabled")),
             "sdk_update_supported": bool(sdk_update_info.get("supported")),
         }
+
+    def _disk_collection_status(self):
+        """返回内存中的磁盘容量新鲜度，管理页轮询不访问磁盘。"""
+        from collectTask.tasks.disk_common import disk_snapshot_disks
+        collector = getattr(self._service, "collector", None)
+        if collector is None:
+            return []
+        return [{key: disk.get(key) for key in ("name", "label", "capacity_stale", "capacity_updated_at")}
+                for disk in disk_snapshot_disks(collector) if disk.get("mountpoints")]
 
     def _style_catalog(self):
         """返回包含内置样式和设备自定义样式的规范化目录。"""
@@ -137,6 +147,8 @@ class LinuxInvokeBridge:
                 "custom_data_configs": {},
                 "custom_data_enabled": {},
                 "collection_task_logs": True,
+                "disk_allow_wakeup": True,
+                "disk_smart_interval_minutes": 30,
                 "locale": "zh-CN",
                 "screen_rotation": 0,
                 "lcd_brightness": 100,
@@ -441,6 +453,8 @@ class LinuxInvokeBridge:
             "reconnect_interval": ("monitor", "reconnect_interval"),
             "serial_probe_interval": ("serial", "probe_interval"),
             "collection_task_intervals": ("collection_tasks", "intervals"),
+            "disk_allow_wakeup": ("disk", "allow_wakeup"),
+            "disk_smart_interval_minutes": ("disk", "smart_interval_minutes"),
             "collection_task_logs": ("collection_tasks", "logs_enabled"),
             "custom_data_configs": ("custom_data", "configs"),
             "custom_data_enabled": ("custom_data", "enabled"),
@@ -498,6 +512,7 @@ class LinuxInvokeBridge:
                     "interval", "json_chunk_size", "adaptive_transmit", "reconnect_interval", "serial_probe_interval",
                     "lan_probe_port", "lan_probe_path", "lan_probe_timeout", "lan_probe_max_workers",
                     "collection_task_intervals", "custom_data_configs", "custom_data_enabled",
+                    "disk_allow_wakeup", "disk_smart_interval_minutes",
                     "collection_task_logs", "locale", "screen_rotation", "lcd_brightness", "network_unit",
                     "lcd_style", "idle_enabled", "idle_style", "idle_timeout", "qbittorrent_enabled",
                     "qbittorrent_address", "qbittorrent_username", "qbittorrent_password",

@@ -265,7 +265,7 @@ monitor:
 | --- | --- | ---: | --- |
 | `basic_information` | 基础信息采集 | `1` | 主机名、平台、系统运行时间等低成本信息。一般保持 `1`。 |
 | `cpu_memory` | CPU 与内存采集 | `1` | CPU 使用率、频率、温度、内存使用率和历史曲线。CPU 很弱时可设 `2`。 |
-| `disk_capacity_health` | 磁盘容量与健康 | `60` | 分区容量、占用率、SMART 健康等级。SMART 查询可能较慢，不建议设为 `1`。 |
+| `disk_capacity_health` | 磁盘容量与健康 | `60` | 分区容量、占用率与健康结果发布；SMART 查询独立使用 `disk.smart_interval_minutes`，不随容量任务频率提高。 |
 | `disk_temperature` | 磁盘温度 | `5` | SATA、NVMe 等物理盘温度。硬盘数量多或 SMART 访问慢时可设 `10`。 |
 | `disk_rate` | 磁盘读写速率 | `1` | 读写 B/s、每物理盘速度和 24 秒历史。需要平滑曲线时保持 `1`。 |
 | `network` | 网络采集 | `1` | 上传/下载速率、累计流量、网卡速率、Ping 和在线状态。只关心总流量时可设 `2`。 |
@@ -290,9 +290,33 @@ collection_tasks:
     gpu: 1
 ```
 
-任务频率和 `monitor.interval` 是两层设置。例如 `monitor.interval=0.5`、`disk_capacity_health=60` 表示快照可以每 0.5 秒发送，但磁盘容量和 SMART 数据最多每 60 秒更新一次。
+任务频率和 `monitor.interval` 是两层设置。例如 `monitor.interval=0.5`、`disk_capacity_health=60` 表示快照可以每 0.5 秒发送，磁盘容量按 60 秒任务刷新，SMART 健康检查另按 `disk.smart_interval_minutes` 调度，默认 30 分钟。
 
 `collection_tasks.logs_enabled` 是布尔值，DEB 模板为 `true`，裸程序默认 `false`。开启后会记录任务提交、开始、完成和线程池状态；关闭后仍保留错误和告警。排查任务卡顿时建议临时开启。
+
+## `disk`：磁盘休眠与 SMART 健康检查
+
+```yaml
+disk:
+  allow_wakeup: true
+  smart_interval_minutes: 30
+```
+
+- `allow_wakeup`：默认 `true`，与旧版本保持一致。飞牛 NAS 需要保护休眠时，在设置页取消“允许磁盘休眠时主动查询（可能唤醒磁盘）”，或设置为 `false`。
+- `smart_interval_minutes`：正整数分钟，最小 1、默认 30；独立于容量、温度和速率任务。设置页支持按分钟调节，保存后热更新，重启后保留。
+- 环境变量：`PICO_MONITOR_DISK_ALLOW_WAKEUP`、`PICO_MONITOR_DISK_SMART_INTERVAL_MINUTES`；命令行：`--disk-allow-wakeup` / `--no-disk-allow-wakeup`、`--disk-smart-interval-minutes 30`。
+
+关闭主动查询后，首次启动与空闲磁盘只通过 sysfs、挂载表和内核 I/O 计数器被动发现。观测到业务 I/O 后，仅对确认的直连 ATA/SATA 路径尝试带 `-n standby,3,5` 和显式设备类型的 SMART 命令。不支持安全检测、USB/硬 RAID 转接以及无法确认状态的设备不主动探测；NVMe 在此保守模式下也只提供被动信息。旧 smartctl 不支持参数时安全跳过，不降级为无保护查询。
+
+SMART 失败或休眠跳过不更新成功时间；重试至少间隔 30 秒。空闲时温度及健康可显示未知，容量使用内存缓存。`capacity_stale` 与 `capacity_updated_at` 为可选状态字段；管理页显示“容量暂未更新”和最后成功时间。重新启动后尚无容量缓存时，容量未知，不为填充显示主动唤醒磁盘。
+
+温度任务不读取文件系统容量，速率任务不会借首次采集触发主动查询。保护模式下 CPU 温度也只读取已识别的 CPU 传感器。
+
+### 日志路径及真机验收
+
+DEB 服务使用 `/var/lib/pico-monitor` 保存运行数据及截图；日志默认交给 systemd，只有设置 `PICO_MONITOR_ERROR_LOG_PATH` 才额外写错误文件。确认这些路径与 journal 位于系统盘，而非待休眠数据盘。`collection_tasks.logs_enabled: false` 可关闭逐任务常规日志。截图、插件、自定义数据和其他程序的磁盘访问不由此设置控制；本功能不修改全局日志或飞牛电源参数。
+
+飞牛保持 5 分钟空闲休眠、SMART 周期 30 分钟，关闭主动查询，分别对照停止服务及启用修复后服务至少 90 分钟的唤醒记录。观测数据放系统盘或内存；不要使用无保护 SMART、目录遍历或文件读写验证休眠。应正常休眠且无 monitor 主动唤醒，业务访问后安全恢复采集。未连接真机时不能将模拟测试视为真机验收。
 
 ## `custom_data`：自定义数据插件
 

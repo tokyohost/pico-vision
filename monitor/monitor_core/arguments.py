@@ -6,6 +6,7 @@ import os
 from i18n import SUPPORTED_LOCALES
 
 from .config import (
+    parse_disk_smart_interval,
     config_flag,
     config_value,
     load_monitor_config,
@@ -45,6 +46,11 @@ def create_argument_parser(config=None):
     adaptive_group.add_argument("--adaptive-transmit", dest="adaptive_transmit", action="store_true", help="根据 Pico JSON ACK 耗时调整发送间隔，并在拥塞时合并为最新快照")
     adaptive_group.add_argument("--no-adaptive-transmit", dest="adaptive_transmit", action="store_false", help="关闭发送间隔自适应并使用固定采集周期；仍保留 JSON ACK 背压")
     parser.set_defaults(adaptive_transmit=config_flag(config, "PICO_MONITOR_ADAPTIVE_TRANSMIT", True))
+    disk_group = parser.add_mutually_exclusive_group()
+    disk_group.add_argument("--disk-allow-wakeup", dest="disk_allow_wakeup", action="store_true", help="允许主动查询磁盘，可能唤醒磁盘")
+    disk_group.add_argument("--no-disk-allow-wakeup", dest="disk_allow_wakeup", action="store_false", help="保护磁盘休眠")
+    parser.set_defaults(disk_allow_wakeup=config_flag(config, "PICO_MONITOR_DISK_ALLOW_WAKEUP", True))
+    parser.add_argument("--disk-smart-interval-minutes", type=parse_disk_smart_interval, default=parse_disk_smart_interval(config_value(config, "PICO_MONITOR_DISK_SMART_INTERVAL_MINUTES", 30)), help="SMART 周期，正整数分钟，默认 30")
     parser.add_argument("--collection-task-intervals", type=parse_collection_task_intervals, default=parse_collection_task_intervals(config_value(config, "PICO_MONITOR_COLLECTION_TASK_INTERVALS")), help="各系统采集任务频率 JSON 或 YAML 对象，键为英文任务标识，值为支持小数的秒数，例如 0.8")
     parser.add_argument("--custom-data-configs", type=parse_custom_data_configs, default=parse_custom_data_configs(config_value(config, "PICO_MONITOR_CUSTOM_DATA_CONFIGS")), help="各自定义数据插件的面板配置 JSON 对象")
     parser.add_argument("--custom-data-enabled", type=parse_custom_data_enabled, default=parse_custom_data_enabled(config_value(config, "PICO_MONITOR_CUSTOM_DATA_ENABLED")), help="由 Monitor 管理的自定义数据插件启用状态 JSON 对象")

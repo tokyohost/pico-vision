@@ -18,7 +18,12 @@ class DiskRateTask(CollectionTask):
             return {}
         disks = disk_snapshot_disks(self.collector)
         if not disks:
-            disks = collect_shared_disk_details(self.collector, refresh_hardware=True)
+            if getattr(self.collector, "_protect_disk_sleep", lambda: False)():
+                from .disk_common import disk_task_lock
+                with disk_task_lock(self.collector):
+                    disks = self.collector._passive_disk_details(collect_sensors=False, collect_capacity=False)
+            else:
+                disks = collect_shared_disk_details(self.collector, refresh_hardware=True)
         disks = self.collector._disk_rates(disks)
         if self._sensor_host_available():
             return {}

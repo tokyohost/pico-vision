@@ -36,11 +36,13 @@ from monitor_core.collectors.models import (
     LOGGER,
 )
 
+from .disk_policy import DiskPolicyMixin
+
 
 WINDOWS_DISK_TEMPERATURE_FAILURE_BACKOFF_SECONDS = 60.0
 
 
-class DiskMetricsMixin:
+class DiskMetricsMixin(DiskPolicyMixin):
     """为系统采集器提供磁盘容量、读写速率、温度和健康状态采集能力。"""
 
     @classmethod
@@ -75,6 +77,14 @@ class DiskMetricsMixin:
         self._disk_details_task_cache_time = 0.0
         self.disk_health_cache = {}
         self.disk_health_time = 0.0
+        self._protected_io_by_task = {}
+        self._protected_sensors = {}
+        self._protected_health_times = {}
+        self._protected_health_values = {}
+        self._protected_attempts_by_task = {}
+        self._protected_failures = {}
+        self._protected_capacities = {}
+        self._protected_seed = []
         LOGGER.info("检测到磁盘硬件或挂载关系变化，立即重新采集 SMART 与 health 状态")
         return True
 
@@ -105,6 +115,7 @@ class DiskMetricsMixin:
                 "percent": nullable_number(disk.get("percent", 0), float),
                 "temperature_c": disk.get("temperature_c"),
                 "health": int(disk.get("health") or DISK_HEALTH_UNKNOWN),
+                **{key: disk[key] for key in ("capacity_stale", "capacity_updated_at") if key in disk},
                 "read_bps": nullable_number(disk.get("read_bps", 0), int),
                 "write_bps": nullable_number(disk.get("write_bps", 0), int),
                 "read_history": list(disk.get("read_history") or ()),
@@ -469,11 +480,14 @@ class DiskMetricsMixin:
         return cls._classify_smart_health(payload)
 
     def _disk_health(self, descriptors):
-        """启动时读取 SMART 健康状态，之后以三十分钟周期复用检查结果。"""
+        """启动时读取 SMART 健康状态，之后按配置的分钟周期复用检查结果。"""
         now = time.monotonic()
         last_time = getattr(self, "disk_health_time", 0.0)
-        if last_time and now - last_time < DISK_HEALTH_CACHE_SECONDS:
+        interval = getattr(self, "disk_smart_interval_minutes", 30) * 60 if platform.system() == "Linux" else DISK_HEALTH_CACHE_SECONDS
+        if last_time and now - last_time < interval:
             return getattr(self, "disk_health_cache", {})
+        if self._protect_disk_sleep():
+            return {name: DISK_HEALTH_UNKNOWN for name, _, _ in descriptors}
         health = {}
         for name, device, device_type in descriptors:
             status = self._read_smart_health(device, device_type)
@@ -532,7 +546,7 @@ class DiskMetricsMixin:
             values = [temperature for item_priority, temperature in candidates if item_priority == priority]
             return round(sum(values) / len(values), 1)
         try:
-            command = ["smartctl", "-a", "-j"]
+            command = ["smartctl", "-A", "-j"]
             if device_type:
                 command.extend(["-d", str(device_type)])
             command.append(str(device))
@@ -631,6 +645,8 @@ class DiskMetricsMixin:
     def _disk_temperatures(self, devices):
         """按固定周期缓存全部磁盘温度，避免每帧调用慢速系统接口。"""
         now = time.monotonic()
+        if self._protect_disk_sleep():
+            return {}
         if self.disk_temperature_time and now - self.disk_temperature_time < DISK_TEMPERATURE_CACHE_SECONDS:
             return self.disk_temperature_cache
         if platform.system() == "Windows":
@@ -676,6 +692,26 @@ class DiskMetricsMixin:
         self.disk_temperature_time = now
         return temperatures
 
+    def _disk_temperature_details(self):
+        """只刷新温度和到期健康缓存，避免温度任务触发文件系统容量查询。"""
+        if platform.system() != "Linux":
+            return self._disk_details()
+        from collectTask.tasks.disk_common import disk_snapshot_disks
+        disks = disk_snapshot_disks(self)
+        if not disks:
+            return self._disk_details()
+        devices = [device for disk in disks for device in disk.get("devices", ())]
+        temperatures = self._disk_temperatures(devices)
+        physical = {item["name"]: item for item in temperatures.get("__physical_disks__", ())}
+        for disk in disks:
+            sensors = [physical[name] for device in disk.get("devices", ())
+                       for name in self._linux_backing_disks(device) if name in physical]
+            if not sensors:
+                sensors = [physical.get(disk["name"], {})]
+            disk["temperature_c"] = max((sensor["temperature_c"] for sensor in sensors
+                                         if sensor.get("temperature_c") is not None), default=None)
+        return disks
+
     @staticmethod
     def _mountpoint_rank(partition):
         """完整匹配 NAS 卷根路径，优先选择数字较小的 /volumeN 挂载点。"""
@@ -685,6 +721,8 @@ class DiskMetricsMixin:
 
     def _disk_details(self):
         """采集所有有效本地磁盘分区的容量、占用率和温度。"""
+        if self._protect_disk_sleep():
+            return self._passive_disk_details()
         selected_partitions = {}
         for partition in psutil.disk_partitions(all=False):
             options = set(str(partition.opts).lower().split(","))
@@ -794,6 +832,10 @@ class DiskMetricsMixin:
                 "temperature_c": sensor["temperature_c"],
                 "health": sensor.get("health", DISK_HEALTH_UNKNOWN),
             })
+        if platform.system() == "Linux":
+            for disk in details:
+                disk["capacity_stale"] = not bool(disk.get("mountpoints"))
+                disk["capacity_updated_at"] = time.time() if disk.get("mountpoints") else None
         return details
 
     @staticmethod

@@ -1,6 +1,7 @@
 """磁盘采集任务共享的快照合并工具。"""
 
 import threading
+import platform
 import time
 
 
@@ -14,6 +15,8 @@ DISK_CAPACITY_HEALTH_FIELDS = (
     "free_bytes",
     "percent",
     "health",
+    "capacity_stale",
+    "capacity_updated_at",
 )
 # 温度、速率任务也可能先于容量任务完成，首次发布时就应提供可引用的标签。
 DISK_TEMPERATURE_FIELDS = ("label", "temperature_c")
@@ -45,12 +48,16 @@ def disk_snapshot_disks(collector):
         return [dict(item) for item in disk_snapshot(collector).get("disks", ())]
 
 
-def collect_shared_disk_details(collector, refresh_hardware=False):
+def collect_shared_disk_details(collector, refresh_hardware=False, purpose="capacity"):
     """串行刷新磁盘明细，并让同一调度窗口内的磁盘任务复用结果。"""
     with disk_task_lock(collector):
         now = time.monotonic()
         if refresh_hardware:
             collector._refresh_disk_hardware_state()
+        if getattr(collector, "_protect_disk_sleep", lambda: False)():
+            return collector._passive_disk_details(collect_capacity=purpose == "capacity")
+        if purpose == "temperature" and platform.system() == "Linux":
+            return collector._disk_temperature_details()
         cached_at = float(getattr(collector, "_disk_details_task_cache_time", 0.0) or 0.0)
         cached = getattr(collector, "_disk_details_task_cache", None)
         if cached is not None and now - cached_at < DISK_DETAILS_SHARED_CACHE_SECONDS:

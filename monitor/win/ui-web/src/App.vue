@@ -188,6 +188,7 @@ onBeforeUnmount(() => {
 
       <el-main class="content" :class="{ 'market-content': activePage === 'market' }">
         <SettingsPage
+          :device="device"
           v-if="activePage === 'settings'"
           :metadata="metadata"
           :settings="settings"

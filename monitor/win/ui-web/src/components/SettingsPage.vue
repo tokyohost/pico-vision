@@ -1,12 +1,14 @@
 <script setup>
 import { t, styleLabel, taskLabel } from '../i18n'
 
+import { QuestionFilled } from '@element-plus/icons-vue'
 import { computed, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { invoke } from '../bridge'
 
 const props = defineProps({
   metadata: { type: Object, required: true },
+  device: { type: Object, default: () => ({}) },
   settings: { type: Object, required: true },
   saving: { type: Boolean, required: true },
 })
@@ -59,6 +61,10 @@ async function openHttpManagement() {
  * 请求根组件保存完整配置。
  */
 function saveSettings() {
+  if (props.metadata.platform === 'linux' && (!Number.isInteger(props.settings.disk_smart_interval_minutes) || props.settings.disk_smart_interval_minutes < 1)) {
+    ElMessage.warning('SMART 健康检查周期必须为正整数分钟')
+    return
+  }
   emit('save')
 }
 
@@ -247,6 +253,27 @@ function isActionRunning(panel, item) {
 
     <el-card shadow="never">
       <template #header><span>{{ t('ui.collection_task_intervals') }}</span></template>
+      <el-form v-if="metadata.platform === 'linux'" label-position="top">
+        <el-form-item>
+          <el-checkbox v-model="settings.disk_allow_wakeup">允许磁盘休眠时主动查询（可能唤醒磁盘）</el-checkbox>
+          <el-tooltip trigger="hover" :show-after="200" content="默认开启，允许主动查询磁盘健康和温度，可能唤醒休眠磁盘或影响空闲休眠。如需优先保证硬盘休眠，请取消勾选。关闭后，磁盘休眠、状态未知或不支持安全检测时，将跳过主动查询，温度和健康可能显示未知，容量可能暂不更新。本设置不修改飞牛休眠时间，也不控制其他应用的磁盘访问。" :teleported="true">
+            <el-icon tabindex="0" aria-label="磁盘休眠保护说明"><QuestionFilled /></el-icon>
+          </el-tooltip>
+        </el-form-item>
+        <el-form-item label="SMART 健康检查周期（分钟）">
+          <el-input-number v-model="settings.disk_smart_interval_minutes" :min="1" :step="1" />
+          <el-tooltip content="设置 SMART 健康检查的间隔，单位为分钟，默认 30 分钟。此设置不影响磁盘容量、温度及读写速率的刷新频率。取消允许磁盘休眠时主动查询后，即使检查周期已到，也不会为健康检查主动唤醒磁盘。">
+            <el-icon tabindex="0" aria-label="SMART 健康检查周期说明"><QuestionFilled /></el-icon>
+          </el-tooltip>
+        </el-form-item>
+        <p>下方磁盘容量任务频率控制容量刷新；SMART 健康检查独立使用上述分钟周期。</p>
+        <div v-if="!settings.disk_allow_wakeup" aria-live="polite">
+          <p v-for="disk in device.disk_collection_status || []" :key="disk.name">
+            {{ disk.label || disk.name }}：{{ disk.capacity_stale ? '容量暂未更新' : '容量已更新' }}
+            <span v-if="disk.capacity_updated_at">（最后更新：{{ new Date(disk.capacity_updated_at * 1000).toLocaleString() }}）</span>
+          </p>
+        </div>
+      </el-form>
       <div class="task-grid">
         <label v-for="name in metadata.defaultTasks" :key="name">
           <span>{{ taskLabel(name, metadata.taskNames[name]) }}</span>

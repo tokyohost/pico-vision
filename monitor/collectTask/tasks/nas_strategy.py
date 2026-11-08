@@ -21,6 +21,8 @@ class LinuxNasCollectionStrategy(SystemCollectionStrategy):
 
     def cpu_temperature(self, collector):
         """优先读取 NAS sysfs 温度，缺失时回退通用实现。"""
+        if getattr(collector, "_protect_disk_sleep", lambda: False)():
+            return collector._cpu_temperature()
         patterns = (
             "/sys/class/thermal/thermal_zone*/temp",
             "/sys/class/hwmon/hwmon*/temp*_input",

@@ -85,6 +85,7 @@ class MonitorService(
             getattr(arguments, "sensor_host_path", None),
             getattr(arguments, "sensor_host_pipe", "omniwatch.sensorhost"),
         )
+        self.collector.configure_disk_policy(getattr(arguments, "disk_allow_wakeup", True), getattr(arguments, "disk_smart_interval_minutes", 30))
         self.qbittorrent_monitor = None
         if arguments.qbittorrent_enabled:
             LOGGER.info(
@@ -236,6 +237,12 @@ class MonitorService(
         if json_chunk_size not in (512, 1024, 2048, 4096, 8192, 16384):
             raise ValueError("JSON 分片大小必须为 512、1024、2048、4096、8192 或 16384 字节")
 
+        from .config import validate_disk_settings
+        disk_settings = {
+            "disk_allow_wakeup": payload.get("disk_allow_wakeup", getattr(self.arguments, "disk_allow_wakeup", True)),
+            "disk_smart_interval_minutes": payload.get("disk_smart_interval_minutes", getattr(self.arguments, "disk_smart_interval_minutes", 30)),
+        }
+        disk_settings["disk_smart_interval_minutes"] = validate_disk_settings(disk_settings)
         connection_before = self._runtime_connection_signature(self.arguments)
         for name, value in updated.items():
             setattr(self.arguments, name, value)
@@ -265,6 +272,9 @@ class MonitorService(
         self.arguments.custom_data_enabled = normalize_plugin_enabled(
             payload.get("custom_data_enabled", getattr(self.arguments, "custom_data_enabled", {}))
         )
+        self.arguments.disk_allow_wakeup = disk_settings["disk_allow_wakeup"]
+        self.arguments.disk_smart_interval_minutes = disk_settings["disk_smart_interval_minutes"]
+        self.collector.configure_disk_policy(**disk_settings)
         self.collector.ping_monitor.target = self.arguments.ping_target
         self._collection_coordinator.update_runtime_settings(
             self.arguments.collection_task_intervals,

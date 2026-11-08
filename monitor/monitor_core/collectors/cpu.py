@@ -218,9 +218,34 @@ class CpuMetricsMixin:
             return None
         return round(float(current_mhz) / 1000, 2)
 
-    @staticmethod
-    def _cpu_temperature():
+    def _cpu_temperature(self):
         """从系统温度传感器中选择有效的最高 CPU 温度。"""
+        if getattr(self, "_protect_disk_sleep", lambda: False)():
+            from pathlib import Path
+            values = []
+            cpu_names = {"coretemp", "k10temp", "zenpower", "cpu_thermal", "soc_thermal"}
+            for root in Path("/sys/class/hwmon").glob("hwmon*"):
+                try:
+                    if (root / "name").read_text(encoding="ascii").strip() not in cpu_names:
+                        continue
+                    for path in root.glob("temp*_input"):
+                        value = float(path.read_text(encoding="ascii")) / 1000
+                        if 0 < value < 150:
+                            values.append(value)
+                except (OSError, ValueError):
+                    continue
+            # ARM NAS 可能只通过 thermal_zone 暴露 CPU 温度，先检查类型再读取。
+            for root in Path("/sys/class/thermal").glob("thermal_zone*"):
+                try:
+                    kind = (root / "type").read_text(encoding="ascii").strip().lower()
+                    if kind not in {"cpu-thermal", "soc-thermal", "cpu_thermal", "soc_thermal", "x86_pkg_temp"}:
+                        continue
+                    value = float((root / "temp").read_text(encoding="ascii")) / 1000
+                    if 0 < value < 150:
+                        values.append(value)
+                except (OSError, ValueError):
+                    continue
+            return round(max(values), 1) if values else None
         try:
             sensors = psutil.sensors_temperatures()
         except (AttributeError, OSError):

@@ -128,6 +128,8 @@ class SettingsApiMixin:
         ).strip().lower()
         if updated["wifi_discovery_strategy"] not in ("announcement", "scan"):
             raise ValueError(t('message.invalid_wi_fi_discovery_strategy'))
+        from monitor_core.config import validate_disk_settings
+        updated["disk_smart_interval_minutes"] = validate_disk_settings(updated)
         updated["collection_task_logs"] = bool(updated["collection_task_logs"])
         updated["qbittorrent_enabled"] = bool(updated["qbittorrent_enabled"])
         updated["market_url"] = str(updated.get("market_url") or "").strip()
