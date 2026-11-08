@@ -193,7 +193,7 @@ sudo journalctl -u pico-monitor -f
 sudo systemctl restart pico-monitor
 ```
 
-运行配置位于 `/etc/pico-monitor.conf`。服务默认以 `root` 运行，从而读取硬件传感器并访问 USB 串口；如果发行版已配置 `dialout` 权限，可按安全要求调整服务用户。
+DEB 服务运行配置位于 `/etc/pico-monitor/config.yaml`。安装或升级时自动从旧 `/etc/pico-monitor.conf` 迁移，已有新路径配置不会覆盖，旧文件保留作为初始配置或备份。服务默认以 `root` 运行，从而读取硬件传感器并访问 USB 串口；如果发行版已配置 `dialout` 权限，可按安全要求调整服务用户。
 
 ### 自动更新 Linux DEB
 

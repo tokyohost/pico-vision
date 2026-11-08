@@ -1,0 +1,13 @@
+#!/bin/sh
+# 保留普通卸载后的用户配置，仅在明确 purge 时清理迁移生成的配置文件。
+set -e
+
+if [ "$1" = purge ]; then
+    rm -f /etc/pico-monitor/config.yaml
+    # 不删除目录中的其他用户文件或 systemd 自定义覆盖配置。
+    if [ -d /etc/pico-monitor ]; then
+        rmdir /etc/pico-monitor 2>/dev/null || true
+    fi
+fi
+
+#DEBHELPER#

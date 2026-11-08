@@ -478,13 +478,18 @@ class LinuxInvokeBridge:
             if not isinstance(section, dict):
                 raise RuntimeError(t('message.linux_settings_node_is_not_an_object').format(location[0]))
             section[location[1]] = settings.get(name)
-        temporary = path.with_suffix(path.suffix + ".tmp")
-        temporary.write_text(
-            yaml.safe_dump(document, allow_unicode=True, sort_keys=False),
-            encoding="utf-8",
-            newline="\n",
-        )
-        temporary.replace(path)
+        # 同目录创建私有临时文件，保持原子替换，并防止访问凭据随配置泄露。
+        descriptor, temporary_name = tempfile.mkstemp(prefix=".config-save-", dir=path.parent)
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as output:
+                output.write(yaml.safe_dump(document, allow_unicode=True, sort_keys=False))
+                output.flush()
+                os.fsync(output.fileno())
+            temporary.replace(path)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
         return True
 
     def _save_settings(self, payload):

@@ -1,0 +1,13 @@
+#!/bin/sh
+# Debian 可复现构建会固定源码时间戳；强制刷新缓存，避免同长度新源码命中旧字节码。
+set -e
+
+case "$1" in
+    configure)
+        # 先保留并迁移用户配置，再刷新缓存；debhelper 最后重启服务。
+        /usr/bin/python3 /usr/lib/pico-monitor/monitor_core/install_config.py
+        /usr/bin/python3 -m compileall -q -f /usr/lib/pico-monitor
+        ;;
+esac
+
+#DEBHELPER#

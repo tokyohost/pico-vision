@@ -5,7 +5,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/pico-monitor --config /etc/pico-monitor.conf
+ExecStart=/usr/bin/pico-monitor --config /etc/pico-monitor/config.yaml
 Restart=always
 RestartSec=3
 User=root
@@ -18,6 +18,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
+# 仅开放应用配置目录，允许临时文件写入与原子替换，不放开整个 /etc。
+ReadWritePaths=/etc/pico-monitor
 
 [Install]
 WantedBy=multi-user.target

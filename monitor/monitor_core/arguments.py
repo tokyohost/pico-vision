@@ -26,7 +26,7 @@ def create_argument_parser(config=None):
         nargs=0,
         help="显示 Monitor 版本号并退出",
     )
-    parser.add_argument("--config", default=None, help="YAML 配置文件路径，Linux 服务默认使用 /etc/pico-monitor.conf")
+    parser.add_argument("--config", default=None, help="YAML 配置文件路径，DEB 服务使用 /etc/pico-monitor/config.yaml，兼容手动指定旧配置路径")
     parser.add_argument("--port", default=config_value(config, "PICO_MONITOR_PORT") or None, help="固定串口名称，留空时自动发现")
     parser.add_argument("--websocket-url", default=config_value(config, "PICO_MONITOR_WEBSOCKET_URL") or None, help="固定 WebSocket 地址，例如 ws://192.168.1.20:8765/pv1；设置后使用 Wi-Fi 模式")
     usb_cdc_group = parser.add_mutually_exclusive_group()

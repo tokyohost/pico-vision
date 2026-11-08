@@ -860,3 +860,12 @@ qbittorrent:
 修改硬件驱动、内核参数或 udev 规则后，建议重新插拔设备并重启 `pico-monitor`，再通过 `journalctl` 确认出现 `PONG:PICO_LCD` 和正常快照发送日志。
 ```
 ```
+
+## DEB 升级兼容处理（2.4.12-build6 起）
+
+- DEB 服务使用 `/etc/pico-monitor/config.yaml`，安装配置阶段自动从 `/etc/pico-monitor.conf` 复制；已存在的新配置（包括手动修复过的配置）优先保留，不被默认模板覆盖。
+- 原 `/etc/pico-monitor.conf` 仍由 dpkg 管理，保留作初始配置或备份；以后修改运行配置应使用新路径。已有 `config-write.conf` override 与新服务路径一致，可以保留。
+- `ProtectSystem=strict` 保持启用，只有 `/etc/pico-monitor` 被列入 `ReadWritePaths`，HTTP 保存通过同目录私有临时文件原子替换。
+- 安装或重装时强制重新编译 Python 字节码，避免可复现构建的固定时间戳导致同长度旧代码缓存继续生效。
+- `apt remove` 保留配置；`apt purge` 清理迁移后的 `config.yaml`，不会递归删除目录中其他用户文件。
+- Release 上传前将 DEB 文件名中的 `~` 规范化为 `.`，随后生成校验清单；包内 Debian 版本保持不变。新更新器兼容历史带 `~` 的清单且仍严格验证 SHA256。旧更新器可直接使用之后文件名一致的清单升级。

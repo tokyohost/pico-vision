@@ -69,7 +69,10 @@ jobs:
           dpkg-buildpackage --build=binary --no-sign --host-arch=${{ matrix.arch }}
           mkdir -p release-assets
           for package_file in ../pico-monitor_*_${{ matrix.arch }}.deb; do
-            cp "${package_file}" "release-assets/OmniWatch_${package_file#../pico-monitor_}"
+            # Release 会规范化波浪号；上传前统一外部文件名，确保摘要清单与附件一致。
+            asset_name="OmniWatch_${package_file#../pico-monitor_}"
+            asset_name="${asset_name//\~/.}"
+            cp "${package_file}" "release-assets/${asset_name}"
           done
           for package_file in release-assets/*.deb; do
             if ! dpkg-deb --field "${package_file}" Depends | grep -Eq '(^|, )python3-websocket([[:space:](,]|$)'; then

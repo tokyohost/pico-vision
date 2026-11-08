@@ -27,6 +27,43 @@ from monitor_update import CHECKSUM_ASSET_NAME, LinuxDebUpdater
 class LinuxDebUpdaterTests(unittest.TestCase):
     """覆盖 Linux DEB 自动更新的关键安全行为。"""
 
+    def test_checksum_accepts_release_normalized_debian_filename(self):
+        """兼容历史正式版和预览版的波浪号名称，同时验证真实摘要。"""
+        with tempfile.TemporaryDirectory() as directory:
+            package = pathlib.Path(directory) / "download.deb"
+            package.write_bytes(b"verified-deb")
+            digest = hashlib.sha256(package.read_bytes()).hexdigest()
+            checksum = pathlib.Path(directory) / "sums.txt"
+            for version in ("2.4.12~build5", "2.4.12~build4~preview"):
+                for architecture in ("arm64", "amd64", "armhf", "i386"):
+                    listed = "OmniWatch_{}_{}.deb".format(version, architecture)
+                    with self.subTest(name=listed):
+                        checksum.write_text("{}  ./{}\n".format(digest, listed), encoding="utf-8")
+                        LinuxDebUpdater._verify_checksum(package, listed.replace("~", "."), checksum)
+
+    def test_checksum_rejects_mismatch_conflict_and_unrelated_entries(self):
+        """文件名兼容不能绕过内容校验、架构匹配或冲突检测。"""
+        with tempfile.TemporaryDirectory() as directory:
+            package = pathlib.Path(directory) / "download.deb"
+            package.write_bytes(b"verified-deb")
+            digest = hashlib.sha256(package.read_bytes()).hexdigest()
+            checksum = pathlib.Path(directory) / "sums.txt"
+            name = "OmniWatch_2.4.12.build5_arm64.deb"
+            historical = name.replace(".build", "~build")
+            cases = (
+                ("0" * 64 + "  " + historical, "校验失败"),
+                (digest + "  " + historical.replace("arm64", "amd64"), "缺少"),
+                (digest + "  " + historical.replace("build5", "build6"), "缺少"),
+                (digest + "  ../" + historical, "缺少"),
+                ("invalid  " + historical, "格式无效"),
+                (digest + "  " + name + "\n" + "0" * 64 + "  " + historical, "冲突"),
+            )
+            for content, message in cases:
+                with self.subTest(message=message):
+                    checksum.write_text(content + "\n", encoding="utf-8")
+                    with self.assertRaisesRegex(RuntimeError, message):
+                        LinuxDebUpdater._verify_checksum(package, name, checksum)
+
     def test_current_version_skips_installation(self):
         """确认当前版本等于最新 Release 时不会下载或安装。"""
         updater = LinuxDebUpdater("owner/repository", "1.2.3")

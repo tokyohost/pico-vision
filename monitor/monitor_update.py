@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -263,18 +264,27 @@ class LinuxDebUpdater:
     @staticmethod
     def _verify_checksum(package_path, package_name, checksum_path):
         """按 Release 摘要清单校验下载完成的 DEB 文件。"""
-        expected = None
-        with open(checksum_path, "r", encoding="utf-8") as checksum_file:
+        expected_values = set()
+        with open(checksum_path, "r", encoding="utf-8-sig") as checksum_file:
             for line in checksum_file:
                 parts = line.strip().split(None, 1)
                 listed_name = parts[1].lstrip("*") if len(parts) == 2 else ""
                 if listed_name.startswith("./"):
                     listed_name = listed_name[2:]
-                if len(parts) == 2 and listed_name == package_name:
-                    expected = parts[0].lower()
-                    break
-        if expected is None:
+                # 仅兼容历史 Release 把 Debian 版本中的 ~ 改为 . 的情况，
+                # 不剥离任意目录，不放宽架构、版本和包名匹配。
+                matches = listed_name == package_name
+                if not matches and re.fullmatch(r"OmniWatch_[0-9A-Za-z.+~_-]+_(?:amd64|arm64|armhf|i386)\.deb", listed_name):
+                    matches = listed_name.replace("~", ".") == package_name
+                if len(parts) == 2 and matches:
+                    if not re.fullmatch(r"[0-9a-fA-F]{64}", parts[0]):
+                        raise RuntimeError("摘要清单中的 SHA-256 格式无效：{}".format(package_name))
+                    expected_values.add(parts[0].lower())
+        if not expected_values:
             raise RuntimeError("摘要清单中缺少 {}".format(package_name))
+        if len(expected_values) != 1:
+            raise RuntimeError("摘要清单存在冲突的 SHA-256：{}".format(package_name))
+        expected = expected_values.pop()
         digest = hashlib.sha256()
         with open(package_path, "rb") as package_file:
             while True:
