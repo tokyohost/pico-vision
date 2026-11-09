@@ -13,19 +13,24 @@ class DebianBytecodeTests(unittest.TestCase):
 
     def test_force_compile_refreshes_same_size_and_timestamp(self):
         """新旧版本仅数字不同且时间戳一致时，强制编译仍应加载新版本。"""
+        # CI 默认禁止写入字节码；仅为复现旧缓存的子进程启用缓存，避免改变测试入口环境。
+        environment = dict(os.environ, PYTHONDONTWRITEBYTECODE="")
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "build_info.py"
             source.write_text('MONITOR_VERSION = "2.4.11-build5"\n', encoding="utf-8")
             os.utime(source, (1782835200, 1782835200))
             command = [sys.executable, "-c", "import build_info; print(build_info.MONITOR_VERSION)"]
-            old = subprocess.check_output(command, cwd=directory, text=True).strip()
+            old = subprocess.check_output(command, cwd=directory, env=environment, text=True).strip()
             self.assertEqual(old, "2.4.11-build5")
             source.write_text('MONITOR_VERSION = "2.4.12-build5"\n', encoding="utf-8")
             os.utime(source, (1782835200, 1782835200))
-            stale = subprocess.check_output(command, cwd=directory, text=True).strip()
+            stale = subprocess.check_output(command, cwd=directory, env=environment, text=True).strip()
             self.assertEqual(stale, "2.4.11-build5")
-            subprocess.run([sys.executable, "-m", "compileall", "-q", "-f", directory], check=True)
-            updated = subprocess.check_output(command, cwd=directory, text=True).strip()
+            subprocess.run(
+                [sys.executable, "-m", "compileall", "-q", "-f", directory],
+                env=environment, check=True,
+            )
+            updated = subprocess.check_output(command, cwd=directory, env=environment, text=True).strip()
             self.assertEqual(updated, "2.4.12-build5")
 
     def test_postinst_refreshes_cache_before_debhelper_service_actions(self):

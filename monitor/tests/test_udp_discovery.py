@@ -60,7 +60,9 @@ class UdpAnnouncementListenerTest(unittest.TestCase):
             TimeoutError(),
         )
 
-        with self.assertLogs("pico-monitor.discovery", level="INFO") as captured:
+        # 套接字已模拟，时钟也固定在监听窗口内；由模拟超时结束接收，避免 CI 调度延迟导致偶发失败。
+        with mock.patch("net.udp_discovery.time.monotonic", return_value=100.0), \
+                self.assertLogs("pico-monitor.discovery", level="INFO") as captured:
             candidates = UdpAnnouncementListener(timeout=0.05).listen()
 
         self.assertEqual(["ws://192.168.8.20:8765/pv1"], [item.url for item in candidates])
